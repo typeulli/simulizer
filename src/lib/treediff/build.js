@@ -66,8 +66,8 @@ try {
     const jsSize   = fs.statSync(OUT_JS).size;
     const wasmSize = fs.statSync(OUT_WA).size;
 
-    fs.renameSync(OUT_JS, path.join(PUBLIC, "treediff.js"));
-    fs.renameSync(OUT_WA, path.join(PUBLIC, "treediff.wasm"));
+    fs.renameSync(OUT_JS, path.join(PUBLIC, "dist", "treediff.js"));
+    fs.renameSync(OUT_WA, path.join(PUBLIC, "dist", "treediff.wasm"));
 
     console.log();
     divider();
@@ -76,12 +76,12 @@ try {
     console.log(
         `  ${fmt.label("treediff.js  ")}` +
         `${fmt.size(kb(jsSize))}  ` +
-        `${fmt.arrow("→")}  ${fmt.path("public/treediff.js")}`
+        `${fmt.arrow("→")}  ${fmt.path("public/dist/treediff.js")}`
     );
     console.log(
         `  ${fmt.label("treediff.wasm")}` +
         `${fmt.size(kb(wasmSize))}  ` +
-        `${fmt.arrow("→")}  ${fmt.path("public/treediff.wasm")}`
+        `${fmt.arrow("→")}  ${fmt.path("public/dist/treediff.wasm")}`
     );
     divider();
     console.log();
