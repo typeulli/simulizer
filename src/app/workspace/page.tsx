@@ -38,9 +38,42 @@ import { useConsolePanel } from "@/components/console";
 import useLanguagePack from "@/hooks/useLanguagePack";
 import { XML_F64_BLOCKS } from "@/simphy/lang/f64";
 import { XML_FLOW_BLOCKS } from "@/simphy/lang/flow";
+import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
+import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
 
 // Register Blockly locale explicitly to prevent context menu labels from being undefined
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
+
+function desaturateColor(color: string): string {
+    const hex = color.trim().replace("#", "");
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0;
+    const l = (max + min) / 2;
+    const d = max - min;
+    if (d !== 0) {
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    const s = 0;
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const hue2rgb = (pp: number, qq: number, t: number) => {
+        if (t < 0) t += 1; if (t > 1) t -= 1;
+        if (t < 1 / 6) return pp + (qq - pp) * 6 * t;
+        if (t < 1 / 2) return qq;
+        if (t < 2 / 3) return pp + (qq - pp) * (2 / 3 - t) * 6;
+        return pp;
+    };
+    const toHex = (v: number) => Math.round(v * 255).toString(16).padStart(2, "0");
+    return `#${toHex(hue2rgb(p, q, h + 1 / 3))}${toHex(hue2rgb(p, q, h))}${toHex(hue2rgb(p, q, h - 1 / 3))}`;
+}
 
 // Custom Block Definitions
 
@@ -62,13 +95,13 @@ const CUSTOM_BLOCK_DEFINITIONS: BlockDef[] = [
         type: "wasm_return_i32",
         message0: "반환 i32 %1",
         args0: [{ type: "input_value", name: "VALUE", check: "i32" }],
-        previousStatement: null, colour: 0, tooltip: "i32 반환",
+        previousStatement: null, nextStatement: null, colour: 0, tooltip: "i32 반환",
     },
     {
         type: "wasm_return_f64",
         message0: "반환 f64 %1",
         args0: [{ type: "input_value", name: "VALUE", check: "f64" }],
-        previousStatement: null, colour: 0, tooltip: "f64 반환",
+        previousStatement: null, nextStatement: null, colour: 0, tooltip: "f64 반환",
     },
     // Function wrapper
     {
@@ -493,12 +526,19 @@ const BlocklyWasmIDE: React.FC = () => {
     const [chatResult, setChatResult]       = useState<object | null>(null);
     const [chatStreaming, setChatStreaming]  = useState(false);
     const chatAbortRef                      = useRef<AbortController | null>(null);
+    const [chatDiffData, setChatDiffData]   = useState<{ tree: any; modeMap: Record<string, "insert" | "delete" | "common"> } | null>(null);
+    const chatPrevStateRef                  = useRef<object | null>(null);
+    const chatDiffDivRef                    = useRef<HTMLDivElement>(null);
+    const chatDiffWsRef                     = useRef<Blockly.WorkspaceSvg | null>(null);
 
     const handleChat = useCallback(async () => {
         const ws = workspaceRef.current;
         if (!ws || !chatPrompt.trim()) return;
 
         const blocklyJson = JSON.stringify(Blockly.serialization.workspaces.save(ws));
+
+        chatPrevStateRef.current = Blockly.serialization.workspaces.save(ws);
+        setChatDiffData(null);
 
         chatAbortRef.current?.abort();
         const ctrl = new AbortController();
@@ -537,6 +577,26 @@ const BlocklyWasmIDE: React.FC = () => {
                         } else if (parsed.result !== undefined) {
                             setChatResult(parsed.result);
                             setChatOutput(prev => prev + "\n\n```json\n" + JSON.stringify(parsed.result, null, 2) + "\n```");
+                            const prevState = chatPrevStateRef.current;
+                            if (prevState) {
+                                try {
+                                    const prevBlocks = (prevState as any).blocks?.blocks?.[0];
+                                    const newBlocks = (parsed.result as any).blocks?.blocks?.[0];
+                                    if (prevBlocks && newBlocks) {
+                                        const ctx = new NormalizeContext();
+                                        const n1 = normalize(prevBlocks, ctx);
+                                        const n2 = normalize(newBlocks, ctx);
+                                        loadTreeDiff().then(td => {
+                                            const diffResult = td.treeDiff(n1, n2);
+                                            const diffTree = generateDiffTree(n1, n2, diffResult);
+                                            const { tree, modeMap } = unnormalize(diffTree, ctx);
+                                            if (tree) setChatDiffData({ tree, modeMap });
+                                        }).catch(console.error);
+                                    }
+                                } catch (e) {
+                                    console.error("Diff computation failed:", e);
+                                }
+                            }
                         }
                     } catch {
                         // JSON이 아닌 라인은 무시
@@ -682,6 +742,72 @@ const BlocklyWasmIDE: React.FC = () => {
         if (!ws) return;
         ws.updateToolbox(buildToolboxXml(customFuncs));
     }, [customFuncs]);
+
+    // Diff Blockly workspace lifecycle
+    useEffect(() => {
+        if (!showChat) {
+            if (chatDiffWsRef.current) {
+                chatDiffWsRef.current.dispose();
+                chatDiffWsRef.current = null;
+            }
+            return;
+        }
+        if (!chatDiffData || !chatDiffDivRef.current) return;
+
+        if (chatDiffWsRef.current) {
+            chatDiffWsRef.current.dispose();
+            chatDiffWsRef.current = null;
+        }
+
+        const diffTheme = Blockly.Theme.defineTheme("simphy_dark_diff", {
+            name: "simphy_dark_diff",
+            base: Blockly.Themes.Classic,
+            componentStyles: {
+                workspaceBackgroundColour: "#0a0a14",
+                toolboxBackgroundColour:   "#111120",
+                toolboxForegroundColour:   "#c4c4e0",
+                flyoutBackgroundColour:    "#16162a",
+                flyoutForegroundColour:    "#c4c4e0",
+                flyoutOpacity:             1,
+                scrollbarColour:           "#2a2060",
+                insertionMarkerColour:     "#fff",
+                insertionMarkerOpacity:    0.3,
+                scrollbarOpacity:          0.6,
+                cursorColour:              "#a78bfa",
+            },
+        });
+
+        const diffWs = Blockly.inject(chatDiffDivRef.current, {
+            zoom:     { controls: true, wheel: true, startScale: 0.7 },
+            renderer: "zelos",
+            theme:    diffTheme,
+        });
+        chatDiffWsRef.current = diffWs;
+
+        const { tree, modeMap } = chatDiffData;
+        tree.x = 40;
+        tree.y = 40;
+
+        try {
+            Blockly.serialization.workspaces.load(
+                { blocks: { languageVersion: 0, blocks: [tree] } },
+                diffWs,
+            );
+        } catch (e) {
+            console.error("Failed to load diff tree:", e);
+            return;
+        }
+
+        for (const [id, mode] of Object.entries(modeMap)) {
+            const block = diffWs.getBlockById(id);
+            if (!block) continue;
+            if (mode === "insert") block.setColour("#16a34a");
+            else if (mode === "delete") block.setColour("#dc2626");
+            else block.setColour(desaturateColor(block.getColour()));
+        }
+
+        diffWs.scrollCenter();
+    }, [chatDiffData, showChat]);
 
     // Compile and run
     const handleRun = useCallback(async () => {
@@ -1261,14 +1387,14 @@ const BlocklyWasmIDE: React.FC = () => {
             {/* AI chat modal */}
             {showChat && (
                 <div style={modalOverlay} onClick={() => { chatAbortRef.current?.abort(); setShowChat(false); }}>
-                    <Box bg="modal" style={{ ...modalBox, width:"min(620px,95vw)", maxHeight:"85vh" }} onClick={(e) => e.stopPropagation()}>
+                    <Box bg="modal" style={{ ...modalBox, width: chatDiffData ? "min(1200px,95vw)" : "min(620px,95vw)", maxHeight:"85vh" }} onClick={(e) => e.stopPropagation()}>
                         <Box bg="raised" style={modalHd}>
                             <Text variant="label" color="accent">✦ AI 어시스턴트</Text>
                             <button onClick={() => { chatAbortRef.current?.abort(); setShowChat(false); }} style={closeBtn}>✕</button>
                         </Box>
 
                         {/* Input area */}
-                        <div style={{ padding:"12px 16px", borderBottom:`1px solid ${darkTheme.color.border.default}`, display:"flex", gap:8 }}>
+                        <div style={{ padding:"12px 16px", borderBottom:`1px solid ${darkTheme.color.border.default}`, display:"flex", gap:8, flexShrink:0 }}>
                             <textarea
                                 value={chatPrompt}
                                 onChange={(e) => setChatPrompt(e.target.value)}
@@ -1287,20 +1413,46 @@ const BlocklyWasmIDE: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Output area */}
-                        <div style={{ flex:1, overflowY:"auto", position:"relative" }}>
-                            {chatOutput ? (
-                                <pre style={{ margin:0, padding:"16px", fontSize:12, color:darkTheme.color.text.code, lineHeight:1.75, whiteSpace:"pre-wrap", wordBreak:"break-word" }}>{chatOutput}{chatStreaming && <span style={{ opacity:0.5 }}>▌</span>}</pre>
-                            ) : (
-                                <div style={{ padding:"32px 16px", textAlign:"center", color:darkTheme.color.text.muted, fontSize:12 }}>
-                                    {chatStreaming ? "응답 생성 중..." : "응답이 여기에 표시됩니다."}
+                        {/* Output area — split when diff data is available */}
+                        {chatDiffData ? (
+                            <div style={{ flex:1, display:"flex", overflow:"hidden", minHeight:400 }}>
+                                {/* Left: diff tree */}
+                                <div style={{ flex:1, display:"flex", flexDirection:"column", borderRight:`1px solid ${darkTheme.color.border.default}`, overflow:"hidden" }}>
+                                    <div style={{ padding:"5px 12px", background:darkTheme.color.bg.raised, borderBottom:`1px solid ${darkTheme.color.border.default}`, display:"flex", gap:14, alignItems:"center", fontSize:11, flexShrink:0 }}>
+                                        <span style={{ color:"#4ade80" }}>■ 추가됨</span>
+                                        <span style={{ color:"#f87171" }}>■ 삭제됨</span>
+                                        <span style={{ color:"#9ca3af" }}>■ 공통</span>
+                                    </div>
+                                    <div style={{ flex:1, position:"relative", minHeight:0 }}>
+                                        <div ref={chatDiffDivRef} style={{ position:"absolute", inset:0 }} />
+                                    </div>
                                 </div>
-                            )}
-                        </div>
+                                {/* Right: streaming text */}
+                                <div style={{ width:380, flexShrink:0, overflowY:"auto" }}>
+                                    {chatOutput ? (
+                                        <pre style={{ margin:0, padding:"16px", fontSize:12, color:darkTheme.color.text.code, lineHeight:1.75, whiteSpace:"pre-wrap", wordBreak:"break-word" }}>{chatOutput}{chatStreaming && <span style={{ opacity:0.5 }}>▌</span>}</pre>
+                                    ) : (
+                                        <div style={{ padding:"32px 16px", textAlign:"center", color:darkTheme.color.text.muted, fontSize:12 }}>
+                                            {chatStreaming ? "응답 생성 중..." : "응답이 여기에 표시됩니다."}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ flex:1, overflowY:"auto", position:"relative" }}>
+                                {chatOutput ? (
+                                    <pre style={{ margin:0, padding:"16px", fontSize:12, color:darkTheme.color.text.code, lineHeight:1.75, whiteSpace:"pre-wrap", wordBreak:"break-word" }}>{chatOutput}{chatStreaming && <span style={{ opacity:0.5 }}>▌</span>}</pre>
+                                ) : (
+                                    <div style={{ padding:"32px 16px", textAlign:"center", color:darkTheme.color.text.muted, fontSize:12 }}>
+                                        {chatStreaming ? "응답 생성 중..." : "응답이 여기에 표시됩니다."}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Bottom buttons */}
                         {(chatOutput || chatResult) && (
-                            <div style={{ padding:"10px 16px", borderTop:`1px solid ${darkTheme.color.border.default}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                            <div style={{ padding:"10px 16px", borderTop:`1px solid ${darkTheme.color.border.default}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, flexShrink:0 }}>
                                 <div>
                                     {chatResult && (
                                         <Button variant="run" size="sm" onClick={() => {
@@ -1319,7 +1471,7 @@ const BlocklyWasmIDE: React.FC = () => {
                                 </div>
                                 <div style={{ display:"flex", gap:8 }}>
                                     {chatOutput && <Button variant="reset" size="sm" onClick={() => navigator.clipboard.writeText(chatOutput)}>복사</Button>}
-                                    <Button variant="blocks" size="sm" onClick={() => { setChatOutput(""); setChatResult(null); }}>지우기</Button>
+                                    <Button variant="blocks" size="sm" onClick={() => { setChatOutput(""); setChatResult(null); setChatDiffData(null); }}>지우기</Button>
                                 </div>
                             </div>
                         )}

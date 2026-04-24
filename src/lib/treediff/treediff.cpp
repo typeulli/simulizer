@@ -97,17 +97,22 @@ static DpMap compute_dp(const NodePtr& A, const NodePtr& B) {
 // Backtracking
 // ---------------------------------------------------------------------------
 
+// Maps each matched B node → its matched A counterpart
+using MatchMap = std::unordered_map<const Node*, const Node*>;
+
 static void backtrack(
     const NodePtr& v, const NodePtr& w,
     const DpMap& dp,
     std::unordered_set<const Node*>& matchedA,
-    std::unordered_set<const Node*>& matchedB)
+    std::unordered_set<const Node*>& matchedB,
+    MatchMap& bToA)
 {
     auto it = dp.find({v.get(), w.get()});
     if (it == dp.end() || it->second == 0) return;
 
     matchedA.insert(v.get());
     matchedB.insert(w.get());
+    bToA[w.get()] = v.get();
 
     auto L = lcs_table(v->children, w->children, dp);
     int i = (int)v->children.size(), j = (int)w->children.size();
@@ -117,27 +122,29 @@ static void backtrack(
         } else if (L[i][j] == L[i][j-1]) {
             --j;
         } else {
-            backtrack(v->children[i-1], w->children[j-1], dp, matchedA, matchedB);
+            backtrack(v->children[i-1], w->children[j-1], dp, matchedA, matchedB, bToA);
             --i; --j;
         }
     }
 }
 
-static std::pair<std::unordered_set<const Node*>, std::unordered_set<const Node*>>
+static std::tuple<std::unordered_set<const Node*>, std::unordered_set<const Node*>, MatchMap>
 find_matching(const NodePtr& A, const NodePtr& B, const DpMap& dp) {
     std::unordered_set<const Node*> matchedA, matchedB;
+    MatchMap bToA;
     auto it = dp.find({A.get(), B.get()});
     if (it != dp.end() && it->second > 0)
-        backtrack(A, B, dp, matchedA, matchedB);
-    return {matchedA, matchedB};
+        backtrack(A, B, dp, matchedA, matchedB, bToA);
+    return {matchedA, matchedB, bToA};
 }
 
 // ---------------------------------------------------------------------------
 // Diff ops (returned as JS objects via val)
 // ---------------------------------------------------------------------------
 
-// Collect delete ops: unmatched subtrees under A
-// parentIdx: preorder index of v in A; childIdx: index within v->children
+// parentIdx for both delete and insert ops is always A's preorder index.
+// nodeIdx for insert ops is B's preorder index (used by JS to look up bNodes[]).
+
 static void gen_deletes(
     const NodePtr& v,
     int parentIdx,
@@ -160,13 +167,13 @@ static void gen_deletes(
     }
 }
 
-// Collect insert ops: unmatched subtrees under B
-// parentIdx: preorder index of w in B; nodeIdx: preorder index of inserted node in B
 static void gen_inserts(
     const NodePtr& w,
-    int parentIdx,
+    int parentIdx,   // A's preorder index of w's matched counterpart in A
     const std::unordered_set<const Node*>& matchedB,
+    const PreorderMap& preorderA,
     const PreorderMap& preorderB,
+    const MatchMap& bToA,
     val& ops)
 {
     for (int pos = 0; pos < (int)w->children.size(); ++pos) {
@@ -180,7 +187,8 @@ static void gen_inserts(
             op.set("nodeIdx",   val(preorderB.at(c.get())));
             ops.call<void>("push", op);
         } else {
-            gen_inserts(c, preorderB.at(c.get()), matchedB, preorderB, ops);
+            int aIdx = preorderA.at(bToA.at(c.get()));
+            gen_inserts(c, aIdx, matchedB, preorderA, preorderB, bToA, ops);
         }
     }
 }
@@ -212,7 +220,7 @@ val treeDiff(val jsA, val jsB) {
     NodePtr B = node_from_val(jsB);
 
     DpMap dp = compute_dp(A, B);
-    auto [matchedA, matchedB] = find_matching(A, B, dp);
+    auto [matchedA, matchedB, bToA] = find_matching(A, B, dp);
 
     int common     = (int)matchedA.size();
     int total_cost = A->size() + B->size() - 2 * common;
@@ -224,7 +232,7 @@ val treeDiff(val jsA, val jsB) {
 
     val ops = val::array();
 
-    // Deletes
+    // Deletes — parentIdx: A's preorder
     if (!matchedA.count(A.get())) {
         val op = val::object();
         op.set("type",      val("delete"));
@@ -236,7 +244,7 @@ val treeDiff(val jsA, val jsB) {
         gen_deletes(A, preorderA.at(A.get()), matchedA, preorderA, ops);
     }
 
-    // Inserts
+    // Inserts — parentIdx: A's preorder of the matched counterpart; nodeIdx: B's preorder
     if (!matchedB.count(B.get())) {
         val op = val::object();
         op.set("type",      val("insert"));
@@ -246,7 +254,7 @@ val treeDiff(val jsA, val jsB) {
         op.set("nodeIdx",   val(preorderB.at(B.get())));
         ops.call<void>("push", op);
     } else {
-        gen_inserts(B, preorderB.at(B.get()), matchedB, preorderB, ops);
+        gen_inserts(B, preorderA.at(bToA.at(B.get())), matchedB, preorderA, preorderB, bToA, ops);
     }
 
     val result = val::object();

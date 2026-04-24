@@ -1,10 +1,18 @@
+import Queue from "@/utils/queue";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface TreeNode {
     content: number;
-    children?: TreeNode[];
+    children: TreeNode[];
+}
+
+export interface TreeDiffNode {
+    content: number;
+    children: TreeDiffNode[];
+    mode: "insert" | "delete" | "common";
 }
 
 export interface DeleteOp {
@@ -112,4 +120,68 @@ export function loadTreeDiff(src: string = "/dist/treediff.js"): Promise<TreeDif
         script.onerror = () => reject(new Error(`Failed to load ${src}`));
         document.head.appendChild(script);
     });
+}
+
+export function generateDiffTree(a: TreeNode, b: TreeNode, diff: DiffResult): TreeDiffNode {
+    // Build pre-order indexed TreeDiffNode arrays using iterative DFS.
+    // Stack entry: [originalNode, parentIdxInResult (-1 for root)]
+    // Children are pushed right-to-left so they're popped left-to-right,
+    // preserving sibling order in parent.children.
+
+    const aNodes: TreeDiffNode[] = [];
+    {
+        const stack: [TreeNode, number][] = [[a, -1]];
+        while (stack.length > 0) {
+            const [node, parentIdx] = stack.pop()!;
+            const myIdx = aNodes.length;
+            const diffNode: TreeDiffNode = { content: node.content, children: [], mode: "common" };
+            aNodes.push(diffNode);
+            if (parentIdx >= 0) aNodes[parentIdx].children.push(diffNode);
+            const aChildren = node.children ?? [];
+            for (let i = aChildren.length - 1; i >= 0; i--)
+                stack.push([aChildren[i], myIdx]);
+        }
+    }
+
+    const bNodes: TreeDiffNode[] = [];
+    {
+        const stack: [TreeNode, number][] = [[b, -1]];
+        while (stack.length > 0) {
+            const [node, parentIdx] = stack.pop()!;
+            const myIdx = bNodes.length;
+            const diffNode: TreeDiffNode = { content: node.content, children: [], mode: "insert" };
+            bNodes.push(diffNode);
+            if (parentIdx >= 0) bNodes[parentIdx].children.push(diffNode);
+            const bChildren = node.children ?? [];
+            for (let i = bChildren.length - 1; i >= 0; i--)
+                stack.push([bChildren[i], myIdx]);
+        }
+    }
+
+    // Delete pass: BFS-mark entire deleted subtree as "delete".
+    // Does NOT remove nodes from the children array — deleted nodes stay in
+    // the output tree so the viewer can show what was removed.
+    for (const op of diff?.ops ?? []) {
+        if (op.type !== "delete") continue;
+        const deletedRoot = aNodes[op.parentIdx].children[op.childIdx];
+        const q = new Queue<TreeDiffNode>();
+        q.enqueue(deletedRoot);
+        while (!q.isEmpty) {
+            const cur = q.dequeue();
+            cur.mode = "delete";
+            for (const child of cur.children) q.enqueue(child);
+        }
+    }
+
+    // Insert pass: splice b-subtrees into the a-based tree.
+    // parentIdx → node in a's pre-order array that becomes the parent.
+    // childIdx  → position in that parent's children list (relative to current
+    //             state, so ops must be applied in the order the C++ emits them).
+    // nodeIdx   → root of the subtree to copy from b's pre-order array.
+    for (const op of diff?.ops ?? []) {
+        if (op.type !== "insert") continue;
+        aNodes[op.parentIdx].children.splice(op.childIdx, 0, bNodes[op.nodeIdx]);
+    }
+
+    return aNodes[0];
 }
