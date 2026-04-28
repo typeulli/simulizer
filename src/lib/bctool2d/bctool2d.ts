@@ -90,7 +90,7 @@ export async function computeBoundary(
 
     // Compile WAT → WASM (in-browser)
     const wabt = await WabtModule();
-    const wabtMod = wabt.parseWat('bcgen_modified.wat', modifiedWat);
+    const wabtMod = wabt.parseWat('bctool2d_modified.wat', modifiedWat);
     const { buffer: wasmBytes } = wabtMod.toBinary({});
     wabtMod.destroy();
 
