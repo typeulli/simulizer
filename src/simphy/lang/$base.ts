@@ -136,6 +136,8 @@ export interface CompileCtx {
         def:       simulizer.ArrayDef;
         sizeLocal: simulizer.Local;
     }>;
+    bd2Arrays?:       Map<string, { offset: number; count: number }>;
+    bd3Arrays?:       Map<string, { offset: number; count: number }>;
     breakStack:       string[];
     blockToExpr:      (block: Blockly.Block | null, ctx: CompileCtx) => simulizer.Expr | null;
     stmtBlockToExpr:  (block: Blockly.Block       , ctx: CompileCtx) => simulizer.Expr | null;

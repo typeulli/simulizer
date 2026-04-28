@@ -9,6 +9,7 @@ import * as tf from "@tensorflow/tfjs";
 import "@tensorflow/tfjs-backend-webgpu";
 
 import { simulizer } from "@/simphy/engine";
+import { unpackF64Arrays } from "@/utils/ziparray";
 import {
     type BlockDef,
     type CompileCtx,
@@ -136,6 +137,36 @@ const retTypeMap: Record<string, simulizer.Type> = {
 
 // 컴파일 직전에 설정되는 모듈 레벨 참조 (blockToExpr 에서 접근)
 let _customFuncSpecs: CustomFuncSpec[] = [];
+
+// ── Boundary2D ─────────────────────────────────────────────────────────────
+// 각 원소: f64 × 7 = 56 바이트 (t, x, y, tx, ty, nx, ny 순서)
+const BD2_BASE_OFFSET = 0x80000; // 512 KB
+const BD2_ELEM_BYTES  = 7 * 8;   // 56
+
+interface Bd2ArrayEntry {
+    id:     string;
+    name:   string;
+    data:   Float64Array;
+    count:  number;
+    offset: number;
+}
+
+let _bd2Arrays: Bd2ArrayEntry[] = [];
+
+// ── Boundary3D ─────────────────────────────────────────────────────────────
+// 각 원소: f64 × 9 = 72 바이트 (u, v, x, y, z, dS, nx, ny, nz 순서)
+const BD3_BASE_OFFSET = 0xC0000; // 768 KB
+const BD3_ELEM_BYTES  = 9 * 8;   // 72
+
+interface Bd3ArrayEntry {
+    id:     string;
+    name:   string;
+    data:   Float64Array;
+    count:  number;
+    offset: number;
+}
+
+let _bd3Arrays: Bd3ArrayEntry[] = [];
 
 function registerCustomFuncBlocks(spec: CustomFuncSpec) {
     const { id, name, retType, params } = spec;
@@ -362,15 +393,34 @@ function buildFuncDef(
 
     // Create ModuleDef here and share in ctx
     const module = new simulizer.ModuleDef();
-    module.set_memory(1); // 배열 사용에 필요
+
+    // bd2/bd3 배열의 끝 주소를 기준으로 메모리 페이지 수 계산
+    const maxBd2End = _bd2Arrays.reduce(
+        (max, bd2) => Math.max(max, bd2.offset + bd2.count * BD2_ELEM_BYTES), 0,
+    );
+    const maxBd3End = _bd3Arrays.reduce(
+        (max, bd3) => Math.max(max, bd3.offset + bd3.count * BD3_ELEM_BYTES), 0,
+    );
+    const maxEnd = Math.max(maxBd2End, maxBd3End);
+    const pagesNeeded = maxEnd > 0 ? Math.ceil(maxEnd / 65536) + 1 : 1;
+    module.set_memory(pagesNeeded);
+
+    const bd2Map: Map<string, { offset: number; count: number }> = new Map(
+        _bd2Arrays.map(bd2 => [bd2.name, { offset: bd2.offset, count: bd2.count }]),
+    );
+    const bd3Map: Map<string, { offset: number; count: number }> = new Map(
+        _bd3Arrays.map(bd3 => [bd3.name, { offset: bd3.offset, count: bd3.count }]),
+    );
 
     const ctx: CompileCtx = {
         func,
-        locals:                    new Map(),
-        funcRetType:         declaredRetType,
+        locals:          new Map(),
+        funcRetType:     declaredRetType,
         module,
-        nextArrayOffset: 0x1000, // Array placement start address
-        breakStack: [],
+        nextArrayOffset: 0x1000,
+        bd2Arrays:       bd2Map,
+        bd3Arrays:       bd3Map,
+        breakStack:      [],
         blockToExpr,
         stmtBlockToExpr,
         coerce,
@@ -415,6 +465,19 @@ const BASE_TOOLBOX_XML = `
     <category name="🔄 타입 변환" colour="45">
         <block type="f64_from_i32"></block>
         <block type="i32_from_f64"></block>
+    </category>
+    <category name="🗺 경계 데이터" colour="200">
+        <button text="⊕ 경계 데이터 관리" callbackKey="OPEN_BD2_MGR"></button>
+        <category name="2D" colour="200">
+            <block type="local_decl_bd2"></block>
+            <block type="local_get_bd2"></block>
+            <block type="flow_for_bd2"></block>
+        </category>
+        <category name="3D" colour="160">
+            <block type="local_decl_bd3"></block>
+            <block type="local_get_bd3"></block>
+            <block type="flow_for_bd3"></block>
+        </category>
     </category>
     <category name="🔧 함수" colour="290">
         <button text="⊕ 커스텀 함수 관리" callbackKey="OPEN_FUNC_MGR"></button>
@@ -516,6 +579,19 @@ const BlocklyWasmIDE: React.FC = () => {
     const [newFuncName, setNewFuncName]   = useState("myFunc");
     const [newFuncRet,  setNewFuncRet]    = useState<"i32"|"f64"|"void">("i32");
     const [newFuncParams, setNewFuncParams] = useState<{name:string;type:"i32"|"f64"}[]>([]);
+
+    const [bd2Arrays, setBd2Arrays]   = useState<Bd2ArrayEntry[]>([]);
+    const bd2ArraysRef                = useRef<Bd2ArrayEntry[]>([]);
+    const [newBd2Name, setNewBd2Name]  = useState("boundary");
+    const bd2FileInputRef              = useRef<HTMLInputElement>(null);
+
+    const [bd3Arrays, setBd3Arrays]   = useState<Bd3ArrayEntry[]>([]);
+    const bd3ArraysRef                = useRef<Bd3ArrayEntry[]>([]);
+    const [newBd3Name, setNewBd3Name]  = useState("boundary");
+    const bd3FileInputRef              = useRef<HTMLInputElement>(null);
+
+    const [showBdMgr, setShowBdMgr]   = useState(false);
+    const [bdMgrTab,  setBdMgrTab]    = useState<"2d" | "3d">("2d");
 
     const [errorModal, setErrorModal] = useState<string | null>(null);
     const showErrorModal = useCallback((msg: string) => setErrorModal(msg), []);
@@ -732,6 +808,8 @@ const BlocklyWasmIDE: React.FC = () => {
 
         workspaceRef.current = ws;
         ws.registerButtonCallback("OPEN_FUNC_MGR", () => setShowFuncMgr(true));
+        ws.registerButtonCallback("OPEN_BD2_MGR",  () => { setBdMgrTab("2d"); setShowBdMgr(true); });
+        ws.registerButtonCallback("OPEN_BD3_MGR",  () => { setBdMgrTab("3d"); setShowBdMgr(true); });
         Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
         return () => ws.dispose();
     }, []);
@@ -821,8 +899,10 @@ const BlocklyWasmIDE: React.FC = () => {
         setResult(null); setWatSource(""); setRunState("compiling");
         clearLog();
 
-        // Update module-level reference so blockToExpr can access it
+        // Update module-level references so blockToExpr can access them
         _customFuncSpecs = customFuncsRef.current;
+        _bd2Arrays = bd2ArraysRef.current;
+        _bd3Arrays = bd3ArraysRef.current;
 
         try {
             const mainBlock = ws.getAllBlocks(false).find((b) => b.type === "wasm_func_main");
@@ -875,6 +955,14 @@ const BlocklyWasmIDE: React.FC = () => {
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_get",    "func", "tensor_get",    "(param i32 i32 i32 i32 i32 i32 i32 i32) (result f64)"));
             mod.add_import(new simulizer.ImportDef("tensor", "show_mat",      "func", "show_mat",      "(param i32) (result i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_perlin", "func", "tensor_perlin", "(param i32 i32 i32) (result i32)"));
+
+            // bd2/bd3 배열 데이터를 WASM 데이터 세그먼트로 삽입
+            for (const bd2 of bd2ArraysRef.current) {
+                mod.add_data(bd2.offset, new Uint8Array(bd2.data.buffer, bd2.data.byteOffset, bd2.data.byteLength));
+            }
+            for (const bd3 of bd3ArraysRef.current) {
+                mod.add_data(bd3.offset, new Uint8Array(bd3.data.buffer, bd3.data.byteOffset, bd3.data.byteLength));
+            }
 
             const wat = mod.compile();
             setWatSource(wat);
@@ -964,6 +1052,106 @@ const BlocklyWasmIDE: React.FC = () => {
         }
         setNewFuncName("myFunc"); setNewFuncParams([]);
     }, [newFuncName, newFuncRet, newFuncParams, customFuncs, pack]);
+
+    const handleBd2FileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const name = newBd2Name.trim() || file.name.replace(/\.bin$/i, "");
+        if (!name) { alert("이름을 입력하세요."); return; }
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert("이름은 영문자/숫자/밑줄로만 구성되어야 합니다."); return; }
+        if (bd2ArraysRef.current.some(b => b.name === name)) { alert(`'${name}' 이름이 이미 사용 중입니다.`); return; }
+        if (file.size % BD2_ELEM_BYTES !== 0) {
+            alert(`파일 크기가 올바르지 않습니다.\n56의 배수여야 합니다 (현재 ${file.size} 바이트).`);
+            e.target.value = "";
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const buf = ev.target?.result as ArrayBuffer;
+            if (!buf) return;
+            const count  = buf.byteLength / BD2_ELEM_BYTES;
+            const data   = new Float64Array(buf.slice(0));
+            const prevEnd = bd2ArraysRef.current.reduce(
+                (max, bd2) => Math.max(max, bd2.offset + bd2.count * BD2_ELEM_BYTES),
+                BD2_BASE_OFFSET,
+            );
+            const offset = prevEnd;
+            const entry: Bd2ArrayEntry = { id: `bd2_${Date.now()}`, name, data, count, offset };
+            setBd2Arrays(prev => { const next = [...prev, entry]; bd2ArraysRef.current = next; return next; });
+            setNewBd2Name("boundary");
+        };
+        reader.readAsArrayBuffer(file);
+        e.target.value = "";
+    }, [newBd2Name]);
+
+    const handleRemoveBd2 = useCallback((id: string) => {
+        setBd2Arrays(prev => { const next = prev.filter(b => b.id !== id); bd2ArraysRef.current = next; return next; });
+    }, []);
+
+    const handleBd3FileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const name = newBd3Name.trim() || file.name.replace(/\.bin$/i, "");
+        if (!name) { alert("이름을 입력하세요."); return; }
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert("이름은 영문자/숫자/밑줄로만 구성되어야 합니다."); return; }
+        if (bd3ArraysRef.current.some(b => b.name === name)) { alert(`'${name}' 이름이 이미 사용 중입니다.`); return; }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const buf = ev.target?.result as ArrayBuffer;
+            if (!buf) return;
+
+            let data: Float64Array;
+            // packF64Arrays 포맷 감지: 헤더가 가리키는 총 크기가 실제 버퍼와 일치하는지 검증
+            const isPacked = (() => {
+                if (buf.byteLength < 8) return false;
+                const arrCount = new Uint32Array(buf, 0, 1)[0];
+                if (arrCount === 0) return false;
+                const rawLen   = 1 + arrCount;
+                const padLen   = rawLen % 2 === 0 ? rawLen : rawLen + 1;
+                if (buf.byteLength < padLen * 4) return false;
+                const lens = new Uint32Array(buf, 0, padLen);
+                let expected = padLen * 4;
+                for (let k = 1; k <= arrCount; k++) expected += lens[k] * 8;
+                return expected === buf.byteLength;
+            })();
+            if (isPacked) {
+                // boundary3d 페이지 포맷: surface당 [meta(nu,nv), u, v, x, y, z, dS, nx, ny, nz] 10개 배열
+                const arrs = unpackF64Arrays(buf);
+                const points: number[] = [];
+                for (let i = 0; i + 9 < arrs.length; i += 10) {
+                    const u = arrs[i + 1], v = arrs[i + 2];
+                    const x = arrs[i + 3], y = arrs[i + 4], z = arrs[i + 5];
+                    const dS = arrs[i + 6];
+                    const nx = arrs[i + 7], ny = arrs[i + 8], nz = arrs[i + 9];
+                    for (let j = 0; j < u.length; j++) {
+                        points.push(u[j], v[j], x[j], y[j], z[j], dS[j], nx[j], ny[j], nz[j]);
+                    }
+                }
+                data = new Float64Array(points);
+            } else {
+                if (buf.byteLength % BD3_ELEM_BYTES !== 0) {
+                    alert(`파일 크기가 올바르지 않습니다.\n72의 배수여야 합니다 (현재 ${buf.byteLength} 바이트).`);
+                    return;
+                }
+                data = new Float64Array(buf.slice(0));
+            }
+
+            const count = data.length / 9;
+            const prevEnd = bd3ArraysRef.current.reduce(
+                (max, bd3) => Math.max(max, bd3.offset + bd3.count * BD3_ELEM_BYTES),
+                BD3_BASE_OFFSET,
+            );
+            const entry: Bd3ArrayEntry = { id: `bd3_${Date.now()}`, name, data, count, offset: prevEnd };
+            setBd3Arrays(prev => { const next = [...prev, entry]; bd3ArraysRef.current = next; return next; });
+            setNewBd3Name("boundary");
+        };
+        reader.readAsArrayBuffer(file);
+        e.target.value = "";
+    }, [newBd3Name]);
+
+    const handleRemoveBd3 = useCallback((id: string) => {
+        setBd3Arrays(prev => { const next = prev.filter(b => b.id !== id); bd3ArraysRef.current = next; return next; });
+    }, []);
 
     const handleRemoveFunc = useCallback((id: string) => {
         const ws = workspaceRef.current;
@@ -1366,6 +1554,76 @@ const BlocklyWasmIDE: React.FC = () => {
                     </Box>
                 </div>
             )}
+
+            {/* Boundary 2D/3D unified management modal */}
+            {showBdMgr && (() => {
+                const is2d   = bdMgrTab === "2d";
+                const arrays = is2d ? bd2Arrays : bd3Arrays;
+                const onRemove = is2d ? handleRemoveBd2 : handleRemoveBd3;
+                const nameVal  = is2d ? newBd2Name : newBd3Name;
+                const setName  = is2d ? setNewBd2Name : setNewBd3Name;
+                const fileRef  = is2d ? bd2FileInputRef : bd3FileInputRef;
+                const onFile   = is2d ? handleBd2FileInput : handleBd3FileInput;
+                const fmt      = is2d
+                    ? "f64 × 7 × N 바이트 (t, x, y, tx, ty, nx, ny 순서)"
+                    : "f64 × 10 × N 바이트 (t, x, y, z, tx, ty, tz, nx, ny, nz 순서)";
+                const prefix = is2d ? "bd2" : "bd3";
+                const tabBtn = (label: string, tab: "2d" | "3d") => (
+                    <button onClick={() => setBdMgrTab(tab)} style={{
+                        background: bdMgrTab === tab ? darkTheme.color.border.default : "none",
+                        border: `1px solid ${darkTheme.color.border.strong}`,
+                        borderRadius: darkTheme.borderRadius.md,
+                        color: darkTheme.color.text.accent,
+                        cursor: "pointer", fontSize: 12, padding: "4px 14px",
+                    }}>{label}</button>
+                );
+                return (
+                    <div style={modalOverlay} onClick={() => setShowBdMgr(false)}>
+                        <Box bg="modal" style={{ ...modalBox, width: "min(560px,95vw)" }} onClick={e => e.stopPropagation()}>
+                            <Box bg="raised" style={modalHd}>
+                                <Inline gap="xs">
+                                    {tabBtn("🗺 Boundary 2D", "2d")}
+                                    {tabBtn("🌐 Boundary 3D", "3d")}
+                                </Inline>
+                                <button onClick={() => setShowBdMgr(false)} style={closeBtn}>✕</button>
+                            </Box>
+
+                            <div style={{ overflowY: "auto", maxHeight: 240, padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                                {arrays.length === 0 && (
+                                    <Text variant="body" color="muted">업로드된 배열이 없습니다.</Text>
+                                )}
+                                {arrays.map(entry => (
+                                    <div key={entry.id} style={{ background: "#111120", border: `1px solid ${darkTheme.color.border.strong}`, borderRadius: darkTheme.borderRadius.md, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+                                        <div style={{ flex: 1, fontSize: 12 }}>
+                                            <span style={{ color: darkTheme.color.text.accent, fontWeight: 700 }}>{entry.name}</span>
+                                            <span style={{ color: darkTheme.color.text.muted }}> — {entry.count}개 원소</span>
+                                            <span style={{ color: darkTheme.color.text.code, fontSize: 11 }}> (0x{entry.offset.toString(16)})</span>
+                                        </div>
+                                        <button onClick={() => onRemove(entry.id)}
+                                            style={{ background: "#2d0f0f", border: `1px solid ${darkTheme.color.text.error}`, borderRadius: 5, color: darkTheme.color.text.error, cursor: "pointer", fontSize: 11, padding: "3px 10px" }}>삭제</button>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div style={{ borderTop: `1px solid ${darkTheme.color.border.default}`, margin: "0 12px" }} />
+
+                            <div style={{ padding: "12px" }}>
+                                <Text variant="label" color="accent" style={{ marginBottom: 8, display: "block" }}>새 배열 업로드</Text>
+                                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                                    <input value={nameVal} onChange={e => setName(e.target.value)}
+                                        placeholder="변수명 (영문)" style={{ ...inputStyle, flex: 1 }} />
+                                    <Button variant="blocks" size="sm" onClick={() => fileRef.current?.click()}>.bin 파일 선택</Button>
+                                    <input ref={fileRef} type="file" accept=".bin" onChange={onFile} style={{ display: "none" }} />
+                                </div>
+                                <div style={{ fontSize: 11, color: darkTheme.color.text.muted, lineHeight: 1.6 }}>
+                                    형식: {fmt}<br />
+                                    블록 사용: <span style={{ color: darkTheme.color.text.code }}>{prefix} 변수 선언</span> → <span style={{ color: darkTheme.color.text.code }}>{prefix} 반복</span>
+                                </div>
+                            </div>
+                        </Box>
+                    </div>
+                );
+            })()}
 
             {/* Error modal */}
             {errorModal && (
