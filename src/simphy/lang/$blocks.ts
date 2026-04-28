@@ -7,6 +7,8 @@ import { FLOW_BLOCKS } from "./flow";
 import { I32_BLOCKS } from "./i32";
 import { LOCAL_BLOCKS } from "./locals";
 import { TENSOR_BLOCKS } from "./tensor";
+import { VECTOR_BLOCKS } from "./vector";
+import { BOUNDARY_BLOCKS } from "./boundary";
 
 
 export const CUSTOM_BLOCKS: BlockSet = zip(
@@ -18,4 +20,6 @@ export const CUSTOM_BLOCKS: BlockSet = zip(
     FLOW_BLOCKS,
     ARRAY_BLOCKS,
     TENSOR_BLOCKS,
+    VECTOR_BLOCKS,
+    BOUNDARY_BLOCKS,
 )

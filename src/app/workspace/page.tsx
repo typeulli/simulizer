@@ -39,6 +39,8 @@ import { useConsolePanel } from "@/components/console";
 import useLanguagePack from "@/hooks/useLanguagePack";
 import { XML_F64_BLOCKS } from "@/simphy/lang/f64";
 import { XML_FLOW_BLOCKS } from "@/simphy/lang/flow";
+import { XML_VECTOR_BLOCKS } from "@/simphy/lang/vector";
+import { XML_BOUNDARY_BLOCKS } from "@/simphy/lang/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
 
@@ -462,22 +464,11 @@ const BASE_TOOLBOX_XML = `
     ${XML_FLOW_BLOCKS}
     ${XML_ARRAY_BLOCKS}
     ${XML_TENSOR_BLOCKS}
+    ${XML_VECTOR_BLOCKS}
+    ${XML_BOUNDARY_BLOCKS}
     <category name="🔄 타입 변환" colour="45">
         <block type="f64_from_i32"></block>
         <block type="i32_from_f64"></block>
-    </category>
-    <category name="🗺 경계 데이터" colour="200">
-        <button text="⊕ 경계 데이터 관리" callbackKey="OPEN_BD2_MGR"></button>
-        <category name="2D" colour="200">
-            <block type="local_decl_bd2"></block>
-            <block type="local_get_bd2"></block>
-            <block type="flow_for_bd2"></block>
-        </category>
-        <category name="3D" colour="160">
-            <block type="local_decl_bd3"></block>
-            <block type="local_get_bd3"></block>
-            <block type="flow_for_bd3"></block>
-        </category>
     </category>
     <category name="🔧 함수" colour="290">
         <button text="⊕ 커스텀 함수 관리" callbackKey="OPEN_FUNC_MGR"></button>
@@ -940,6 +931,7 @@ const BlocklyWasmIDE: React.FC = () => {
             mod.add_import(new simulizer.ImportDef("debug",  "log_arr_i32",   "func", "log_arr_i32",   "(param i32 i32)"));
             mod.add_import(new simulizer.ImportDef("debug",  "log_arr_f64",   "func", "log_arr_f64",   "(param i32 i32)"));
             mod.add_import(new simulizer.ImportDef("debug",  "log_tensor",    "func", "log_tensor",    "(param i32)"));
+            mod.add_import(new simulizer.ImportDef("debug",  "log_vec2",      "func", "log_vec2",      "(param f64 f64)"));
             mod.add_import(new simulizer.ImportDef("debug",  "debug_bar",     "func", "debug_bar",     "(param i32 i32) (result i32)"));
             mod.add_import(new simulizer.ImportDef("debug",  "debug_bar_set", "func", "debug_bar_set", "(param i32 i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_random", "func", "tensor_random", "(param i32 i32 f64 f64 i32 i32) (result i32)"));
@@ -1060,17 +1052,53 @@ const BlocklyWasmIDE: React.FC = () => {
         if (!name) { alert("이름을 입력하세요."); return; }
         if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert("이름은 영문자/숫자/밑줄로만 구성되어야 합니다."); return; }
         if (bd2ArraysRef.current.some(b => b.name === name)) { alert(`'${name}' 이름이 이미 사용 중입니다.`); return; }
-        if (file.size % BD2_ELEM_BYTES !== 0) {
-            alert(`파일 크기가 올바르지 않습니다.\n56의 배수여야 합니다 (현재 ${file.size} 바이트).`);
-            e.target.value = "";
-            return;
-        }
         const reader = new FileReader();
         reader.onload = (ev) => {
             const buf = ev.target?.result as ArrayBuffer;
             if (!buf) return;
-            const count  = buf.byteLength / BD2_ELEM_BYTES;
-            const data   = new Float64Array(buf.slice(0));
+
+            // Detect packF64Arrays format: header[0] (uint32) == number of arrays (expect 8)
+            const maybeCount = new Uint32Array(buf, 0, 1)[0];
+            let data: Float64Array;
+            let count: number;
+
+            if (maybeCount === 8) {
+                // packF64Arrays format from boundary page: [t, x, y, dl, tx, ty, nx, ny]
+                // Convert to interleaved struct: [t, x, y, tx, ty, nx, ny] × N
+                const rawLen   = 1 + 8;
+                const padded   = rawLen % 2 === 0 ? rawLen : rawLen + 1; // = 10
+                const header   = new Uint32Array(buf, 0, padded);
+                const N        = header[1]; // all non-dl arrays have length N
+                let off        = padded * 4;
+                const arrays: Float64Array[] = [];
+                for (let i = 0; i < 8; i++) {
+                    const len = header[i + 1];
+                    arrays.push(new Float64Array(buf, off, len));
+                    off += len * 8;
+                }
+                // arrays: [t, x, y, dl, tx, ty, nx, ny] — drop dl (index 3)
+                const [t, x, y, , tx, ty, nx, ny] = arrays;
+                count = N;
+                data  = new Float64Array(count * 7);
+                for (let i = 0; i < count; i++) {
+                    data[i * 7 + 0] = t[i];
+                    data[i * 7 + 1] = x[i];
+                    data[i * 7 + 2] = y[i];
+                    data[i * 7 + 3] = tx[i];
+                    data[i * 7 + 4] = ty[i];
+                    data[i * 7 + 5] = nx[i];
+                    data[i * 7 + 6] = ny[i];
+                }
+            } else {
+                // Legacy interleaved format: 56 bytes per element
+                if (buf.byteLength % BD2_ELEM_BYTES !== 0) {
+                    alert(`파일 크기가 올바르지 않습니다.\n56의 배수여야 합니다 (현재 ${buf.byteLength} 바이트).`);
+                    return;
+                }
+                count = buf.byteLength / BD2_ELEM_BYTES;
+                data  = new Float64Array(buf.slice(0));
+            }
+
             const prevEnd = bd2ArraysRef.current.reduce(
                 (max, bd2) => Math.max(max, bd2.offset + bd2.count * BD2_ELEM_BYTES),
                 BD2_BASE_OFFSET,

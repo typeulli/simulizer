@@ -109,6 +109,12 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
                 log_tensor: (tensorId: number) => {
                     post({ type: "log", kind: "info", text: `🧠 ${js_tensor_toString(tensorId)}` });
                 },
+                log_vec2: (x: number, y: number) => {
+                    post({ type: "log", kind: "info", text: `📐 vec2(${x}, ${y})` });
+                },
+                log_vec3: (x: number, y: number, z: number) => {
+                    post({ type: "log", kind: "info", text: `📦 vec3(${x}, ${y}, ${z})` });
+                },
                 debug_bar: (min: number, max: number): number => {
                     const barId = ++barIdCounter;
                     post({ type: "bar_create", barId, min, max });

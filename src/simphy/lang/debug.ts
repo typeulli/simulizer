@@ -1,10 +1,11 @@
 import { simulizer } from "../engine";
 import { BlockBuilder, type BlockSet } from "./$base";
+import { vec3Type } from "./vector";
 
 export const DEBUG_BLOCKS: BlockSet = {
     DEBUG_LOG: new BlockBuilder("debug_log", undefined, 0, "콘솔에 값 출력", false)
         .addBody("로그 %1")
-        .addArgValue("VALUE", ["i32", "f64", "i32*", "f64*"])
+        .addArgValue("VALUE", ["i32", "f64", "i32*", "f64*", "vec2", "vec3"])
         .stmt((block, ctx) => {
             const valBlock = block.getInputTargetBlock("VALUE");
             if (!valBlock) return null;
@@ -50,6 +51,12 @@ export const DEBUG_BLOCKS: BlockSet = {
             if (t.equals(simulizer.f64)) {
                 return new simulizer.Call("log_f64", [val], simulizer.void_);
             }
+            if (t.name === "vec2") {
+                return new simulizer.Call("log_vec2", [val], simulizer.void_);
+            }
+            if (t.equals(vec3Type)) {
+                return new simulizer.Call("log_vec3", [val], simulizer.void_);
+            }
             // pointer → log_ptr (i32로 coerce)
             return new simulizer.Call("log_ptr", [ctx.coerce(val, simulizer.i32)], simulizer.void_);
         }),
@@ -84,6 +91,8 @@ export const DEBUG_BLOCKS: BlockSet = {
 export const XML_DEBUG_BLOCKS = `
 <category name="🐞 디버그" colour="0">
     <block type="debug_log"><value name="VALUE"><block type="i32_const"></block></value></block>
+    <block type="debug_log"><value name="VALUE"><block type="vec2_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value></block></value></block>
+    <block type="debug_log"><value name="VALUE"><block type="vec3_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value><value name="Z"><block type="f64_const"></block></value></block></value></block>
     <block type="debug_bar">
         <value name="MIN"><block type="i32_const"><field name="VALUE">0</field></block></value>
         <value name="MAX"><block type="i32_const"><field name="VALUE">100</field></block></value>
