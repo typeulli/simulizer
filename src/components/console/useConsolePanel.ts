@@ -1,13 +1,6 @@
-/**
- * useConsolePanel Hook
- * 모듈화된 콘솔 패널 시스템
- * 성능 최적화를 위해 DOM 직접 조작 유지
- */
-
 import { useRef, useCallback } from "react";
 import { consolePanelRegistry } from "./registry";
 import {
-  ConsolePanelRenderer,
   LogKind,
   PanelHandle,
 } from "./types";
@@ -147,7 +140,7 @@ export function useConsolePanel() {
 
     const placeholder = document.createElement("div");
     placeholder.setAttribute("data-placeholder", "");
-    placeholder.style.cssText = "color:#374151;font-size:12px";
+    placeholder.style.cssText = "color:var(--fg-muted);font-size:12px";
     placeholder.textContent = "▶ 실행 버튼을 눌러 시작하세요";
     area.appendChild(placeholder);
   }, []);

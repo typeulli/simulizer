@@ -46,7 +46,15 @@ const flags = [
     "--no-entry",
 ];
 
-const cmd = ["emcc", SRC, ...flags, "-o", OUT_JS].join(" ");
+const quote = (p) => `"${p}"`;
+
+const cmd = [
+    "emcc",
+    quote(SRC),
+    ...flags,
+    "-o",
+    quote(OUT_JS)
+].join(" ");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const kb     = (bytes) => (bytes / 1024).toFixed(1).padStart(7) + " KB";
@@ -65,6 +73,9 @@ try {
 
     const jsSize   = fs.statSync(OUT_JS).size;
     const wasmSize = fs.statSync(OUT_WA).size;
+
+    const DIST = path.join(PUBLIC, "dist");
+    fs.mkdirSync(DIST, { recursive: true });
 
     fs.renameSync(OUT_JS, path.join(PUBLIC, "dist", "treediff.js"));
     fs.renameSync(OUT_WA, path.join(PUBLIC, "dist", "treediff.wasm"));
@@ -85,9 +96,10 @@ try {
     );
     divider();
     console.log();
-} catch {
+} catch(err) {
     console.log();
     console.error(fmt.error("  ✗ Build failed"));
+    console.error(err.message);
     console.log();
     process.exit(1);
 }

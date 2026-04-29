@@ -586,27 +586,27 @@ function buildTensorGetByIndexCall(block: Blockly.Block, ctx: CompileCtx): simul
 }
 
 export const TENSOR_BLOCKS: BlockSet = {
-    TENSOR_RANDOM: new BlockBuilder("tensor_random", "i32", 160, "랜덤 텐서 생성 (id 반환)")
+    TENSOR_RANDOM: new BlockBuilder("tensor_random", "i32", 160,"랜덤 텐서 생성 (id 반환)")
         .addBody("TENSOR_RANDOM dist:%1 p1:%2 p2:%3 shape:%4")
         .addArgDropdown("DIST", [["uniform", "0"], ["normal", "1"], ["truncNormal", "2"]])
         .addArgValue("PARAM1", "f64")
         .addArgValue("PARAM2", "f64")
         .addArgValue("ARRAY", "i32*")
         .expr((block, ctx) => buildTensorRandomCall(block, ctx)),
-    TENSOR_CREATE: new BlockBuilder("tensor_create", "i32", 160, "텐서 생성 (id 반환)")
+    TENSOR_CREATE: new BlockBuilder("tensor_create", "i32", 160,"텐서 생성 (id 반환)")
         .addBody("TENSOR_CREATE (data: %1)")
         .addArgValue("ARRAY", "i32*")
         .expr((block, ctx) => buildTensorCreateCall(block, ctx)),
-    TENSOR_GET: new BlockBuilder("tensor_get", "i32", 160, "텐서 가져오기 (id 반환)")
+    TENSOR_GET: new BlockBuilder("tensor_get", "i32", 160,"텐서 가져오기 (id 반환)")
         .addBody("TENSOR_GET %1")
         .addArg("field_input", "NAME", "t")
         .expr((block) => buildTensorGetCall(block)),
-    TENSOR_SAVE: new BlockBuilder("tensor_save", undefined, 160, "텐서 저장 TENSOR %1 = %2")
+    TENSOR_SAVE: new BlockBuilder("tensor_save", undefined, 160,"텐서 저장 TENSOR %1 = %2")
         .addBody("TENSOR %1 = %2")
         .addArg("field_input", "NAME", "out")
         .addArgValue("EXPR", "i32")
         .stmt((block, ctx) => buildTensorSaveCall(block, ctx)),
-    TENSOR_BINOP: new BlockBuilder("tensor_binop", "i32", 160, "텐서 이항 연산")
+    TENSOR_BINOP: new BlockBuilder("tensor_binop", "i32", 160,"텐서 이항 연산")
         .addBody("%1 %2 %3")
         .addArgValue("LHS", "i32")
         .addArgDropdown("OP", [["+", "add"], ["-", "sub"], ["@", "matmul"], ["⊙", "elemul"]])
@@ -623,7 +623,7 @@ export const TENSOR_BLOCKS: BlockSet = {
                 [ctx.coerce(lhsExpr, simulizer.i32), ctx.coerce(rhsExpr, simulizer.i32)],
                 simulizer.i32);
         }),
-    TENSOR_UNOP: new BlockBuilder("tensor_unop", "i32", 160, "텐서 단항 연산")
+    TENSOR_UNOP: new BlockBuilder("tensor_unop", "i32", 160,"텐서 단항 연산")
         .addBody("%1 %2")
         .addArgDropdown("OP", [["neg", "neg"]])
         .addArgValue("TENSOR", "i32")
@@ -637,7 +637,7 @@ export const TENSOR_BLOCKS: BlockSet = {
                 [ctx.coerce(tensorExpr, simulizer.i32)],
                 simulizer.i32);
         }),
-    TENSOR_SCALE: new BlockBuilder("tensor_scale", "i32", 160, "텐서 상수배 %1 × %2")
+    TENSOR_SCALE: new BlockBuilder("tensor_scale", "i32", 160,"텐서 상수배 %1 × %2")
         .addBody("%1 × %2")
         .addArgValue("TENSOR", "i32")
         .addArgValue("SCALAR", "f64")
@@ -657,13 +657,13 @@ export const TENSOR_BLOCKS: BlockSet = {
                 simulizer.i32,
             );
         }),
-    TENSOR_SET_BY_INDEX: new BlockBuilder("tensor_set_by_index", undefined, 160, "텐서 요소 설정")
-        .addBody("dummy — Blockly.Blocks에서 직접 등록")
+    TENSOR_SET_BY_INDEX: new BlockBuilder("tensor_set_by_index", undefined, 160,"텐서 요소 설정")
+        .addBody("dummy — registered directly via Blockly.Blocks")
         .stmt((block, ctx) => buildTensorSetByIndexCall(block, ctx)),
-    TENSOR_GET_BY_INDEX: new BlockBuilder("tensor_get_by_index", "f64", 160, "텐서 요소 읽기")
-        .addBody("dummy — Blockly.Blocks에서 직접 등록")
+    TENSOR_GET_BY_INDEX: new BlockBuilder("tensor_get_by_index", "f64", 160,"텐서 요소 읽기")
+        .addBody("dummy — registered directly via Blockly.Blocks")
         .expr((block, ctx) => buildTensorGetByIndexCall(block, ctx)),
-    TENSOR_PERLIN: new BlockBuilder("tensor_perlin", "i32", 160, "Perlin Noise 벡터장 텐서 생성 (2, rows, cols)")
+    TENSOR_PERLIN: new BlockBuilder("tensor_perlin", "i32", 160,"Perlin Noise 벡터장 텐서 생성 (2, rows, cols)")
         .addBody("PERLIN_NOISE rows:%1 cols:%2")
         .addArgValue("ROWS", "i32")
         .addArgValue("COLS", "i32")
@@ -685,7 +685,7 @@ export const TENSOR_BLOCKS: BlockSet = {
                 simulizer.i32,
             );
         }),
-    TENSOR_SHOW_MAT: new BlockBuilder("tensor_show_mat", undefined, 160, "2D 텐서 시각화")
+    TENSOR_SHOW_MAT: new BlockBuilder("tensor_show_mat", undefined, 160,"2D 텐서 시각화")
         .addBody("show_mat %1")
         .addArgValue("TENSOR_ID", "i32")
         .stmt((block, ctx) => {
@@ -703,8 +703,7 @@ export const TENSOR_BLOCKS: BlockSet = {
 
 /** tensor_set_by_index / tensor_get_by_index를 동적 입력(n차원 인덱스)으로 등록한다. */
 export function registerDynamicTensorBlocks() {
-    if (!Blockly.Blocks["tensor_set_by_index"]) {
-        Blockly.Blocks["tensor_set_by_index"] = {
+    Blockly.Blocks["tensor_set_by_index"] = {
             init(this: Blockly.Block) {
                 this.appendDummyInput("HEADER")
                     .appendField("TENSOR")
@@ -747,10 +746,8 @@ export function registerDynamicTensorBlocks() {
                 }
             },
         };
-    }
 
-    if (!Blockly.Blocks["tensor_get_by_index"]) {
-        Blockly.Blocks["tensor_get_by_index"] = {
+    Blockly.Blocks["tensor_get_by_index"] = {
             init(this: Blockly.Block) {
                 this.appendDummyInput("HEADER")
                     .appendField("TENSOR")
@@ -791,11 +788,10 @@ export function registerDynamicTensorBlocks() {
                 }
             },
         };
-    }
 }
 
-export const XML_TENSOR_BLOCKS = `
-<category name="📐 텐서" colour="160">
+export function xmlTensorBlocks(cat: string) {
+    return `<category name="${cat}" colour="${160}">
     <block type="tensor_create">
         <value name="ARRAY"><block type="local_array_get_i32"></block></value>
     </block>
@@ -828,5 +824,5 @@ export const XML_TENSOR_BLOCKS = `
     <block type="tensor_show_mat">
         <value name="TENSOR_ID"><block type="tensor_get"></block></value>
     </block>
-</category>
-`
+</category>`;
+}

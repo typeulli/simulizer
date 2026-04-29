@@ -1,20 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-mono",
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "simulizer",
-  description: "Simulizing tools on block programming",
+  title: "Simulizer",
+  description: "Visual physics simulation with block programming",
 };
 
 export default function RootLayout({
@@ -24,10 +20,27 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      lang="ko"
+      className={` ${jetbrainsMono.variable} h-full`}
+      
+      data-theme="light"
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <head>
+        <link
+          rel="stylesheet"
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css"
+        />
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function(){
+            try {
+              var m = document.cookie.match(/(?:^|;\\s*)theme=([^;]+)/);
+              if (m) document.documentElement.setAttribute('data-theme', m[1]);
+            } catch(e) {}
+          })();
+        `.trim() }} />
+      </head>
+      <body className="min-h-full flex flex-col antialiased">{children}</body>
     </html>
   );
 }

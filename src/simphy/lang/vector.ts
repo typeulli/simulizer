@@ -533,8 +533,8 @@ class Vec3ProjVec extends simulizer.Expr {
 
 // ── 블록 정의 ──────────────────────────────────────────────────────────────────
 
-const C2 = 200;  // vec2 colour
-const C3 = 160;  // vec3 colour
+const C2 = 200;
+const C3 = 160;
 
 export const VECTOR_BLOCKS: BlockSet = {
 
@@ -563,7 +563,7 @@ export const VECTOR_BLOCKS: BlockSet = {
         }),
 
     VEC2_DECL: new BlockBuilder("vec2_decl", undefined, C2, "vec2 변수 선언 및 초기화")
-        .addBody("vec2 변수 %1 = %2")
+        .addBody("vec2 var %1 = %2")
         .addArg("field_input", "NAME", "v")
         .addArgValue("VEC", "vec2")
         .stmt((block, ctx) => {
@@ -753,7 +753,7 @@ export const VECTOR_BLOCKS: BlockSet = {
         }),
 
     VEC3_DECL: new BlockBuilder("vec3_decl", undefined, C3, "vec3 변수 선언 및 초기화")
-        .addBody("vec3 변수 %1 = %2")
+        .addBody("vec3 var %1 = %2")
         .addArg("field_input", "NAME", "v")
         .addArgValue("VEC", "vec3")
         .stmt((block, ctx) => {
@@ -934,9 +934,9 @@ export const VECTOR_BLOCKS: BlockSet = {
         }),
 }
 
-export const XML_VECTOR_BLOCKS = `
-<category name="📐 벡터" colour="200">
-    <category name="2D vec2" colour="200">
+export function xmlVectorBlocks(cat: string) {
+    return `<category name="${cat}" colour="${200}">
+    <category name="2D vec2" colour="${200}">
         <block type="vec2_literal">
             <value name="X"><block type="f64_const"></block></value>
             <value name="Y"><block type="f64_const"></block></value>
@@ -967,7 +967,7 @@ export const XML_VECTOR_BLOCKS = `
         <block type="vec2_proj_scalar"></block>
         <block type="vec2_proj_vec"></block>
     </category>
-    <category name="3D vec3" colour="160">
+    <category name="3D vec3" colour="${160}">
         <block type="vec3_literal">
             <value name="X"><block type="f64_const"></block></value>
             <value name="Y"><block type="f64_const"></block></value>
@@ -1003,4 +1003,5 @@ export const XML_VECTOR_BLOCKS = `
         <block type="vec3_proj_scalar"></block>
         <block type="vec3_proj_vec"></block>
     </category>
-</category>`
+</category>`;
+}

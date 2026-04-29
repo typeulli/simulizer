@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { computeBoundary, type BoundaryData } from "@/lib/bctool2d/bctool2d";
 import { packF64Arrays, unpackF64Arrays } from "@/utils/ziparray";
 import useDownloader from "@/hooks/useDownloader";
+import { token } from "@/components/tokens";
+import { Icon } from "@/components/atoms/Icons";
+import { Button } from "@/components/atoms/Button";
+import { Input, Textarea } from "@/components/atoms/Input";
+import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 
 /* ── Blues colormap ──────────────────────────────────────────── */
 const BLUES: [number, number, number][] = [
@@ -24,18 +29,10 @@ function bluesAt(t: number): string {
 
 const BLUES_CS = BLUES.map((c, i) => [i / (BLUES.length - 1), `rgb(${c.join(",")})`]);
 
-/* ── shared Plotly layout ────────────────────────────────────── */
-const BASE = {
-    paper_bgcolor: "white",
-    plot_bgcolor:  "white",
-    font:          { family: "monospace", size: 13, color: "#333" },
-    xaxis:         { gridcolor: "#e8e8e8", linecolor: "#aaa", title: { text: "x" } },
-    yaxis:         { gridcolor: "#e8e8e8", linecolor: "#aaa", title: { text: "y" }, scaleanchor: "x", scaleratio: 1 },
-    margin:        { l: 60, r: 30, t: 50, b: 50 },
-    width:         520,
-    height:        440,
-};
-
+function cssVar(name: string): string {
+    if (typeof document === "undefined") return "";
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
 
 /* ── trace builders ─────────────────────────────────────────── */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -147,59 +144,6 @@ interface Params {
     dt: number;
 }
 
-/* ── styles ──────────────────────────────────────────────────── */
-const S = {
-    page: {
-        fontFamily: "monospace",
-        padding: 24,
-        background: "#f8f8f8",
-        minHeight: "100vh",
-        color: "#222",
-    } as React.CSSProperties,
-    card: {
-        background: "white",
-        border: "1px solid #ddd",
-        borderRadius: 6,
-        padding: 16,
-        marginBottom: 12,
-    } as React.CSSProperties,
-    label: {
-        display: "block",
-        fontSize: 11,
-        color: "#666",
-        marginBottom: 4,
-    } as React.CSSProperties,
-    textarea: {
-        width: "100%",
-        fontFamily: "monospace",
-        fontSize: 12,
-        border: "1px solid #ccc",
-        borderRadius: 4,
-        padding: "6px 8px",
-        resize: "vertical",
-        background: "#fafafa",
-        boxSizing: "border-box",
-    } as React.CSSProperties,
-    input: {
-        fontFamily: "monospace",
-        fontSize: 12,
-        border: "1px solid #ccc",
-        borderRadius: 4,
-        padding: "4px 8px",
-        width: 80,
-        background: "#fafafa",
-    } as React.CSSProperties,
-    btn: (color: string, bg: string) => ({
-        fontFamily: "monospace",
-        fontSize: 12,
-        padding: "5px 12px",
-        border: `1px solid ${color}`,
-        borderRadius: 4,
-        background: bg,
-        color: color,
-        cursor: "pointer",
-    } as React.CSSProperties),
-};
 
 /* ── page ───────────────────────────────────────────────────── */
 let _nextId = 1;
@@ -300,19 +244,32 @@ export default function BoundaryPage() {
             const mod = await import("plotly.js-dist-min") as any;
             const P   = mod.default ?? mod;
 
-            // dl plot — each curve independently normalized, colorbar only on first
+            const bgColor   = cssVar("--bg") || "#fff";
+            const fgColor   = cssVar("--fg-muted") || "#555";
+            const gridColor = cssVar("--border") || "#e8e8e8";
+
+            const BASE = {
+                paper_bgcolor: bgColor,
+                plot_bgcolor:  bgColor,
+                font:          { family: "monospace", size: 12, color: fgColor },
+                xaxis:         { gridcolor: gridColor, linecolor: gridColor, title: { text: "x" } },
+                yaxis:         { gridcolor: gridColor, linecolor: gridColor, title: { text: "y" }, scaleanchor: "x", scaleratio: 1 },
+                margin:        { l: 60, r: 30, t: 50, b: 50 },
+                width:         480,
+                height:        400,
+            };
+
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const dlTraces: any[] = data.flatMap((d, i) => buildDlTraces(d, i === 0));
             if (dlRef.current) {
                 P.newPlot(dlRef.current, dlTraces, {
                     ...BASE,
-                    title: { text: "Boundary Segments Colored by Normalized dl", font: { size: 14 } },
-                    xaxis: { ...BASE.xaxis, title: { text: "xt" } },
-                    yaxis: { ...BASE.yaxis, title: { text: "yt" } },
+                    title: { text: "Boundary Segments — dl", font: { size: 13, color: fgColor } },
+                    xaxis: { ...BASE.xaxis, title: { text: "x" } },
+                    yaxis: { ...BASE.yaxis, title: { text: "y" } },
                 });
             }
 
-            // tangent / normal — overlay all curves
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const tanTraces: any[] = [];
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -334,14 +291,14 @@ export default function BoundaryPage() {
             if (tanRef.current) {
                 P.newPlot(tanRef.current, tanTraces, {
                     ...BASE,
-                    title: { text: "Tangent Vectors", font: { size: 14 } },
+                    title: { text: "Tangent Vectors", font: { size: 13, color: fgColor } },
                     annotations: tanAnnotations,
                 });
             }
             if (norRef.current) {
                 P.newPlot(norRef.current, norTraces, {
                     ...BASE,
-                    title: { text: "Normal Vectors", font: { size: 14 } },
+                    title: { text: "Normal Vectors", font: { size: 13, color: fgColor } },
                     annotations: norAnnotations,
                 });
             }
@@ -352,126 +309,133 @@ export default function BoundaryPage() {
 
     /* ── UI ───────────────────────────────────────────────────── */
     return (
-        <main style={S.page}>
-            <h2 style={{ marginBottom: 20, fontSize: 15 }}>bctool2d — boundary visualisation</h2>
+        <div style={{ minHeight: "100vh", background: token.color.bg, color: token.color.fg, fontFamily: token.font.family.mono, display: "flex", flexDirection: "column" }}>
 
-            {/* param row */}
-            <div style={{ ...S.card, display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
-                {(["tMin", "tMax", "dt"] as const).map(k => (
-                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                        <span style={{ color: "#555" }}>{k}</span>
-                        <input
-                            style={S.input}
-                            type="number"
-                            value={params[k]}
-                            step={k === "dt" ? 0.01 : 1}
-                            onChange={e => setParams(p => ({ ...p, [k]: parseFloat(e.target.value) || 0 }))}
-                        />
-                    </label>
-                ))}
-            </div>
-
-            {/* entry list */}
-            {entries.map((entry, idx) => (
-                <div key={entry.id} style={S.card}>
-                    {/* card header */}
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 12, color: "#888" }}>curve {idx + 1}</span>
-                        <select
-                            value={entry.kind}
-                            onChange={e => changeKind(entry.id, e.target.value as "wasm" | "file")}
-                            style={{ fontFamily: "monospace", fontSize: 12, border: "1px solid #ccc", borderRadius: 4, padding: "3px 6px", background: "#fafafa" }}
-                        >
-                            <option value="wasm">WASM</option>
-                            <option value="file">File</option>
-                        </select>
-                        <button
-                            style={{ ...S.btn("#c00", "white"), marginLeft: "auto" }}
-                            onClick={() => removeEntry(entry.id)}
-                            disabled={entries.length === 1}
-                        >×</button>
-                    </div>
-
-                    {/* card body */}
-                    {entry.kind === "wasm" ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                            <div>
-                                <label style={S.label}>X_FN (WAT)</label>
-                                <textarea
-                                    style={{ ...S.textarea, height: 80 }}
-                                    placeholder={"local.get 0\nlocal.get 0\nf64.mul"}
-                                    value={entry.xFn}
-                                    onChange={e => updateWasm(entry.id, "xFn", e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <label style={S.label}>Y_FN (WAT)</label>
-                                <textarea
-                                    style={{ ...S.textarea, height: 80 }}
-                                    placeholder={"local.get 0\nf64.const 2\nf64.mul"}
-                                    value={entry.yFn}
-                                    onChange={e => updateWasm(entry.id, "yFn", e.target.value)}
-                                />
-                            </div>
-                        </div>
-                    ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                            <input
-                                type="file"
-                                accept=".bin"
-                                style={{ fontFamily: "monospace", fontSize: 12 }}
-                                onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(entry.id, f); }}
-                            />
-                            {entry.curves !== null && (
-                                <span style={{ fontSize: 11, color: "#1a6" }}>
-                                    {entry.curves.length} curve{entry.curves.length !== 1 ? "s" : ""} loaded
-                                </span>
-                            )}
-                        </div>
-                    )}
+            {/* Header */}
+            <header style={{ display: "flex", alignItems: "center", gap: 8, padding: `0 ${token.space.sp4}`, height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
+                <TopbarBrand />
+                <span style={{ color: token.color.fgSubtle, fontWeight: 300 }}>/</span>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", borderRadius: token.radius.sm, color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>
+                    <Icon.Grid size={12} />
+                    <span>경계조건 2D</span>
                 </div>
-            ))}
 
-            {/* action buttons */}
-            <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
-                <button style={S.btn("#555", "white")} onClick={() => addEntry("wasm")}>+ WASM</button>
-                <button style={S.btn("#555", "white")} onClick={() => addEntry("file")}>+ File</button>
-                <button
-                    style={S.btn("white", running ? "#999" : "#1a6")}
-                    onClick={handleRun}
-                    disabled={running}
-                >
-                    {running ? "computing…" : "▶ Run"}
-                </button>
-                {data.length > 0 && (
-                    <button
-                        style={S.btn("#336", "white")}
-                        onClick={() => {
-                            const arrays = data.flatMap(d => [d.t, d.x, d.y, d.dl, d.tangent_x, d.tangent_y, d.normal_x, d.normal_y]);
-                            const buf = packF64Arrays(...arrays);
-                            download("boundary2d.bin", new Blob([buf]));
-                        }}
-                    >↓ Download</button>
-                )}
-            </div>
+                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+                    {data.length > 0 && (
+                        <Button variant="ghost" size="sm"
+                            leading={<Icon.Download size={11} />}
+                            onClick={() => {
+                                const arrays = data.flatMap(d => [d.t, d.x, d.y, d.dl, d.tangent_x, d.tangent_y, d.normal_x, d.normal_y]);
+                                const buf = packF64Arrays(...arrays);
+                                download("boundary2d.bin", new Blob([buf]));
+                            }}
+                        >Download</Button>
+                    )}
+                    <Button variant="ai" size="sm" disabled={running}
+                        leading={running ? <Icon.Square size={10} /> : <Icon.Play size={11} fill />}
+                        onClick={handleRun}
+                    >{running ? "computing…" : "Run"}</Button>
+                </div>
+            </header>
 
-            {/* error */}
-            {error && <pre style={{ color: "red", marginBottom: 16 }}>{error}</pre>}
+            {/* Body */}
+            <main style={{ flex: 1, padding: token.space.sp6, display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
 
-            {/* plots */}
-            {data.length > 0 && (
-                <>
-                    <p style={{ fontSize: 12, color: "#666", marginBottom: 12 }}>
-                        {data.length} curve{data.length > 1 ? "s" : ""} —{" "}
-                        {data.reduce((s, d) => s + d.count, 0)} pts total
-                    </p>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
-                        <div ref={dlRef}  />
-                        <div ref={tanRef} />
-                        <div ref={norRef} />
+                {/* Params */}
+                <div style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}`, display: "flex", gap: token.space.sp6, alignItems: "center", flexWrap: "wrap" }}>
+                    {(["tMin", "tMax", "dt"] as const).map(k => (
+                        <label key={k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: token.font.size.fs12 }}>
+                            <span style={{ color: token.color.fgMuted }}>{k}</span>
+                            <Input size="sm" type="number"
+                                value={params[k]}
+                                step={k === "dt" ? 0.01 : 1}
+                                onChange={e => setParams(p => ({ ...p, [k]: parseFloat(e.target.value) || 0 }))}
+                                style={{ width: 80, fontFamily: token.font.family.mono }}
+                            />
+                        </label>
+                    ))}
+                </div>
+
+                {/* Entry list */}
+                {entries.map((entry, idx) => (
+                    <div key={entry.id} style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}` }}>
+                        {/* Card header */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                            <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>curve {idx + 1}</span>
+                            {(["wasm", "file"] as const).map(k => (
+                                <Button key={k} size="xs"
+                                    variant={entry.kind === k ? "accent" : "ghost"}
+                                    onClick={() => changeKind(entry.id, k)}
+                                    style={{ fontFamily: token.font.family.mono }}
+                                >{k.toUpperCase()}</Button>
+                            ))}
+                            <Button variant="danger" size="xs"
+                                style={{ marginLeft: "auto" }}
+                                onClick={() => removeEntry(entry.id)}
+                                disabled={entries.length === 1}
+                            >×</Button>
+                        </div>
+
+                        {/* Card body */}
+                        {entry.kind === "wasm" ? (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                                {(["xFn", "yFn"] as const).map(field => (
+                                    <div key={field}>
+                                        <div style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>{field} (WAT)</div>
+                                        <Textarea size="sm"
+                                            placeholder={field === "xFn" ? "local.get 0\nlocal.get 0\nf64.mul" : "local.get 0\nf64.const 2\nf64.mul"}
+                                            value={entry[field]}
+                                            onChange={e => updateWasm(entry.id, field, e.target.value)}
+                                            style={{ height: 120, fontFamily: token.font.family.mono, background: token.color.bgCanvas, color: token.color.fg, resize: "vertical" }}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                <input
+                                    type="file"
+                                    accept=".bin"
+                                    style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs12, color: token.color.fgMuted }}
+                                    onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(entry.id, f); }}
+                                />
+                                {entry.curves !== null && (
+                                    <span style={{ fontSize: token.font.size.fs11, color: token.color.success }}>
+                                        {entry.curves.length} curve{entry.curves.length !== 1 ? "s" : ""} loaded
+                                    </span>
+                                )}
+                            </div>
+                        )}
                     </div>
-                </>
-            )}
-        </main>
+                ))}
+
+                {/* Add buttons */}
+                <div style={{ display: "flex", gap: 6 }}>
+                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={() => addEntry("wasm")}>WASM</Button>
+                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={() => addEntry("file")}>File</Button>
+                </div>
+
+                {/* Error */}
+                {error && (
+                    <div style={{ padding: "8px 12px", background: token.color.dangerSoft, border: `1px solid ${token.color.dangerBorder}`, borderRadius: token.radius.sm, fontSize: token.font.size.fs12, color: token.color.danger, fontFamily: token.font.family.mono }}>
+                        {error}
+                    </div>
+                )}
+
+                {/* Results */}
+                {data.length > 0 && (
+                    <>
+                        <p style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
+                            {data.length} curve{data.length > 1 ? "s" : ""} — {data.reduce((s, d) => s + d.count, 0)} pts total
+                        </p>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: token.space.sp6, alignItems: "flex-start" }}>
+                            <div ref={dlRef}  />
+                            <div ref={tanRef} />
+                            <div ref={norRef} />
+                        </div>
+                    </>
+                )}
+            </main>
+        </div>
     );
 }

@@ -34,9 +34,10 @@ export const BOOL_BLOCKS: BlockSet = {
         }),
 }
 
-export const XML_BOOL_BLOCKS = `
-<category name="✅ 불리언" colour="60">
+export function xmlBoolBlocks(cat: string) {
+    return `<category name="${cat}" colour="${60}">
     <block type="bool_const"></block>
     <block type="bool_binop"></block>
     <block type="bool_not"></block>
-</category>`
+</category>`;
+}

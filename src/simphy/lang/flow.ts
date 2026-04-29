@@ -3,7 +3,7 @@ import { BlockBuilder, type BlockSet } from "./$base";
 
 export const FLOW_BLOCKS: BlockSet = {
     FLOW_IF: new BlockBuilder("flow_if", undefined, 120, "조건 분기")
-        .addBody("만약 %1")
+        .addBody("if %1")
         .addArgValue("COND", "bool")
         .addBody("then %1")
         .addArgStmt("THEN")
@@ -17,9 +17,9 @@ export const FLOW_BLOCKS: BlockSet = {
             return new simulizer.If(ctx.coerce(cond, simulizer.i32), thenExprs, elseExprs);
         }),
     FLOW_WHILE: new BlockBuilder("flow_while", undefined, 120, "while 반복문")
-        .addBody("%1 동안")
+        .addBody("while %1")
         .addArgValue("COND", "bool")
-        .addBody("반복 %1")
+        .addBody("do %1")
         .addArgStmt("BODY")
         .stmt((block, ctx) => {
         // ── while ─────────────────────────────────────────────────────────────
@@ -50,11 +50,11 @@ export const FLOW_BLOCKS: BlockSet = {
         return new simulizer.Block(breakLabel, [loop]);
     }),
     FLOW_FOR: new BlockBuilder("flow_for", undefined, 120, "for 반복문")
-        .addBody("변수 %1 = %2부터 %3까지")
+        .addBody("var %1 = %2 to %3")
         .addArg("field_input", "VAR", "i")
         .addArgValue("START", "i32")
         .addArgValue("END", "i32")
-        .addBody("반복 %1")
+        .addBody("do %1")
         .addArgStmt("BODY")
         .stmt((block, ctx) => {
             const varName = block.getFieldValue("VAR") as string;
@@ -98,12 +98,12 @@ export const FLOW_BLOCKS: BlockSet = {
         .addArgValue("FALSE", "f64"),
 }
 
-export const XML_FLOW_BLOCKS = `
-<category name="🔀 제어 흐름" colour="120">
+export function xmlFlowBlocks(cat: string) {
+    return `<category name="${cat}" colour="${120}">
     <block type="flow_if"></block>
     <block type="flow_while"></block>
     <block type="flow_for"></block>
     <block type="select_i32"></block>
     <block type="select_f64"></block>
-</category>
-`;
+</category>`;
+}

@@ -1,10 +1,3 @@
-/**
- * wasm-worker.ts
- * Isolates WASM execution from the main thread to prevent blocking the UI.
- * Worker is created once on app mount and then reused.
- * TF.js backend initialization cost occurs only on first run.
- */
-
 import * as tf from "@tensorflow/tfjs";
 import "@tensorflow/tfjs-backend-webgpu";
 import {
@@ -31,7 +24,8 @@ import { simulizer } from "./engine";
 
 export type WorkerInMsg =
     | { type: "run"; wasmBuffer: ArrayBuffer }
-    | { type: "init" };
+    | { type: "init" }
+    | { type: "switch-backend"; backend: string };
 
 export type WorkerOutMsg =
     | { type: "ready" }
@@ -42,7 +36,8 @@ export type WorkerOutMsg =
     | { type: "visual_vec"; dx: number[]; dy: number[]; rows: number; cols: number }
     | { type: "result"; value: string }
     | { type: "done" }
-    | { type: "error"; message: string };
+    | { type: "error"; message: string }
+    | { type: "backend-switched"; backend: string };
 
 function post(msg: WorkerOutMsg) {
     self.postMessage(msg);
@@ -75,6 +70,21 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
     if (msg.type === "init") {
         await tfReadyPromise;
         post({ type: "ready" });
+        return;
+    }
+
+    if (msg.type === "switch-backend") {
+        try {
+            const ok = await tf.setBackend(msg.backend);
+            if (ok) {
+                await tf.ready();
+                post({ type: "backend-switched", backend: tf.getBackend() });
+            } else {
+                post({ type: "error", message: `Failed to switch to backend: ${msg.backend}` });
+            }
+        } catch (err) {
+            post({ type: "error", message: `Error switching backend: ${err instanceof Error ? err.message : String(err)}` });
+        }
         return;
     }
 

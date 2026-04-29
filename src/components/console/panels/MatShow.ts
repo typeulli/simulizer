@@ -1,5 +1,4 @@
 import { ConsolePanelRenderer } from "../types";
-import { darkTheme } from "@/components/tokens";
 
 interface MatShowState {
     rows: number;
@@ -27,14 +26,14 @@ export class MatShowPanel implements ConsolePanelRenderer {
     private openLightbox(src: string): void {
         const overlay = document.createElement("div");
         overlay.style.cssText =
-            "position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;" +
+            "position:fixed;inset:0;background:var(--scrim);display:flex;align-items:center;" +
             "justify-content:center;z-index:99999;cursor:zoom-out;";
 
         const img = document.createElement("img");
         img.src = src;
         img.style.cssText =
             "image-rendering:pixelated;max-width:90vw;max-height:90vh;" +
-            "border:2px solid #a78bfa;border-radius:4px;box-shadow:0 0 40px #a78bfa55;";
+            "border:2px solid var(--accent);border-radius:4px;box-shadow:0 0 40px color-mix(in oklch,var(--accent) 33%,transparent);";
 
         overlay.appendChild(img);
         overlay.addEventListener("click", () => document.body.removeChild(overlay));
@@ -51,12 +50,11 @@ export class MatShowPanel implements ConsolePanelRenderer {
         const wrapper = document.createElement("div");
         wrapper.id = `panel-${this.id}`;
         wrapper.style.cssText =
-            "background:#111827;border-radius:4px;padding:6px 8px;border-left:3px solid #a78bfa;font-family:" +
-            darkTheme.font.mono;
+            "background:var(--bg-raised);border-radius:4px;padding:6px 8px;border-left:3px solid var(--accent);font-family:var(--font-mono)";
 
         const hdr = document.createElement("div");
         hdr.style.cssText =
-            "font-size:11px;color:#a78bfa;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center";
+            "font-size:11px;color:var(--accent);margin-bottom:4px;display:flex;justify-content:space-between;align-items:center";
 
         const hdrLabel = document.createElement("span");
         hdrLabel.textContent = `🎨 Matrix [${this.state.rows}×${this.state.cols}]`;
@@ -64,7 +62,7 @@ export class MatShowPanel implements ConsolePanelRenderer {
 
         if (this.state.elapsed !== undefined) {
             const tsSpan = document.createElement("span");
-            tsSpan.style.cssText = "color:#4b5563;font-size:10px;white-space:nowrap";
+            tsSpan.style.cssText = "color:var(--fg-subtle);font-size:10px;white-space:nowrap";
             tsSpan.textContent = `+${this.state.elapsed}ms`;
             hdr.appendChild(tsSpan);
         }
@@ -72,13 +70,13 @@ export class MatShowPanel implements ConsolePanelRenderer {
         const img = document.createElement("img");
         img.src = this.state.imageUrl;
         img.style.cssText =
-            "image-rendering:pixelated;max-width:100%;border:1px solid #2a2060;border-radius:2px;" +
+            "image-rendering:pixelated;max-width:100%;border:1px solid var(--border);border-radius:2px;" +
             "display:block;cursor:zoom-in;";
         img.title = "클릭하여 확대";
         img.addEventListener("click", () => this.openLightbox(img.src));
 
         const info = document.createElement("div");
-        info.style.cssText = "font-size:10px;color:#64748b;margin-top:3px";
+        info.style.cssText = "font-size:10px;color:var(--fg-subtle);margin-top:3px";
         info.textContent = `${this.state.rows} rows × ${this.state.cols} cols`;
 
         wrapper.appendChild(hdr);

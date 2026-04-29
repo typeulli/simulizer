@@ -1,5 +1,5 @@
 import React from "react";
-import { darkTheme } from "../tokens";
+import { token } from "@/components/tokens";
 
 type RunState = "idle" | "compiling" | "running" | "done" | "error";
 
@@ -8,11 +8,11 @@ interface StatusDotProps {
 }
 
 const colorMap: Record<RunState, string> = {
-  idle:      "#374151",
-  compiling: darkTheme.color.text.warning,
-  running:   darkTheme.color.text.warning,
-  done:      darkTheme.color.text.success,
-  error:     darkTheme.color.text.error,
+  idle:      token.color.fgSubtle,
+  compiling: token.color.warning,
+  running:   token.color.warning,
+  done:      token.color.success,
+  error:     token.color.danger,
 };
 
 export function StatusDot({ runState }: StatusDotProps) {
@@ -21,14 +21,15 @@ export function StatusDot({ runState }: StatusDotProps) {
   return (
     <span
       style={{
-        width:       8,
-        height:      8,
-        borderRadius: "50%",
-        display:     "inline-block",
-        marginRight: 6,
-        background:  bg,
-        boxShadow:   isActive ? `0 0 6px ${bg}` : "none",
-        flexShrink:  0,
+        width:        8,
+        height:       8,
+        borderRadius: token.radius.full,
+        display:      "inline-block",
+        marginRight:  6,
+        background:   bg,
+        boxShadow:    isActive ? `0 0 6px ${bg}` : "none",
+        flexShrink:   0,
+        transition:   `background ${token.motion.transition.base}`,
       }}
     />
   );

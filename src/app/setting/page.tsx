@@ -1,18 +1,24 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { darkTheme } from "@/components/tokens";
-
-const t = darkTheme;
+import { token } from "@/components/tokens";
+import { Icon } from "@/components/atoms/Icons";
+import { Button } from "@/components/atoms/Button";
+import { TopbarBrand } from "@/components/organisms/TopbarBrand";
+import useLanguagePack from "@/hooks/useLanguagePack";
+import Link from "next/link";
 
 const LANGUAGES = [
-  { code: "en", name: "English",  nativeName: "English",  flag: "🇺🇸" },
-  { code: "ko", name: "Korean",   nativeName: "한국어",    flag: "🇰🇷" },
+  { code: "en", name: "English", nativeName: "English", flag: "🇺🇸" },
+  { code: "ko", name: "Korean", nativeName: "한국어", flag: "🇰🇷" },
 ];
 
 const LS_LANG_KEY = "language";
 
 export default function SettingPage() {
+  const [, , pack] = useLanguagePack();
+  const t = pack.setting;
+
   const [selected, setSelected] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -40,49 +46,79 @@ export default function SettingPage() {
   return (
     <div style={{
       minHeight: "100vh",
-      background: t.color.bg.root,
-      fontFamily: t.font.mono,
-      color: t.color.text.primary,
+      background: token.color.bg,
+      fontFamily: token.font.family.sans,
+      color: token.color.fg,
       display: "flex",
       flexDirection: "column",
     }}>
       {/* Header */}
       <header style={{
-        background: t.color.bg.surface,
-        borderBottom: `1px solid ${t.color.border.default}`,
-        padding: `${t.spacing.lg}px ${t.spacing.xl * 2}px`,
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
         alignItems: "center",
-        gap: t.spacing.md,
+        padding: `0 ${token.space.sp4}`,
+        height: 48,
+        borderBottom: `1px solid ${token.color.border}`,
+        background: token.color.bg,
+        flexShrink: 0,
       }}>
-        <a
-          href="/workspace"
-          style={{
-            color: t.color.text.muted,
-            textDecoration: "none",
-            fontSize: t.fontSize.sm,
-            display: "flex",
+        {/* Left: Brand + Breadcrumb */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap" }}>
+          <TopbarBrand pack={pack} />
+          <span style={{ color: token.color.fgSubtle, fontWeight: 300 }}>/</span>
+          <div style={{
+            display: "inline-flex",
             alignItems: "center",
-            gap: t.spacing.xs,
-            transition: "color 0.15s",
-          }}
-          onMouseEnter={e => (e.currentTarget.style.color = t.color.text.primary)}
-          onMouseLeave={e => (e.currentTarget.style.color = t.color.text.muted)}
-        >
-          ← Back
-        </a>
-        <span style={{ color: t.color.border.default }}>|</span>
-        <span style={{
-          fontSize: t.fontSize.base,
-          background: t.color.gradient.title,
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-          fontWeight: 700,
-          letterSpacing: "0.05em",
-        }}>
-          SIMULIZER
-        </span>
-        <span style={{ color: t.color.text.muted, fontSize: t.fontSize.sm }}>/ Settings</span>
+            gap: 6,
+            padding: "4px 8px",
+            borderRadius: token.radius.sm,
+            color: token.color.fgMuted,
+            fontSize: 12,
+            fontFamily: token.font.family.mono
+          }}>
+            <Icon.Settings size={12} />
+            <span>{t.breadcrumb}</span>
+          </div>
+        </div>
+
+        {/* Center: Section Title */}
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <span style={{ fontSize: 12, fontWeight: 500, color: token.color.fgSubtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            {t.header_title}
+          </span>
+        </div>
+
+        {/* Right: Actions */}
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <Link
+            href="/workspace"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 12px",
+              borderRadius: token.radius.sm,
+              background: token.color.bgSubtle,
+              border: `1px solid ${token.color.border}`,
+              color: token.color.fgMuted,
+              fontSize: 12,
+              fontWeight: 500,
+              textDecoration: "none",
+              transition: token.motion.transition.fast,
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.color = token.color.fgStrong;
+              e.currentTarget.style.background = token.color.surfaceHover;
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.color = token.color.fgMuted;
+              e.currentTarget.style.background = token.color.bgSubtle;
+            }}
+          >
+            <span>{t.go_to_workspace}</span>
+          </Link>
+        </div>
       </header>
 
       {/* Body */}
@@ -90,51 +126,51 @@ export default function SettingPage() {
         flex: 1,
         display: "flex",
         justifyContent: "center",
-        padding: `${t.spacing.xl * 3}px ${t.spacing.xl}px`,
+        padding: `${token.space.sp16} ${token.space.sp4}`,
       }}>
-        <div style={{ width: "100%", maxWidth: 560 }}>
+        <div style={{ width: "100%", maxWidth: 520 }}>
 
           {/* Section title */}
-          <div style={{ marginBottom: t.spacing.xl * 2 }}>
+          <div style={{ marginBottom: token.space.sp10 }}>
             <h1 style={{
               margin: 0,
-              fontSize: t.fontSize.lg,
-              fontWeight: 700,
-              color: t.color.text.primary,
-              letterSpacing: "0.04em",
+              fontSize: token.font.size.fs20,
+              fontWeight: 600,
+              color: token.color.fgStrong,
+              letterSpacing: token.font.tracking.tight,
             }}>
-              Language
+              {t.section_title}
             </h1>
             <p style={{
-              margin: `${t.spacing.sm}px 0 0`,
-              fontSize: t.fontSize.sm,
-              color: t.color.text.muted,
-              lineHeight: 1.6,
+              margin: `${token.space.sp2} 0 0`,
+              fontSize: token.font.size.fs13,
+              color: token.color.fgMuted,
+              lineHeight: token.font.lineHeight.relaxed,
             }}>
-              Choose the display language for the Simulizer interface.
+              {t.section_desc}
             </p>
           </div>
 
-          {/* Auto option */}
-          <LanguageOption
-            code="auto"
-            flag="🌐"
-            label="Auto-detect"
-            sublabel="Match your browser language"
-            selected={selected === "auto"}
-            onSelect={handleSelect}
-          />
+          <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
+            {/* Auto option */}
+            <LanguageOption
+              code="auto"
+              flag="🌐"
+              label={t.auto_detect}
+              sublabel={t.auto_detect_sub}
+              selected={selected === "auto"}
+              onSelect={handleSelect}
+            />
 
-          {/* Divider */}
-          <div style={{
-            height: 1,
-            background: t.color.border.default,
-            margin: `${t.spacing.md}px 0`,
-            opacity: 0.5,
-          }} />
+            {/* Divider */}
+            <div style={{
+              height: 1,
+              background: token.color.border,
+              margin: `${token.space.sp2} 0`,
+              opacity: 0.5,
+            }} />
 
-          {/* Language list */}
-          <div style={{ display: "flex", flexDirection: "column", gap: t.spacing.sm }}>
+            {/* Language list */}
             {LANGUAGES.map(lang => (
               <LanguageOption
                 key={lang.code}
@@ -149,41 +185,47 @@ export default function SettingPage() {
           </div>
 
           {/* Save button */}
-          <div style={{ marginTop: t.spacing.xl * 2 }}>
-            <button
+          <div style={{ marginTop: token.space.sp12 }}>
+            <Button
               onClick={handleSave}
               style={{
                 width: "100%",
-                padding: `${t.spacing.md}px`,
-                borderRadius: t.borderRadius.md,
-                border: "none",
-                cursor: "pointer",
-                fontFamily: t.font.mono,
-                fontSize: t.fontSize.base,
+                height: 44,
+                fontSize: token.font.size.fs14,
                 fontWeight: 700,
-                letterSpacing: "0.06em",
+                letterSpacing: "0.02em",
                 background: saved
-                  ? `linear-gradient(135deg, ${t.color.text.success}, #16a34a)`
-                  : t.color.gradient.ai,
+                  ? "linear-gradient(135deg, #22c55e, #10b981)"
+                  : token.color.gradient.ai,
                 color: "#fff",
-                transition: "opacity 0.2s, transform 0.1s",
+                border: "none",
+                borderRadius: token.radius.md,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)",
+                transition: "all 0.2s"
               }}
-              onMouseEnter={e => { if (!saved) (e.currentTarget.style.opacity = "0.85"); }}
-              onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
-              onMouseDown={e => (e.currentTarget.style.transform = "scale(0.98)")}
-              onMouseUp={e => (e.currentTarget.style.transform = "scale(1)")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = "0.9";
+                e.currentTarget.style.transform = "translateY(-1px)";
+                e.currentTarget.style.boxShadow = "0 6px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.2)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = "1";
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)";
+              }}
             >
-              {saved ? "✓ Saved" : "Save Changes"}
-            </button>
+              {saved ? t.saved_button : t.save_button}
+            </Button>
           </div>
 
           <p style={{
-            marginTop: t.spacing.md,
-            fontSize: t.fontSize.xs,
-            color: t.color.text.muted,
+            marginTop: token.space.sp4,
+            fontSize: token.font.size.fs11,
+            color: token.color.fgSubtle,
             textAlign: "center",
+            fontFamily: token.font.family.mono
           }}>
-            Reload the page after saving to apply the new language.
+            {t.reload_hint}
           </p>
         </div>
       </main>
@@ -201,42 +243,39 @@ function LanguageOption({
   selected: boolean;
   onSelect: (code: string) => void;
 }) {
-  const [hovered, setHovered] = useState(false);
-
   return (
     <button
       onClick={() => onSelect(code)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       style={{
         width: "100%",
         display: "flex",
         alignItems: "center",
-        gap: t.spacing.lg,
-        padding: `${t.spacing.md}px ${t.spacing.lg}px`,
-        borderRadius: t.borderRadius.md,
-        border: `1px solid ${selected ? "#7c3aed" : hovered ? t.color.border.strong : t.color.border.default}`,
-        background: selected
-          ? "rgba(124,58,237,0.12)"
-          : hovered
-          ? t.color.bg.raised
-          : t.color.bg.surface,
+        gap: token.space.sp4,
+        padding: `${token.space.sp3} ${token.space.sp4}`,
+        borderRadius: token.radius.md,
+        border: `1px solid ${selected ? token.color.accent : token.color.border}`,
+        background: selected ? token.color.accentSubtle : token.color.bgSubtle,
         cursor: "pointer",
-        fontFamily: t.font.mono,
         textAlign: "left",
-        transition: "all 0.15s",
+        transition: token.motion.transition.fast,
+      }}
+      onMouseEnter={e => {
+        if (!selected) e.currentTarget.style.background = token.color.surfaceHover;
+      }}
+      onMouseLeave={e => {
+        if (!selected) e.currentTarget.style.background = token.color.bgSubtle;
       }}
     >
-      <span style={{ fontSize: 22, lineHeight: 1 }}>{flag}</span>
+      <span style={{ fontSize: 20, lineHeight: 1 }}>{flag}</span>
       <div style={{ flex: 1 }}>
         <div style={{
-          fontSize: t.fontSize.base,
-          color: selected ? t.color.text.accent : t.color.text.primary,
-          fontWeight: selected ? 700 : 400,
+          fontSize: token.font.size.fs14,
+          color: selected ? token.color.accent : token.color.fg,
+          fontWeight: selected ? 600 : 400,
         }}>
           {label}
         </div>
-        <div style={{ fontSize: t.fontSize.xs, color: t.color.text.muted, marginTop: 2 }}>
+        <div style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle, marginTop: 2 }}>
           {sublabel}
         </div>
       </div>
@@ -245,7 +284,7 @@ function LanguageOption({
           width: 18,
           height: 18,
           borderRadius: "50%",
-          background: "linear-gradient(135deg,#7c3aed,#2563eb)",
+          background: token.color.accent,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",

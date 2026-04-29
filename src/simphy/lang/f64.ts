@@ -1,35 +1,35 @@
 import { simulizer } from "../engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
-export const XML_F64_BLOCKS = `
-<category name="🔣 f64 연산" colour="160">
+export function xmlF64Blocks(cat: string) {
+    return `<category name="${cat}" colour="${160}">
     <block type="f64_const"></block>
     <block type="f64_binop"></block>
     <block type="f64_unop"></block>
     <block type="f64_cmp"></block>
-</category>
-`;
+</category>`;
+}
 
 export const F64_BLOCKS: BlockSet = {
-    CONST: new BlockBuilder("f64_const", "f64", 160, "64-bit floating point constant")
-        .addBody("f64 %1")
+    CONST: new BlockBuilder("f64_const", "f64", 160, "실수 상수 (64-bit float)")
+        .addBody("float %1")
         .addArg("field_number", "VALUE", undefined, 0.0)
         .expr((block, ctx) => simulizer.f64c(parseFloat(block.getFieldValue("VALUE") ?? "0"))),
-    FROM_I32: new BlockBuilder("f64_from_i32", "f64", 45, "i32 → f64 (signed)")
-        .addBody("i32→f64 %1")
+    FROM_I32: new BlockBuilder("f64_from_i32", "f64", 45, "int → float 변환")
+        .addBody("int → float %1")
         .addArgValue("VALUE", "i32")
         .expr((block, ctx) => {
             const v = ctx.blockToExpr(block.getInputTargetBlock("VALUE"), ctx);
             return v ? simulizer.f64ops.convert_i32_s(ctx.coerce(v, simulizer.i32)) : null;
         }),
-    TO_I32: new BlockBuilder("i32_from_f64", "i32", 45, "f64 → i32 (truncate)")
-        .addBody("f64→i32 %1")
+    TO_I32: new BlockBuilder("i32_from_f64", "i32", 45, "float → int 변환 (truncate)")
+        .addBody("float → int %1")
         .addArgValue("VALUE", "f64")
         .expr((block, ctx) => {
             const v = ctx.blockToExpr(block.getInputTargetBlock("VALUE"), ctx);
             return v ? simulizer.i32ops.trunc_f64_s(ctx.coerce(v, simulizer.f64)) : null;
         }),
-    BINOP: new BlockBuilder("f64_binop", "f64", 160, "f64 binary operation")
+    BINOP: new BlockBuilder("f64_binop", "f64", 160, "실수 이항 연산")
         .addBody("%1 %2 %3")
         .addArgValue("LHS", "f64")
         .addArgDropdown("OP", [
@@ -45,7 +45,7 @@ export const F64_BLOCKS: BlockSet = {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return (simulizer.f64ops[op] as any)(lhs, rhs);
         }),
-    UNOP: new BlockBuilder("f64_unop", "f64", 160, "f64 unary operation")
+    UNOP: new BlockBuilder("f64_unop", "f64", 160, "실수 단항 연산")
         .addBody("%1 %2")
         .addArgDropdown("OP", [
             ["abs", "abs"], ["−", "neg"], ["√", "sqrt"],
@@ -60,7 +60,7 @@ export const F64_BLOCKS: BlockSet = {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return (simulizer.f64ops[op] as any)(v);
         }),
-    CMP: new BlockBuilder("f64_cmp", "bool", 60, "f64 comparison (result: i32 0/1)")
+    CMP: new BlockBuilder("f64_cmp", "bool", 60, "실수 비교 (결과: bool)")
         .addBody("%1 %2 %3")
         .addArgValue("LHS", "f64")
         .addArgDropdown("OP", [

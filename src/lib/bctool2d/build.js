@@ -41,9 +41,10 @@ const emccFlags = [
     "-s", "EXPORTED_FUNCTIONS=['_get_2d_boundary']",
     "--no-entry",
 ];
+const quote = (p) => `"${p}"`;
 
-const emccCmd   = ["emcc", SRC, ...emccFlags, "-o", TMP_WASM].join(" ");
-const wabtCmd   = `wasm2wat ${TMP_WASM} -o ${OUT_WAT}`;
+const emccCmd   = ["emcc", quote(SRC), ...emccFlags, "-o", quote(TMP_WASM)].join(" ");
+const wabtCmd   = `wasm2wat ${quote(TMP_WASM)} -o ${quote(OUT_WAT)}`;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const kb      = (bytes) => (bytes / 1024).toFixed(1).padStart(7) + " KB";

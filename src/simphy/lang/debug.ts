@@ -4,7 +4,7 @@ import { vec3Type } from "./vector";
 
 export const DEBUG_BLOCKS: BlockSet = {
     DEBUG_LOG: new BlockBuilder("debug_log", undefined, 0, "콘솔에 값 출력", false)
-        .addBody("로그 %1")
+        .addBody("log %1")
         .addArgValue("VALUE", ["i32", "f64", "i32*", "f64*", "vec2", "vec3"])
         .stmt((block, ctx) => {
             const valBlock = block.getInputTargetBlock("VALUE");
@@ -88,8 +88,8 @@ export const DEBUG_BLOCKS: BlockSet = {
         }),
 }
 
-export const XML_DEBUG_BLOCKS = `
-<category name="🐞 디버그" colour="0">
+export function xmlDebugBlocks(cat: string) {
+    return `<category name="${cat}" colour="${0}">
     <block type="debug_log"><value name="VALUE"><block type="i32_const"></block></value></block>
     <block type="debug_log"><value name="VALUE"><block type="vec2_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value></block></value></block>
     <block type="debug_log"><value name="VALUE"><block type="vec3_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value><value name="Z"><block type="f64_const"></block></value></block></value></block>
@@ -101,4 +101,5 @@ export const XML_DEBUG_BLOCKS = `
         <value name="ID"><block type="i32_const"><field name="VALUE">0</field></block></value>
         <value name="VALUE"><block type="i32_const"><field name="VALUE">0</field></block></value>
     </block>
-</category>`
+</category>`;
+}

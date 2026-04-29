@@ -1,8 +1,3 @@
-/**
- * Console Panel Registry
- * 콘솔 패널 유형 등록 및 관리
- */
-
 import { ConsolePanelEntry, ConsolePanelRenderer } from "./types";
 import { ProgressBarPanel } from "./panels/ProgressBar";
 import { MatShowPanel } from "./panels/MatShow";

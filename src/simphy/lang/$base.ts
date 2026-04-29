@@ -167,6 +167,21 @@ export function unpack(blockSet: BlockSet): BlockDef[] {
     return Object.values(blockSet).map(block => block.build());
 }
 
+export function translateBlockSet(blockSet: BlockSet, msgs: Record<string, string[]>): BlockSet {
+    const result: BlockSet = {};
+    for (const [key, builder] of Object.entries(blockSet)) {
+        const translation = msgs[builder.type];
+        if (translation) {
+            const nb = Object.assign(Object.create(Object.getPrototypeOf(builder)), builder);
+            nb.body = builder.body.map((b, i) => ({ ...b, message: translation[i] ?? b.message }));
+            result[key] = nb;
+        } else {
+            result[key] = builder;
+        }
+    }
+    return result;
+}
+
 export function xml(blockSet: BlockSet): string {
     let xml = "";
     for (const block of Object.values(blockSet)) {

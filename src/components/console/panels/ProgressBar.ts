@@ -1,5 +1,4 @@
 import { ConsolePanelRenderer } from "../types";
-import { darkTheme } from "@/components/tokens";
 
 interface ProgressBarState {
     min: number;
@@ -28,17 +27,16 @@ export class ProgressBarPanel implements ConsolePanelRenderer {
         const wrapper = document.createElement("div");
         wrapper.id = `panel-${this.id}`;
         wrapper.style.cssText = [
-            `background:#111827`,
+            `background:var(--bg-raised)`,
             `border-radius:4px`,
             `padding:6px 8px`,
-            `border-left:3px solid #6366f1`,
-            `font-family:${darkTheme.font.mono}`,
+            `border-left:3px solid var(--accent)`,
+            `font-family:var(--font-mono)`,
         ].join(";");
 
-        // 헤더 (타이틀 + 수치 라벨)
         const header = document.createElement("div");
         header.style.cssText =
-            "display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-bottom:4px";
+            "display:flex;justify-content:space-between;font-size:11px;color:var(--fg-muted);margin-bottom:4px";
 
         const title = document.createElement("span");
         title.textContent = `📊 Progress`;
@@ -51,15 +49,14 @@ export class ProgressBarPanel implements ConsolePanelRenderer {
         header.appendChild(title);
         header.appendChild(label);
 
-        // 트랙 + 채우기 바
         const track = document.createElement("div");
-        track.style.cssText = `background:${darkTheme.color.border.default};border-radius:3px;height:10px;overflow:hidden`;
+        track.style.cssText = `background:var(--border);border-radius:3px;height:10px;overflow:hidden`;
 
         const fill = document.createElement("div");
         fill.id = `fill-${this.id}`;
         this.fillEl = fill;
         fill.style.cssText =
-            "width:0%;height:100%;background:linear-gradient(90deg,#6366f1,#38bdf8);border-radius:3px;transition:width 0.1s ease-out";
+            "width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--info));border-radius:3px;transition:width 0.1s ease-out";
 
         track.appendChild(fill);
         wrapper.appendChild(header);

@@ -1,26 +1,12 @@
-/**
- * useLogPanel
- *
- * WASM 실행 중에는 React state 업데이트가 불가능하므로,
- * 로그 패널을 직접 DOM 조작으로 구현하는 훅.
- *
- * 반환값:
- *   logAreaRef   - 로그 패널 div에 붙일 ref
- *   addLog       - 텍스트 로그 항목 추가
- *   addBar       - 프로그레스 바 추가 (barId 반환)
- *   setBar       - 프로그레스 바 값 업데이트
- *   clearLog     - 패널 초기화 (placeholder 복원)
- */
-
 import { useRef, useCallback } from "react";
-import { darkTheme } from "../components/tokens";
+import { token } from "../components/tokens";
 
 export type LogKind = "info" | "success" | "error";
 
-const kindStyles: Record<LogKind, { color: string; border: string; bg: string }> = {
-    error:   { color: darkTheme.color.text.error,   border: "#ef4444", bg: "#2d0f0f" },
-    success: { color: darkTheme.color.text.success, border: "#10b981", bg: "#0d2d1e" },
-    info:    { color: "#94a3b8",                    border: "#4f46e5", bg: "#111827" },
+const kindBlock: Record<LogKind, { bg: string; border: string; accent: string; color: string }> = {
+    info:    { bg: token.color.bgCanvas,    border: token.color.infoBorder,    accent: token.color.accent,  color: token.color.fg },
+    success: { bg: token.color.successSoft, border: token.color.successBorder, accent: token.color.success, color: token.color.fg },
+    error:   { bg: token.color.dangerSoft,  border: token.color.dangerBorder,  accent: token.color.danger,  color: token.color.danger },
 };
 
 export function useLogPanel() {
@@ -29,7 +15,6 @@ export function useLogPanel() {
     const barIdCounter   = useRef(0);
     const barMetaRef     = useRef<Record<number, { min: number; max: number }>>({});
 
-    /** Common entry point for all items — remove placeholder then append + auto-scroll */
     const append = useCallback((el: HTMLElement) => {
         const area = logAreaRef.current;
         if (!area) return;
@@ -39,63 +24,72 @@ export function useLogPanel() {
         area.scrollTop = area.scrollHeight;
     }, []);
 
-    /** Add a single line of text log */
     const addLog = useCallback((kind: LogKind, text: string) => {
         const now = Date.now();
         const elapsed = lastLogTsRef.current ? now - lastLogTsRef.current : null;
         lastLogTsRef.current = now;
 
-        const { color, border, bg } = kindStyles[kind];
+        const { bg, border, accent, color } = kindBlock[kind];
 
-        const row = document.createElement("div");
-        row.style.cssText = [
-            `font-size:12px`,
-            `padding:4px 8px`,
-            `border-radius:4px`,
-            `word-break:break-all`,
-            `background:${bg}`,
-            `color:${color}`,
-            `border-left:3px solid ${border}`,
+        const block = document.createElement("div");
+        block.style.cssText = [
             `display:flex`,
+            `align-items:center`,
             `justify-content:space-between`,
-            `gap:8px`,
-            `font-family:${darkTheme.font.mono}`,
+            `gap:10px`,
+            `margin:4px 10px`,
+            `padding:8px 12px`,
+            `background:${bg}`,
+            `border:1px solid ${border}`,
+            `border-left:3px solid ${accent}`,
+            `border-radius:${token.radius.md}`,
+            `font-size:${token.font.size.fs11}`,
+            `font-family:${token.font.family.mono}`,
+            `color:${color}`,
+            `line-height:1.5`,
         ].join(";");
 
-        const msgSpan = document.createElement("span");
-        msgSpan.textContent = text;
-        row.appendChild(msgSpan);
+        const msg = document.createElement("span");
+        msg.style.cssText = `flex:1;word-break:break-all`;
+        msg.textContent = text;
+        block.appendChild(msg);
 
         if (elapsed !== null) {
-            const tsSpan = document.createElement("span");
-            tsSpan.style.cssText = "color:#4b5563;font-size:10px;white-space:nowrap;align-self:center";
-            tsSpan.textContent = `+${elapsed}ms`;
-            row.appendChild(tsSpan);
+            const ts = document.createElement("span");
+            ts.style.cssText = [
+                `font-size:${token.font.size.fs10}`,
+                `font-family:${token.font.family.mono}`,
+                `color:${token.color.fgSubtle}`,
+                `white-space:nowrap`,
+                `flex-shrink:0`,
+            ].join(";");
+            ts.textContent = `+${elapsed}ms`;
+            block.appendChild(ts);
         }
 
-        append(row);
+        append(block);
     }, [append]);
 
-    /** 프로그레스 바 추가. 반환된 barId로 setBar 호출 */
     const addBar = useCallback((min: number, max: number): number => {
         const barId = ++barIdCounter.current;
         barMetaRef.current[barId] = { min, max };
 
         const wrapper = document.createElement("div");
         wrapper.style.cssText = [
-            `background:#111827`,
-            `border-radius:4px`,
-            `padding:6px 8px`,
-            `border-left:3px solid #6366f1`,
-            `font-family:${darkTheme.font.mono}`,
+            `margin:4px 10px`,
+            `padding:8px 12px`,
+            `background:${token.color.bgCanvas}`,
+            `border:1px solid ${token.color.infoBorder}`,
+            `border-left:3px solid ${token.color.accent}`,
+            `border-radius:${token.radius.md}`,
+            `font-family:${token.font.family.mono}`,
         ].join(";");
 
-        // 헤더 (타이틀 + 수치 라벨)
         const header = document.createElement("div");
-        header.style.cssText = "display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-bottom:4px";
+        header.style.cssText = `display:flex;justify-content:space-between;font-size:${token.font.size.fs10};color:${token.color.fgSubtle};margin-bottom:6px;letter-spacing:0.04em;text-transform:uppercase`;
 
         const title = document.createElement("span");
-        title.textContent = `📊 bar #${barId}`;
+        title.textContent = `Progress`;
 
         const label = document.createElement("span");
         label.id = `bar-label-${barId}`;
@@ -104,13 +98,12 @@ export function useLogPanel() {
         header.appendChild(title);
         header.appendChild(label);
 
-        // 트랙 + 채우기 바
         const track = document.createElement("div");
-        track.style.cssText = `background:${darkTheme.color.border.default};border-radius:3px;height:10px;overflow:hidden`;
+        track.style.cssText = `background:${token.color.bgSubtle};border-radius:99px;height:4px;overflow:hidden;border:1px solid ${token.color.border}`;
 
         const fill = document.createElement("div");
         fill.id = `bar-fill-${barId}`;
-        fill.style.cssText = "width:0%;height:100%;background:linear-gradient(90deg,#6366f1,#38bdf8);border-radius:3px";
+        fill.style.cssText = `width:0%;height:100%;background:${token.color.accent};border-radius:99px;transition:width 0.1s`;
 
         track.appendChild(fill);
         wrapper.appendChild(header);
@@ -120,7 +113,6 @@ export function useLogPanel() {
         return barId;
     }, [append]);
 
-    /** barId 프로그레스 바의 현재 값 업데이트 */
     const setBar = useCallback((barId: number, val: number) => {
         const meta = barMetaRef.current[barId];
         if (!meta) return;
@@ -132,7 +124,6 @@ export function useLogPanel() {
         if (label) label.textContent = `${val} / ${max}`;
     }, []);
 
-    /** Clear the panel — restore placeholder */
     const clearLog = useCallback(() => {
         const area = logAreaRef.current;
         if (!area) return;
@@ -143,7 +134,12 @@ export function useLogPanel() {
 
         const placeholder = document.createElement("div");
         placeholder.setAttribute("data-placeholder", "");
-        placeholder.style.cssText = "color:#374151;font-size:12px";
+        placeholder.style.cssText = [
+            `padding:3px 14px`,
+            `color:${token.color.fgSubtle}`,
+            `font-size:${token.font.size.fs11}`,
+            `font-family:${token.font.family.mono}`,
+        ].join(";");
         placeholder.textContent = "▶ 실행 버튼을 눌러 시작하세요";
         area.appendChild(placeholder);
     }, []);

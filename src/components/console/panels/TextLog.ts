@@ -1,5 +1,4 @@
 import { ConsolePanelRenderer, LogKind } from "../types";
-import { darkTheme } from "@/components/tokens";
 
 interface TextLogState {
     kind: LogKind;
@@ -7,10 +6,10 @@ interface TextLogState {
     elapsed?: number;
 }
 
-const kindStyles: Record<LogKind, { color: string; border: string; bg: string }> = {
-    error: { color: darkTheme.color.text.error, border: "#ef4444", bg: "#2d0f0f" },
-    success: { color: darkTheme.color.text.success, border: "#10b981", bg: "#0d2d1e" },
-    info: { color: "#94a3b8", border: "#4f46e5", bg: "#111827" },
+const kindStyles: Record<LogKind, { color: string; border: string; accent: string; bg: string }> = {
+    error:   { color: "var(--danger)",  border: "var(--danger-border)",  accent: "var(--danger)",  bg: "var(--danger-soft)"  },
+    success: { color: "var(--fg)",      border: "var(--success-border)", accent: "var(--success)", bg: "var(--success-soft)" },
+    info:    { color: "var(--fg)",      border: "var(--border)",         accent: "var(--accent)",  bg: "var(--bg-canvas)"    },
 };
 
 export class TextLogPanel implements ConsolePanelRenderer {
@@ -22,22 +21,26 @@ export class TextLogPanel implements ConsolePanelRenderer {
     }
 
     render(): HTMLElement {
-        const { color, border, bg } = kindStyles[this.state.kind];
+        const { color, border, accent, bg } = kindStyles[this.state.kind];
 
         const row = document.createElement("div");
         row.id = `panel-${this.id}`;
         row.style.cssText = [
-            `font-size:12px`,
-            `padding:4px 8px`,
-            `border-radius:4px`,
+            `display:flex`,
+            `justify-content:space-between`,
+            `align-items:flex-start`,
+            `gap:10px`,
+            `margin:3px 10px`,
+            `padding:8px 12px`,
+            `border-radius:var(--r-md)`,
             `word-break:break-all`,
             `background:${bg}`,
             `color:${color}`,
-            `border-left:3px solid ${border}`,
-            `display:flex`,
-            `justify-content:space-between`,
-            `gap:8px`,
-            `font-family:${darkTheme.font.mono}`,
+            `border:1px solid ${border}`,
+            `border-left:3px solid ${accent}`,
+            `font-size:11px`,
+            `line-height:1.55`,
+            `font-family:var(--font-mono)`,
         ].join(";");
 
         const msgSpan = document.createElement("span");
@@ -47,7 +50,7 @@ export class TextLogPanel implements ConsolePanelRenderer {
         if (this.state.elapsed !== undefined) {
             const tsSpan = document.createElement("span");
             tsSpan.style.cssText =
-                "color:#4b5563;font-size:10px;white-space:nowrap;align-self:center";
+                "color:var(--fg-subtle);font-size:10px;white-space:nowrap;flex-shrink:0;align-self:center";
             tsSpan.textContent = `+${this.state.elapsed}ms`;
             row.appendChild(tsSpan);
         }

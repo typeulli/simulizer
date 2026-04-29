@@ -3,8 +3,8 @@ import { simulizer } from "../engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
 export const ARRAY_BLOCKS: BlockSet = {
-    LOCAL_ARRAY_DECL_I32: new BlockBuilder("local_array_decl_i32", undefined, 120, "int32 배열 지역 변수 선언")
-        .addBody("int32 배열 %1[%2]")
+    LOCAL_ARRAY_DECL_I32: new BlockBuilder("local_array_decl_i32", undefined, 120, "int 배열 선언")
+        .addBody("int arr %1[%2]")
         .addArg("field_input", "NAME", "arr")
         .addArgValue("SIZE", "i32")
         .stmt((block, ctx) => {
@@ -44,8 +44,8 @@ export const ARRAY_BLOCKS: BlockSet = {
                 new simulizer.LocalSet(ptrLocal, ptr),
             ], simulizer.void_);
         }),
-    LOCAL_ARRAY_DECL_F64: new BlockBuilder("local_array_decl_f64", undefined, 120, "float64 배열 지역 변수 선언")
-        .addBody("float64 배열 %1[%2]")
+    LOCAL_ARRAY_DECL_F64: new BlockBuilder("local_array_decl_f64", undefined, 120, "float 배열 선언")
+        .addBody("float arr %1[%2]")
         .addArg("field_input", "NAME", "arr")
         .addArgValue("SIZE", "i32")
         .stmt((block, ctx) => {
@@ -85,7 +85,7 @@ export const ARRAY_BLOCKS: BlockSet = {
                 new simulizer.LocalSet(ptrLocal, ptr),
             ], simulizer.void_);
         }),
-    ARRAY_GET_I32: new BlockBuilder("array_get_i32", "i32", 120, "int32 배열 요소 읽기")
+    ARRAY_GET_I32: new BlockBuilder("array_get_i32", "i32", 120, "int 배열 읽기")
         .addBody("%1[%2]")
         .addArgValue("ARRAY", "i32*")
         .addArgValue("INDEX", "i32")
@@ -96,7 +96,7 @@ export const ARRAY_BLOCKS: BlockSet = {
             const ops = new simulizer.ArrayOps(simulizer.i32Array);
             return ops.get(ctx.coerce(arrExpr, simulizer.i32), ctx.coerce(idx, simulizer.i32));
         }),
-    ARRAY_GET_F64: new BlockBuilder("array_get_f64", "f64", 120, "float64 배열 요소 읽기")
+    ARRAY_GET_F64: new BlockBuilder("array_get_f64", "f64", 120, "float 배열 읽기")
         .addBody("%1[%2]")
         .addArgValue("ARRAY", "f64*")
         .addArgValue("INDEX", "i32")
@@ -107,7 +107,7 @@ export const ARRAY_BLOCKS: BlockSet = {
             const ops = new simulizer.ArrayOps(simulizer.f64Array);
             return ops.get(ctx.coerce(arrExpr, simulizer.i32), ctx.coerce(idx, simulizer.i32));
         }),
-    ARRAY_SET_I32: new BlockBuilder("array_set_i32", undefined, 120, "int32 배열 요소 설정")
+    ARRAY_SET_I32: new BlockBuilder("array_set_i32", undefined, 120, "int 배열 쓰기")
         .addBody("%1[%2] ← %3")
         .addArgValue("ARRAY", "i32*")
         .addArgValue("INDEX", "i32")
@@ -124,7 +124,7 @@ export const ARRAY_BLOCKS: BlockSet = {
                 ctx.coerce(val, simulizer.i32),
             );
         }),
-    ARRAY_SET_F64: new BlockBuilder("array_set_f64", undefined, 120, "float64 배열 요소 설정")
+    ARRAY_SET_F64: new BlockBuilder("array_set_f64", undefined, 120, "float 배열 쓰기")
         .addBody("%1[%2] ← %3")
         .addArgValue("ARRAY", "f64*")
         .addArgValue("INDEX", "i32")
@@ -141,8 +141,8 @@ export const ARRAY_BLOCKS: BlockSet = {
                 ctx.coerce(val, simulizer.f64),
             );
         }),
-    ARRAY_ASSIGN_I32: new BlockBuilder("array_assign_i32", undefined, 120, "int32 배열 포인터 대입")
-        .addBody("i32배열 %1 ← %2")
+    ARRAY_ASSIGN_I32: new BlockBuilder("array_assign_i32", undefined, 120, "int* 대입")
+        .addBody("int* %1 ← %2")
         .addArg("field_input", "NAME", "arr")
         .addArgValue("PTR", "i32*")
         .stmt((block, ctx) => {
@@ -164,8 +164,8 @@ export const ARRAY_BLOCKS: BlockSet = {
             }
             return new simulizer.LocalSet(local, ctx.coerce(ptrExpr, simulizer.i32));
         }),
-    ARRAY_ASSIGN_F64: new BlockBuilder("array_assign_f64", undefined, 120, "float64 배열 포인터 대입")
-        .addBody("f64배열 %1 ← %2")
+    ARRAY_ASSIGN_F64: new BlockBuilder("array_assign_f64", undefined, 120, "float* 대입")
+        .addBody("float* %1 ← %2")
         .addArg("field_input", "NAME", "arr")
         .addArgValue("PTR", "f64*")
         .stmt((block, ctx) => {
@@ -187,15 +187,15 @@ export const ARRAY_BLOCKS: BlockSet = {
             }
             return new simulizer.LocalSet(local, ctx.coerce(ptrExpr, simulizer.i32));
         }),
-    LOCAL_ARRAY_GET_I32: new BlockBuilder("local_array_get_i32", "i32*", 120, "int32 배열")
-        .addBody("i32* %1")
+    LOCAL_ARRAY_GET_I32: new BlockBuilder("local_array_get_i32", "i32*", 120, "int* 변수")
+        .addBody("int* %1")
         .addArg("field_input", "NAME", "arr")
         .expr((block, ctx) => {
             const name = block.getFieldValue("NAME") as string;
             return ctx.getOrCreateLocal(ctx, `__arr_${name}`, simulizer.i32);
         }),
-    LOCAL_ARRAY_GET_F64: new BlockBuilder("local_array_get_f64", "f64*", 120, "float64 배열")
-        .addBody("f64* %1")
+    LOCAL_ARRAY_GET_F64: new BlockBuilder("local_array_get_f64", "f64*", 120, "float* 변수")
+        .addBody("float* %1")
         .addArg("field_input", "NAME", "arr")
         .expr((block, ctx) => {
             const name = block.getFieldValue("NAME") as string;
@@ -208,11 +208,11 @@ const MAX_LITERAL_SIZE = 32;
 function buildArrayLiteralBlock(
     blockType: string,
     elemType: "i32" | "f64",
-    colour: number,
+    colour: string | number,
 ) {
     Blockly.Blocks[blockType] = {
         init(this: Blockly.Block) {
-            const label = elemType === "i32" ? "int32" : "float64";
+            const label = elemType === "i32" ? "int" : "float";
             this.appendDummyInput("HEADER")
                 .appendField(`[${label}]`)
                 .appendField("크기:")
@@ -229,7 +229,7 @@ function buildArrayLiteralBlock(
             this.setInputsInline(true);
             this.setOutput(true, elemType === "i32" ? "i32*" : "f64*");
             this.setColour(colour);
-            this.setTooltip(`${label} 배열 리터럴 — 값을 채운 뒤 포인터를 반환합니다`);
+            this.setTooltip(`${label}* 리터럴 — 값을 채운 뒤 포인터를 반환합니다`);
             this.setOnChange(() => (this as any).updateShape_());
         },
         mutationToDom(this: Blockly.Block) {
@@ -311,8 +311,8 @@ export function compileArrayLiteralBlock(
     return new simulizer.Block(`arr_lit_${uid}`, exprs, simulizer.i32);
 }
 
-export const XML_ARRAY_BLOCKS = `
-<category name="📚 배열" colour="120">
+export function xmlArrayBlocks(cat: string) {
+    return `<category name="${cat}" colour="${120}">
     <block type="local_array_decl_i32"><value name="SIZE"><block type="i32_const"></block></value></block>
     <block type="local_array_decl_f64"><value name="SIZE"><block type="i32_const"></block></value></block>
     <block type="array_get_i32">
@@ -343,4 +343,5 @@ export const XML_ARRAY_BLOCKS = `
     <block type="array_assign_f64">
         <value name="PTR"><block type="array_literal_f64"></block></value>
     </block>
-</category>`
+</category>`;
+}

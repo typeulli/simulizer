@@ -9,8 +9,8 @@ export const BOUNDARY_BLOCKS: BlockSet = {
 
     // ── bd2 변수 ───────────────────────────────────────────────────────────────
 
-    BD2_DECL: new BlockBuilder("local_decl_bd2", undefined, 200, "boundary2d 반복 변수 선언 (t, x, y, tx, ty, nx, ny)")
-        .addBody("bd2 변수 %1 선언")
+    BD2_DECL: new BlockBuilder("local_decl_bd2", undefined, 200,"boundary2d 반복 변수 선언 (t, x, y, tx, ty, nx, ny)")
+        .addBody("bd2 var %1")
         .addArg("field_input", "NAME", "p")
         .stmt((block, ctx) => {
             const name = block.getFieldValue("NAME") as string;
@@ -20,7 +20,7 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             return null;
         }),
 
-    BD2_GET: new BlockBuilder("local_get_bd2", "f64", 200, "boundary2d 필드 읽기")
+    BD2_GET: new BlockBuilder("local_get_bd2", "f64", 200,"boundary2d 필드 읽기")
         .addBody("bd2 %1 . %2")
         .addArg("field_input", "NAME", "p")
         .addArgDropdown("FIELD", BD2_FIELDS.map(f => [f, f] as [string, string]))
@@ -30,7 +30,7 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             return ctx.getOrCreateLocal(ctx, `__bd2_${name}_${field}`, simulizer.f64);
         }),
 
-    BD2_POINT: new BlockBuilder("local_get_bd2_point", "vec2", 200, "boundary2d 위치 벡터 (x, y) → vec2")
+    BD2_POINT: new BlockBuilder("local_get_bd2_point", "vec2", 200,"boundary2d 위치 벡터 (x, y) → vec2")
         .addBody("bd2 %1 .point")
         .addArg("field_input", "NAME", "p")
         .expr((block, ctx) => {
@@ -40,7 +40,7 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             return new Vec2Load(lx, ly);
         }),
 
-    BD2_TANGENT: new BlockBuilder("local_get_bd2_tangent", "vec2", 200, "boundary2d 접선 벡터 (tx, ty) → vec2")
+    BD2_TANGENT: new BlockBuilder("local_get_bd2_tangent", "vec2", 200,"boundary2d 접선 벡터 (tx, ty) → vec2")
         .addBody("bd2 %1 .tangent")
         .addArg("field_input", "NAME", "p")
         .expr((block, ctx) => {
@@ -50,7 +50,7 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             return new Vec2Load(lx, ly);
         }),
 
-    BD2_NORMAL: new BlockBuilder("local_get_bd2_normal", "vec2", 200, "boundary2d 법선 벡터 (nx, ny) → vec2")
+    BD2_NORMAL: new BlockBuilder("local_get_bd2_normal", "vec2", 200,"boundary2d 법선 벡터 (nx, ny) → vec2")
         .addBody("bd2 %1 .normal")
         .addArg("field_input", "NAME", "p")
         .expr((block, ctx) => {
@@ -62,8 +62,8 @@ export const BOUNDARY_BLOCKS: BlockSet = {
 
     // ── bd3 변수 ───────────────────────────────────────────────────────────────
 
-    BD3_DECL: new BlockBuilder("local_decl_bd3", undefined, 160, "boundary3d 반복 변수 선언 (u, v, x, y, z, dS, nx, ny, nz)")
-        .addBody("bd3 변수 %1 선언")
+    BD3_DECL: new BlockBuilder("local_decl_bd3", undefined, 200,"boundary3d 반복 변수 선언 (u, v, x, y, z, dS, nx, ny, nz)")
+        .addBody("bd3 var %1")
         .addArg("field_input", "NAME", "p")
         .stmt((block, ctx) => {
             const name = block.getFieldValue("NAME") as string;
@@ -73,7 +73,7 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             return null;
         }),
 
-    BD3_POINT: new BlockBuilder("local_get_bd3_point", "vec3", 160, "boundary3d 위치 벡터 (x, y, z) → vec3")
+    BD3_POINT: new BlockBuilder("local_get_bd3_point", "vec3", 200,"boundary3d 위치 벡터 (x, y, z) → vec3")
         .addBody("bd3 %1 .point")
         .addArg("field_input", "NAME", "p")
         .expr((block, ctx) => {
@@ -85,7 +85,7 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             );
         }),
 
-    BD3_NORMAL: new BlockBuilder("local_get_bd3_normal", "vec3", 160, "boundary3d 법선 벡터 (nx, ny, nz) → vec3")
+    BD3_NORMAL: new BlockBuilder("local_get_bd3_normal", "vec3", 200,"boundary3d 법선 벡터 (nx, ny, nz) → vec3")
         .addBody("bd3 %1 .normal")
         .addArg("field_input", "NAME", "p")
         .expr((block, ctx) => {
@@ -97,7 +97,7 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             );
         }),
 
-    BD3_GET: new BlockBuilder("local_get_bd3", "f64", 160, "boundary3d 필드 읽기")
+    BD3_GET: new BlockBuilder("local_get_bd3", "f64", 200,"boundary3d 필드 읽기")
         .addBody("bd3 %1 . %2")
         .addArg("field_input", "NAME", "p")
         .addArgDropdown("FIELD", BD3_FIELDS.map(f => [f, f] as [string, string]))
@@ -109,11 +109,11 @@ export const BOUNDARY_BLOCKS: BlockSet = {
 
     // ── 순회 ──────────────────────────────────────────────────────────────────
 
-    FOR_BD2: new BlockBuilder("flow_for_bd2", undefined, 200, "boundary2d 배열 원소 순회")
-        .addBody("bd2 %1 에서 %2 반복")
+    FOR_BD2: new BlockBuilder("flow_for_bd2", undefined, 200,"boundary2d 배열 원소 순회")
+        .addBody("bd2 for %1 in %2")
         .addArg("field_input", "VAR", "p")
         .addArg("field_input", "BD",  "boundary")
-        .addBody("반복 %1")
+        .addBody("do %1")
         .addArgStmt("BODY")
         .stmt((block, ctx) => {
             const bdName  = block.getFieldValue("BD")  as string;
@@ -176,11 +176,11 @@ export const BOUNDARY_BLOCKS: BlockSet = {
             return new simulizer.Block(breakLabel, [initCounter, loop]);
         }),
 
-    FOR_BD3: new BlockBuilder("flow_for_bd3", undefined, 160, "boundary3d 배열 원소 순회")
-        .addBody("bd3 %1 에서 %2 반복")
+    FOR_BD3: new BlockBuilder("flow_for_bd3", undefined, 200,"boundary3d 배열 원소 순회")
+        .addBody("bd3 for %1 in %2")
         .addArg("field_input", "VAR", "p")
         .addArg("field_input", "BD",  "boundary")
-        .addBody("반복 %1")
+        .addBody("do %1")
         .addArgStmt("BODY")
         .stmt((block, ctx) => {
             const bdName  = block.getFieldValue("BD")  as string;
@@ -244,10 +244,10 @@ export const BOUNDARY_BLOCKS: BlockSet = {
         }),
 }
 
-export const XML_BOUNDARY_BLOCKS = `
-<category name="🗺 경계 데이터" colour="200">
-    <button text="⊕ 경계 데이터 관리" callbackKey="OPEN_BD2_MGR"></button>
-    <category name="2D" colour="200">
+export function xmlBoundaryBlocks(cat: string, btnLabel: string) {
+    return `<category name="${cat}" colour="${200}">
+    <button text="${btnLabel}" callbackKey="OPEN_BD2_MGR"></button>
+    <category name="2D" colour="${200}">
         <block type="local_decl_bd2"></block>
         <block type="local_get_bd2"></block>
         <block type="local_get_bd2_point"></block>
@@ -255,11 +255,12 @@ export const XML_BOUNDARY_BLOCKS = `
         <block type="local_get_bd2_normal"></block>
         <block type="flow_for_bd2"></block>
     </category>
-    <category name="3D" colour="160">
+    <category name="3D" colour="${200}">
         <block type="local_decl_bd3"></block>
         <block type="local_get_bd3"></block>
         <block type="local_get_bd3_point"></block>
         <block type="local_get_bd3_normal"></block>
         <block type="flow_for_bd3"></block>
     </category>
-</category>`
+</category>`;
+}

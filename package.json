@@ -21,6 +21,7 @@
     "plotly.js-dist-min": "^3.5.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-syntax-highlighter": "^16.1.1",
     "wabt": "^1.0.39"
   },
   "devDependencies": {
@@ -29,6 +30,7 @@
     "@types/plotly.js-dist-min": "^2.3.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
