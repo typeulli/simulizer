@@ -240,6 +240,12 @@ function buildAssignment(
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+export function latexToValueExpr(latex: string, ctx: CompileCtx): simulizer.Expr | null {
+    const ast = parseLatex(latex.trim());
+    const t = inferNodeType(ast, ctx);
+    return buildExpr(ast, ctx, t);
+}
+
 export function latexToExpr(latex: string, ctx: CompileCtx): simulizer.Expr | null {
     const ast = parseLatex(latex.trim());
 

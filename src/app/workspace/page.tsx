@@ -761,17 +761,33 @@ const BlocklyWasmIDE: React.FC = () => {
     const handleLatexOcrApply = useCallback((latex: string) => {
         const ws = workspaceRef.current;
         if (!ws || !latex.trim()) return;
-        const clean = latex.trim().replace(/^\$\$|\$\$$/g, "").replace(/^\$|\$$/g, "").trim();
-        const block = ws.newBlock("latex_expr");
-        block.setFieldValue(clean, "LATEX");
-        block.initSvg();
-        block.render();
+
+        const formulas: string[] = [];
+        const parts = latex.split("$");
+        for (let i = 1; i < parts.length; i += 2) {
+            const f = parts[i].trim();
+            if (f) formulas.push(f);
+        }
+        if (formulas.length === 0) {
+            const clean = latex.trim();
+            if (clean) formulas.push(clean);
+        }
+
         const metrics = ws.getMetrics();
-        block.moveBy(
-            metrics.viewLeft + metrics.viewWidth / 2 - 60,
-            metrics.viewTop + metrics.viewHeight / 2 - 20,
-        );
-        ws.centerOnBlock(block.id);
+        const cx = metrics.viewLeft + metrics.viewWidth / 2 - 60;
+        const cy = metrics.viewTop + metrics.viewHeight / 2 - 20;
+        let lastBlock: Blockly.Block | null = null;
+
+        formulas.forEach((formula, i) => {
+            const block = ws.newBlock("latex_expr");
+            block.setFieldValue(formula, "LATEX");
+            block.initSvg();
+            block.render();
+            block.moveBy(cx, cy + i * 80);
+            lastBlock = block;
+        });
+
+        if (lastBlock) ws.centerOnBlock((lastBlock as Blockly.Block).id);
         setShowLatexOcr(false);
     }, []);
 
@@ -2130,19 +2146,34 @@ const BlocklyWasmIDE: React.FC = () => {
                                 {/* KaTeX rendered preview */}
                                 {ocrLatex.trim() && (() => {
                                     try {
-                                        const raw = ocrLatex.trim().replace(/^\$\$|\$\$$/g, "").replace(/^\$|\$$/g, "").trim();
-                                        const html = katex.renderToString(raw, { throwOnError: false, displayMode: true });
+                                        const parts = ocrLatex.split("$");
+                                        const formulas: string[] = [];
+                                        for (let i = 1; i < parts.length; i += 2) {
+                                            const f = parts[i].trim();
+                                            if (f) formulas.push(f);
+                                        }
+                                        if (formulas.length === 0) {
+                                            const raw = ocrLatex.trim();
+                                            if (raw) formulas.push(raw);
+                                        }
                                         return (
-                                            <div style={{
-                                                background: token.color.bgSubtle,
-                                                border: `1px solid ${token.color.border}`,
-                                                borderRadius: token.radius.md,
-                                                padding: token.space.sp3,
-                                                overflowX: "auto",
-                                                textAlign: "center",
-                                            }}
-                                                dangerouslySetInnerHTML={{ __html: html }}
-                                            />
+                                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                                {formulas.map((formula, i) => {
+                                                    const html = katex.renderToString(formula, { throwOnError: false, displayMode: true });
+                                                    return (
+                                                        <div key={i} style={{
+                                                            background: token.color.bgSubtle,
+                                                            border: `1px solid ${token.color.border}`,
+                                                            borderRadius: token.radius.md,
+                                                            padding: token.space.sp3,
+                                                            overflowX: "auto",
+                                                            textAlign: "center",
+                                                        }}
+                                                            dangerouslySetInnerHTML={{ __html: html }}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
                                         );
                                     } catch { return null; }
                                 })()}
