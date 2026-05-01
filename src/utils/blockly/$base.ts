@@ -1,7 +1,7 @@
 import * as Blockly from "blockly/core";
-import type { simulizer } from "../engine";
+import type { simulizer } from "../wasm/engine";
 type BlockArg = {
-    type: "input_value" | "input_statement" | "field_number" | "field_input" | "field_dropdown";
+    type: "input_value" | "input_statement" | "field_number" | "field_input" | "field_dropdown" | "field_latex";
     name: string;
     check?: string | string[];
     value?: string | number;
@@ -107,6 +107,8 @@ export class BlockBuilder {
                         return { type: "field_input", name: arg.name, value: arg.value };
                     case "field_dropdown":
                         return { type: "field_dropdown", name: arg.name, options: arg.options };
+                    case "field_latex":
+                        return { type: "field_latex", name: arg.name, latex: arg.value ?? "" };
                     case "input_statement":
                         return { type: "input_statement", name: arg.name };
                 }
@@ -144,6 +146,7 @@ export interface CompileCtx {
     coerce:           (expr: simulizer.Expr, target: simulizer.Type) => simulizer.Expr;
     stmtChainToExprs: (block: Blockly.Block | null, ctx: CompileCtx) => simulizer.Expr[];
     getOrCreateLocal: (ctx: CompileCtx, name: string, type: simulizer.Type) => simulizer.Local;
+    declareLocal:     (ctx: CompileCtx, name: string, type: simulizer.Type, blockId?: string) => simulizer.Local;
 }
 
 export type BlockSet = { [type: string]: BlockBuilder };

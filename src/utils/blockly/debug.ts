@@ -1,4 +1,4 @@
-import { simulizer } from "../engine";
+import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 import { vec3Type } from "./vector";
 
@@ -60,6 +60,21 @@ export const DEBUG_BLOCKS: BlockSet = {
             // pointer → log_ptr (i32로 coerce)
             return new simulizer.Call("log_ptr", [ctx.coerce(val, simulizer.i32)], simulizer.void_);
         }),
+    DEBUG_SERIES: new BlockBuilder("debug_series", "i32", 0, "시리즈 패널 생성 (holder_id 반환)")
+        .addBody("series")
+        .expr((_block, _ctx) => {
+            return new simulizer.Call("debug_series", [], simulizer.i32);
+        }),
+    DEBUG_SET_HOLDER: new BlockBuilder("debug_set_holder", undefined, 0, "로그 홀더 설정 (0 = 기본 콘솔)")
+        .addBody("set_holder %1")
+        .addArgValue("ID", "i32")
+        .stmt((block, ctx) => {
+            const idBlock = block.getInputTargetBlock("ID");
+            if (!idBlock) return null;
+            const idExpr = ctx.blockToExpr(idBlock, ctx);
+            if (!idExpr) return null;
+            return new simulizer.Call("debug_set_holder", [ctx.coerce(idExpr, simulizer.i32)], simulizer.void_);
+        }),
     DEBUG_BAR: new BlockBuilder("debug_bar", "i32", 0, "프로그레스 바 생성 (id 반환)")
         .addBody("progress_bar min:%1 max:%2")
         .addArgValue("MIN", "i32")
@@ -93,6 +108,10 @@ export function xmlDebugBlocks(cat: string) {
     <block type="debug_log"><value name="VALUE"><block type="i32_const"></block></value></block>
     <block type="debug_log"><value name="VALUE"><block type="vec2_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value></block></value></block>
     <block type="debug_log"><value name="VALUE"><block type="vec3_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value><value name="Z"><block type="f64_const"></block></value></block></value></block>
+    <block type="debug_series"></block>
+    <block type="debug_set_holder">
+        <value name="ID"><block type="i32_const"><field name="VALUE">0</field></block></value>
+    </block>
     <block type="debug_bar">
         <value name="MIN"><block type="i32_const"><field name="VALUE">0</field></block></value>
         <value name="MAX"><block type="i32_const"><field name="VALUE">100</field></block></value>

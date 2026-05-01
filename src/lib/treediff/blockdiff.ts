@@ -1,4 +1,4 @@
-import { CUSTOM_BLOCKS } from "@/simphy/lang/$blocks";
+import { CUSTOM_BLOCKS } from "@/utils/blockly/$blocks";
 import BiMap from "@/utils/bimap";
 import Queue from "@/utils/queue";
 import { TreeNode, TreeDiffNode } from "./treediff";

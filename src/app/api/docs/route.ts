@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { CUSTOM_BLOCKS } from "@/simphy/lang/$blocks";
+import { CUSTOM_BLOCKS } from "@/utils/blockly/$blocks";
 
 
 export function GET() {

@@ -1,5 +1,5 @@
 import * as Blockly from "blockly/core";
-import { simulizer } from "../engine";
+import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
 export const ARRAY_BLOCKS: BlockSet = {
@@ -155,11 +155,13 @@ export const ARRAY_BLOCKS: BlockSet = {
             if (ptrBlock?.type === "array_literal_i32") {
                 const capacity = Math.max(1, parseInt(ptrBlock.getFieldValue("SIZE") || "1", 10));
                 ctx.arrays ??= new Map();
+                const sizeLocal_i32 = ctx.getOrCreateLocal(ctx, `__arr_${name}_size`, simulizer.i32);
                 ctx.arrays.set(name, {
                     ptr: local,
                     elem: simulizer.i32,
                     ops: new simulizer.ArrayOps(simulizer.i32Array),
                     def: new simulizer.ArrayDef(name, simulizer.i32Array, capacity, 0),
+                    sizeLocal: sizeLocal_i32,
                 });
             }
             return new simulizer.LocalSet(local, ctx.coerce(ptrExpr, simulizer.i32));
@@ -178,11 +180,13 @@ export const ARRAY_BLOCKS: BlockSet = {
             if (ptrBlock?.type === "array_literal_f64") {
                 const capacity = Math.max(1, parseInt(ptrBlock.getFieldValue("SIZE") || "1", 10));
                 ctx.arrays ??= new Map();
+                const sizeLocal_f64 = ctx.getOrCreateLocal(ctx, `__arr_${name}_size`, simulizer.i32);
                 ctx.arrays.set(name, {
                     ptr: local,
                     elem: simulizer.f64,
                     ops: new simulizer.ArrayOps(simulizer.f64Array),
                     def: new simulizer.ArrayDef(name, simulizer.f64Array, capacity, 0),
+                    sizeLocal: sizeLocal_f64,
                 });
             }
             return new simulizer.LocalSet(local, ctx.coerce(ptrExpr, simulizer.i32));
@@ -272,7 +276,7 @@ export function registerDynamicArrayBlocks() {
 /** 배열 리터럴 블록의 컴파일 함수 — 익명 포인터를 expr로 반환 */
 export function compileArrayLiteralBlock(
     block: Blockly.Block,
-    ctx: import("./base").CompileCtx,
+    ctx: import("./$base").CompileCtx,
     elemType: "i32" | "f64",
 ): simulizer.Expr | null {
     const uid  = Math.random().toString(36).slice(2, 7);

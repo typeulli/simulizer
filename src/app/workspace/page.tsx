@@ -8,26 +8,23 @@ import * as BlocklyEn from "blockly/msg/en";
 import * as tf from "@tensorflow/tfjs";
 import "@tensorflow/tfjs-backend-webgpu";
 
-import { simulizer } from "@/simphy/engine";
+import { simulizer } from "@/utils/wasm/engine";
 import { unpackF64Arrays } from "@/utils/ziparray";
 import {
     type BlockDef,
     type CompileCtx,
     unpack,
     translateBlockSet,
-} from "@/simphy/lang/$base";
-import { xmlArrayBlocks, registerDynamicArrayBlocks, compileArrayLiteralBlock } from "@/simphy/lang/array";
-import { xmlBoolBlocks } from "@/simphy/lang/bool";
-import { xmlDebugBlocks } from "@/simphy/lang/debug";
-import { xmlI32Blocks } from "@/simphy/lang/i32";
-import { xmlLocalBlocks } from "@/simphy/lang/locals";
-import {
-    xmlTensorBlocks,
-    mat_data_to_image_url,
-    vec_field_to_image_url,
-    registerDynamicTensorBlocks,
-} from "@/simphy/lang/tensor";
-import { CUSTOM_BLOCKS } from "@/simphy/lang/$blocks";
+} from "@/utils/blockly/$base";
+import { xmlArrayBlocks, registerDynamicArrayBlocks, compileArrayLiteralBlock } from "@/utils/blockly/array";
+import { xmlBoolBlocks } from "@/utils/blockly/bool";
+import { xmlDebugBlocks } from "@/utils/blockly/debug";
+import { xmlLatexBlocks, clearLatexRegistry, getLatexRegistry } from "@/utils/blockly/latex";
+import { xmlI32Blocks } from "@/utils/blockly/i32";
+import { xmlLocalBlocks } from "@/utils/blockly/locals";
+import { xmlTensorBlocks, registerDynamicTensorBlocks } from "@/utils/blockly/tensor";
+import { mat_data_to_image_url, vec_field_to_image_url } from "@/utils/wasm/tensor";
+import { CUSTOM_BLOCKS } from "@/utils/blockly/$blocks";
 
 import { Button } from "@/components/atoms/Button";
 import { Text } from "@/components/atoms/Text";
@@ -43,10 +40,10 @@ import { token } from "@/components/tokens";
 import { useConsolePanel } from "@/components/console";
 import useLanguagePack from "@/hooks/useLanguagePack";
 import langpack from "@/lang/lang";
-import { xmlF64Blocks } from "@/simphy/lang/f64";
-import { xmlFlowBlocks } from "@/simphy/lang/flow";
-import { xmlVectorBlocks } from "@/simphy/lang/vector";
-import { xmlBoundaryBlocks } from "@/simphy/lang/boundary";
+import { xmlF64Blocks } from "@/utils/blockly/f64";
+import { xmlFlowBlocks } from "@/utils/blockly/flow";
+import { xmlVectorBlocks } from "@/utils/blockly/vector";
+import { xmlBoundaryBlocks } from "@/utils/blockly/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
 import { Prism } from "react-syntax-highlighter";
@@ -303,6 +300,7 @@ function buildCustomFunc(
         coerce,
         stmtChainToExprs,
         getOrCreateLocal,
+        declareLocal,
     };
     // Register parameters in locals (both read/write use local.get/set)
     spec.params.forEach(p => {
@@ -326,7 +324,7 @@ function coerce(expr: SimphyExpr, target: simulizer.Type): SimphyExpr {
     return expr; // Conversion not possible → caught by WASM validation
 }
 
-/** Find or register a new variable in FuncDef */
+/** Find or register a new variable in FuncDef (used by set/get — no duplicate tracking) */
 function getOrCreateLocal(
     ctx: CompileCtx,
     name: string,
@@ -335,7 +333,26 @@ function getOrCreateLocal(
     const existing = ctx.locals.get(name);
     if (existing) return existing.local;
     const local = new simulizer.Local(name, type);
-    const def     = ctx.func.add_local(local);
+    const def   = ctx.func.add_local(local);
+    ctx.locals.set(name, { local, def });
+    return local;
+}
+
+/** Declare a variable (used by local_decl_* — always registers so duplicates are detected) */
+function declareLocal(
+    ctx: CompileCtx,
+    name: string,
+    type: simulizer.Type,
+    blockId?: string,
+): simulizer.Local {
+    const existing = ctx.locals.get(name);
+    if (existing) {
+        const dupLocal = new simulizer.Local(name, type, blockId);
+        ctx.func.add_local(dupLocal);
+        return dupLocal;
+    }
+    const local = new simulizer.Local(name, type, blockId);
+    const def   = ctx.func.add_local(local);
     ctx.locals.set(name, { local, def });
     return local;
 }
@@ -497,6 +514,7 @@ function buildFuncDef(
         coerce,
         stmtChainToExprs,
         getOrCreateLocal,
+        declareLocal,
     };
 
     const body = stmtChainToExprs(mainBlock.getInputTargetBlock("BODY"), ctx);
@@ -536,6 +554,7 @@ function buildBaseToolboxXml(p: langpack): string {
     ${xmlTensorBlocks(tb.tensor)}
     ${xmlVectorBlocks(tb.vector)}
     ${xmlBoundaryBlocks(tb.boundary, tb.boundary_btn)}
+    ${xmlLatexBlocks("LaTeX")}
     <category name="${tb.cast}" colour="${45}">
         <block type="f64_from_i32"></block>
         <block type="i32_from_f64"></block>
@@ -625,6 +644,12 @@ const INITIAL_WORKSPACE_XML = `
 
 
 type RunState = "idle" | "compiling" | "running" | "done" | "error";
+
+interface InfoEntry {
+    level: "info" | "warn" | "error";
+    message: string;
+    blockId?: string;
+}
 
 const BlocklyWasmIDE: React.FC = () => {
     const blocklyDivRef = useRef<HTMLDivElement>(null);
@@ -777,7 +802,7 @@ const BlocklyWasmIDE: React.FC = () => {
         typeof window !== "undefined" ? getSavedList() : []
     );
 
-    const { logAreaRef, addLog, addBar, setBar, clearLog, addMatShow } = useConsolePanel();
+    const { logAreaRef, addLog, addBar, setBar, clearLog, addMatShow, addSeries, logToHolder, visualToHolder } = useConsolePanel();
 
     // appendToLogArea is used by Worker message handler (visual) to insert DOM directly
     const appendToLogArea = useCallback((el: HTMLElement) => {
@@ -812,7 +837,7 @@ const BlocklyWasmIDE: React.FC = () => {
     // Create WASM Worker (once on app mount, then reused)
     useEffect(() => {
         const worker = new Worker(
-            new URL("@/simphy/wasm-worker.ts", import.meta.url),
+            new URL("@/utils/wasm/wasm-worker.ts", import.meta.url),
             { type: "module" }
         );
         // Start TF initialization immediately inside Worker
@@ -872,8 +897,42 @@ const BlocklyWasmIDE: React.FC = () => {
         ws.registerButtonCallback("OPEN_FUNC_MGR", () => setShowFuncMgr(true));
         ws.registerButtonCallback("OPEN_BD2_MGR",  () => { setBdMgrTab("2d"); setShowBdMgr(true); });
         ws.registerButtonCallback("OPEN_BD3_MGR",  () => { setBdMgrTab("3d"); setShowBdMgr(true); });
+        
+        const refreshInfo = () => {
+            const mainBlock = ws.getAllBlocks(false).find(b => b.type === "wasm_func_main");
+            if (!mainBlock) {
+                setInfos([{ level: "warn", message: "wasm_func_main 블록이 없습니다." }]);
+                return;
+            }
+            const result = buildFuncDef(mainBlock);
+            if (typeof result === "string") {
+                setInfos([{ level: "error", message: result }]);
+                return;
+            }
+            const { declarations } = result.func.getLocalTypes();
+            const entries: InfoEntry[] = [];
+            for (const [name, bucket] of declarations) {
+                if (bucket.length > 1) {
+                    entries.push({
+                        level: "error",
+                        message: `변수 '${name}'이(가) ${bucket.length}번 선언되었습니다.`,
+                        blockId: bucket[1].blockId,
+                    });
+                }
+            }
+            setInfos(entries);
+        };
+        const handleBlockChange = (event: Blockly.Events.Abstract) => {
+            if (event.isUiEvent) return;
+            refreshInfo();
+        };
+        ws.addChangeListener(handleBlockChange);
+        
         Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
-        return () => ws.dispose();
+        return () => {
+            ws.removeChangeListener(handleBlockChange);
+            ws.dispose();
+        };
     }, []);
 
     // Re-apply Blockly theme when data-theme attribute changes (dark/light mode toggle)
@@ -993,6 +1052,7 @@ const BlocklyWasmIDE: React.FC = () => {
         _customFuncSpecs = customFuncsRef.current;
         _bd2Arrays = bd2ArraysRef.current;
         _bd3Arrays = bd3ArraysRef.current;
+        clearLatexRegistry();
 
         try {
             const mainBlock = ws.getAllBlocks(false).find((b) => b.type === "wasm_func_main");
@@ -1031,8 +1091,12 @@ const BlocklyWasmIDE: React.FC = () => {
             mod.add_import(new simulizer.ImportDef("debug",  "log_arr_f64",   "func", "log_arr_f64",   "(param i32 i32)"));
             mod.add_import(new simulizer.ImportDef("debug",  "log_tensor",    "func", "log_tensor",    "(param i32)"));
             mod.add_import(new simulizer.ImportDef("debug",  "log_vec2",      "func", "log_vec2",      "(param f64 f64)"));
+            mod.add_import(new simulizer.ImportDef("debug",  "log_vec3",      "func", "log_vec3",      "(param f64 f64 f64)"));
+            mod.add_import(new simulizer.ImportDef("debug",  "debug_series",  "func", "debug_series",  "(result i32)"));
+            mod.add_import(new simulizer.ImportDef("debug",  "debug_set_holder", "func", "debug_set_holder", "(param i32)"));
             mod.add_import(new simulizer.ImportDef("debug",  "debug_bar",     "func", "debug_bar",     "(param i32 i32) (result i32)"));
             mod.add_import(new simulizer.ImportDef("debug",  "debug_bar_set", "func", "debug_bar_set", "(param i32 i32)"));
+            mod.add_import(new simulizer.ImportDef("debug",  "log_latex",     "func", "log_latex",     "(param i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_random", "func", "tensor_random", "(param i32 i32 f64 f64 i32 i32) (result i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_create", "func", "tensor_create", "(param i32 i32 i32) (result i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_add",    "func", "tensor_add",    "(param i32 i32) (result i32)"));
@@ -1044,7 +1108,7 @@ const BlocklyWasmIDE: React.FC = () => {
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_save",   "func", "tensor_save",   "(param i32 i32) (result i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_set",    "func", "tensor_set",    "(param i32 i32 i32 i32 i32 i32 i32 i32 f64) (result i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_get",    "func", "tensor_get",    "(param i32 i32 i32 i32 i32 i32 i32 i32) (result f64)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "show_mat",      "func", "show_mat",      "(param i32) (result i32)"));
+            mod.add_import(new simulizer.ImportDef("debug",  "show_mat",      "func", "show_mat",      "(param i32) (result i32)"));
             mod.add_import(new simulizer.ImportDef("tensor", "tensor_perlin", "func", "tensor_perlin", "(param i32 i32 i32) (result i32)"));
 
             // bd2/bd3 배열 데이터를 WASM 데이터 세그먼트로 삽입
@@ -1072,21 +1136,23 @@ const BlocklyWasmIDE: React.FC = () => {
 
             await new Promise<void>((resolve, reject) => {
                 worker.onmessage = (e) => {
-                    const msg = e.data as import("@/simphy/wasm-worker").WorkerOutMsg;
+                    const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
                     if (msg.type === "ready") {
                         // init 완료 신호 — run 중에는 무시
+                    } else if (msg.type === "holder_create") {
+                        if (msg.kind === "series") addSeries(msg.holderId);
                     } else if (msg.type === "log") {
-                        addLog(msg.kind, msg.text);
+                        logToHolder(msg.holderId, msg.kind, msg.text);
                     } else if (msg.type === "bar_create") {
                         addBar(msg.min, msg.max, msg.barId);
                     } else if (msg.type === "bar_set") {
                         setBar(msg.barId, msg.val);
                     } else if (msg.type === "visual_vec") {
                         const imageUrl = vec_field_to_image_url(new Float32Array(msg.dx), new Float32Array(msg.dy), msg.rows, msg.cols);
-                        addMatShow(msg.rows, msg.cols, imageUrl);
+                        visualToHolder(msg.holderId, imageUrl, msg.rows, msg.cols);
                     } else if (msg.type === "visual") {
                         const imageUrl = mat_data_to_image_url(new Float32Array(msg.data), msg.rows, msg.cols);
-                        addMatShow(msg.rows, msg.cols, imageUrl);
+                        visualToHolder(msg.holderId, imageUrl, msg.rows, msg.cols);
                     } else if (msg.type === "result") {
                         setResult(msg.value);
                         addLog("success", `🎉 결과: ${msg.value}`);
@@ -1104,7 +1170,7 @@ const BlocklyWasmIDE: React.FC = () => {
                     setRunState("error");
                     reject(e);
                 };
-                worker.postMessage({ type: "run", wasmBuffer: wasm.buffer }, [wasm.buffer]);
+                worker.postMessage({ type: "run", wasmBuffer: wasm.buffer, latexStrings: getLatexRegistry() }, [wasm.buffer]);
             });
         } catch (err) {
             if (runState !== "error") {
@@ -1113,7 +1179,24 @@ const BlocklyWasmIDE: React.FC = () => {
             }
             console.error(err);
         }
-    }, [addLog, addBar, setBar, addMatShow, appendToLogArea, pack]);
+    }, [addLog, addBar, setBar, addMatShow, addSeries, logToHolder, visualToHolder, appendToLogArea, pack]);
+
+    const handleStop = useCallback(() => {
+        const oldWorker = wasmWorkerRef.current;
+        if (oldWorker) oldWorker.terminate();
+
+        const worker = new Worker(
+            new URL("@/utils/wasm/wasm-worker.ts", import.meta.url),
+            { type: "module" }
+        );
+        worker.postMessage({ type: "init" });
+        worker.onmessage = null;
+        worker.onerror = null;
+        wasmWorkerRef.current = worker;
+
+        setRunState("idle");
+        addLog("info", "실행이 중단되었습니다.");
+    }, [addLog]);
 
     const handleReset = useCallback(() => {
         const ws = workspaceRef.current;
@@ -1417,7 +1500,8 @@ const BlocklyWasmIDE: React.FC = () => {
     const isRunning = runState === "compiling" || runState === "running";
 
     // UI-only state (no business logic)
-    const [rightTab, setRightTab]     = useState<"console" | "result">("console");
+    const [rightTab, setRightTab]     = useState<"console" | "result" | "infos">("console");
+    const [infos, setInfos]           = useState<InfoEntry[]>([]);
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
@@ -1598,8 +1682,8 @@ const BlocklyWasmIDE: React.FC = () => {
                         )}
                     </div>
                     {/* Run */}
-                    <button onClick={handleRun} disabled={isRunning}
-                        style={{ display:"inline-flex", alignItems:"center", gap:7, padding:"6px 11px", borderRadius:token.radius.sm, background:isRunning ? token.color.danger : token.color.gradient.ai, color:"#fff", fontSize:token.font.size.fs12, fontWeight:600, border:"none", cursor:isRunning ? "default" : "pointer", boxShadow:"0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)" }}>
+                    <button onClick={isRunning ? handleStop : handleRun}
+                        style={{ display:"inline-flex", alignItems:"center", gap:7, padding:"6px 11px", borderRadius:token.radius.sm, background:isRunning ? token.color.danger : token.color.gradient.ai, color:"#fff", fontSize:token.font.size.fs12, fontWeight:600, border:"none", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)" }}>
                         {isRunning ? <Icon.Square size={10} /> : <Icon.Play size={11} fill />}
                         <span>{isRunning ? pack.workspace.ui.run_button_running : pack.workspace.ui.run_button}</span>
                         {/* <kbd style={{ padding:"1px 5px", background:"rgba(0,0,0,0.25)", borderRadius:3, fontFamily:token.font.family.mono, fontSize:token.font.size.fs10, color:"rgba(255,255,255,0.7)" }}>⌘↵</kbd> */}
@@ -1724,12 +1808,23 @@ const BlocklyWasmIDE: React.FC = () => {
                 <aside style={{ display:"flex", flexDirection:"column", borderLeft:`1px solid ${token.color.border}`, background:token.color.bg, overflow:"hidden" }}>
                     {/* Tabs */}
                     <div style={{ display:"flex", padding:"8px 8px 0", gap:2, borderBottom:`1px solid ${token.color.border}` }}>
-                        {(["console","result"] as const).map(tab => (
-                            <button key={tab} onClick={() => setRightTab(tab)}
-                                style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 12px", fontSize:token.font.size.fs12, border:"none", background:"none", cursor:"pointer", color:rightTab===tab ? token.color.fg : token.color.fgMuted, fontWeight:500, borderRadius:`${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom:-1, borderBottom:rightTab===tab ? `2px solid ${token.color.accent}` : "2px solid transparent" }}>
-                                {tab === "console" ? <><Icon.Terminal size={11}/> {pack.workspace.ui.console_tab}</> : pack.workspace.ui.result_tab}
-                            </button>
-                        ))}
+                        <button onClick={() => setRightTab("console")}
+                            style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 12px", fontSize:token.font.size.fs12, border:"none", background:"none", cursor:"pointer", color:rightTab==="console" ? token.color.fg : token.color.fgMuted, fontWeight:500, borderRadius:`${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom:-1, borderBottom:rightTab==="console" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}>
+                            <Icon.Terminal size={11}/> {pack.workspace.ui.console_tab}
+                        </button>
+                        <button onClick={() => setRightTab("result")}
+                            style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 12px", fontSize:token.font.size.fs12, border:"none", background:"none", cursor:"pointer", color:rightTab==="result" ? token.color.fg : token.color.fgMuted, fontWeight:500, borderRadius:`${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom:-1, borderBottom:rightTab==="result" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}>
+                            {pack.workspace.ui.result_tab}
+                        </button>
+                        <button onClick={() => setRightTab("infos")}
+                            style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 12px", fontSize:token.font.size.fs12, border:"none", background:"none", cursor:"pointer", color:rightTab==="infos" ? token.color.fg : token.color.fgMuted, fontWeight:500, borderRadius:`${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom:-1, borderBottom:rightTab==="infos" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}>
+                            Infos
+                            {infos.filter(i => i.level !== "info").length > 0 && (
+                                <span style={{ marginLeft:2, padding:"1px 5px", borderRadius:999, background: infos.some(i => i.level === "error") ? token.color.danger : token.color.warning, color:"#fff", fontSize:token.font.size.fs10, fontWeight:700, lineHeight:1.4 }}>
+                                    {infos.filter(i => i.level !== "info").length}
+                                </span>
+                            )}
+                        </button>
                     </div>
 
                     <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection:"column", flex:1, minHeight:0 }}>
@@ -1762,6 +1857,28 @@ const BlocklyWasmIDE: React.FC = () => {
                                 {tfBackend === "initializing" ? pack.workspace.ui.backend_initializing : `${tfBackend} · ${pack.workspace.ui.backend_ready}`}
                             </div>
                     </div>
+
+                    {rightTab === "infos" && (
+                        <div style={{ flex:1, overflowY:"auto", padding:"8px 0" }}>
+                            {infos.length === 0 ? (
+                                <div style={{ padding:"3px 14px", color:token.color.fgSubtle, fontFamily:token.font.family.mono, fontSize:token.font.size.fs11 }}>
+                                    블록을 편집하면 정보가 표시됩니다.
+                                </div>
+                            ) : infos.map((entry, i) => {
+                                const levelColor = entry.level === "error" ? token.color.danger : entry.level === "warn" ? token.color.warning : token.color.fgMuted;
+                                const icon = entry.level === "error" ? "✕" : entry.level === "warn" ? "⚠" : "ℹ";
+                                return (
+                                    <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"3px 14px", fontFamily:token.font.family.mono, fontSize:token.font.size.fs11, lineHeight:1.6 }}>
+                                        <span style={{ color:levelColor, flexShrink:0, marginTop:1 }}>{icon}</span>
+                                        <span style={{ color:token.color.fg, flex:1, wordBreak:"break-all" }}>{entry.message}</span>
+                                        {entry.blockId && (
+                                            <span style={{ color:token.color.fgSubtle, flexShrink:0 }}>#{entry.blockId.slice(0,6)}</span>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
 
                     {rightTab === "result" && (
                         <div style={{ padding:"32px 20px", textAlign:"center", display:"flex", flexDirection:"column", gap:8 }}>

@@ -1,4 +1,4 @@
-import { simulizer } from "../engine";
+import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 import { Vec2Load, Vec3Load } from "./vector";
 

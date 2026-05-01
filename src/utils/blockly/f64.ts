@@ -1,4 +1,4 @@
-import { simulizer } from "../engine";
+import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
 export function xmlF64Blocks(cat: string) {

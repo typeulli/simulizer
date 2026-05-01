@@ -125,10 +125,12 @@ export namespace simulizer {
     export class Local extends Expr {
         name: string;
         type: Type;
-        constructor(name: string, type: Type) {
+        blockId?: string;
+        constructor(name: string, type: Type, blockId?: string) {
             super("local");
             this.name = name;
             this.type = type;
+            this.blockId = blockId;
         }
         inferType(): Type { return this.type; }
         compile(): string { return `local.get $${this.name}`; }
@@ -977,6 +979,28 @@ export namespace simulizer {
             const def = new LocalDef(local);
             this.locals.push(def);
             return def;
+        }
+
+        /**
+         * Returns a map of local variable names to their declared types, plus
+         * a list of conflicts where the same name was declared with differing types.
+         */
+        getLocalTypes(): {
+            types: Map<string, Type>;
+            declarations: Map<string, Array<{ type: Type; blockId?: string }>>;
+        } {
+            const declarations = new Map<string, Array<{ type: Type; blockId?: string }>>();
+            for (const l of this.locals) {
+                const bucket = declarations.get(l.name);
+                const entry = { type: l.type, blockId: l.local.blockId };
+                if (bucket) bucket.push(entry);
+                else declarations.set(l.name, [entry]);
+            }
+            const types = new Map<string, Type>();
+            for (const [name, bucket] of declarations) {
+                types.set(name, bucket[0].type);
+            }
+            return { types, declarations };
         }
         add_expr(expr: Expr) { this.body.push(expr); return this; }
         compile(): string {

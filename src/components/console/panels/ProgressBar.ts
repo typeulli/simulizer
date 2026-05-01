@@ -27,6 +27,7 @@ export class ProgressBarPanel implements ConsolePanelRenderer {
         const wrapper = document.createElement("div");
         wrapper.id = `panel-${this.id}`;
         wrapper.style.cssText = [
+            `margin:3px 10px`,
             `background:var(--bg-raised)`,
             `border-radius:4px`,
             `padding:6px 8px`,

@@ -1,4 +1,4 @@
-import { simulizer } from "../engine";
+import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
 export const FLOW_BLOCKS: BlockSet = {

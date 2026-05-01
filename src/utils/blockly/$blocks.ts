@@ -9,6 +9,7 @@ import { LOCAL_BLOCKS } from "./locals";
 import { TENSOR_BLOCKS } from "./tensor";
 import { VECTOR_BLOCKS } from "./vector";
 import { BOUNDARY_BLOCKS } from "./boundary";
+import { LATEX_BLOCKS } from "./latex";
 
 
 export const CUSTOM_BLOCKS: BlockSet = zip(
@@ -22,4 +23,5 @@ export const CUSTOM_BLOCKS: BlockSet = zip(
     TENSOR_BLOCKS,
     VECTOR_BLOCKS,
     BOUNDARY_BLOCKS,
+    LATEX_BLOCKS,
 )

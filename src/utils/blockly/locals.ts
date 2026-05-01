@@ -1,4 +1,4 @@
-import { simulizer } from "../engine";
+import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
 export const LOCAL_BLOCKS: BlockSet = {
@@ -10,7 +10,7 @@ export const LOCAL_BLOCKS: BlockSet = {
             const name = block.getFieldValue("NAME") as string;
             const init = ctx.blockToExpr(block.getInputTargetBlock("INIT"), ctx);
             if (!init) return null;
-            const local = ctx.getOrCreateLocal(ctx, name, simulizer.i32);
+            const local = ctx.declareLocal(ctx, name, simulizer.i32, block.id);
             return new simulizer.LocalSet(local, ctx.coerce(init, simulizer.i32));
         }),
     LOCAL_DECL_F64: new BlockBuilder("local_decl_f64", undefined, 330, "float 변수 선언")
@@ -21,7 +21,7 @@ export const LOCAL_BLOCKS: BlockSet = {
             const name = block.getFieldValue("NAME") as string;
             const init = ctx.blockToExpr(block.getInputTargetBlock("INIT"), ctx);
             if (!init) return null;
-            const local = ctx.getOrCreateLocal(ctx, name, simulizer.f64);
+            const local = ctx.declareLocal(ctx, name, simulizer.f64, block.id);
             return new simulizer.LocalSet(local, ctx.coerce(init, simulizer.f64));
         }),
     LOCAL_GET_I32: new BlockBuilder("local_get_i32", "i32", 330, "int 변수 읽기")

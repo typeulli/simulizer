@@ -1,4 +1,4 @@
-import { simulizer } from "../engine";
+import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet, type CompileCtx } from "./$base";
 
 // ── vec2 타입 ──────────────────────────────────────────────────────────────────
