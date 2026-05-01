@@ -5,9 +5,6 @@ import * as Blockly from "blockly/core";
 import "blockly/blocks";
 import * as BlocklyEn from "blockly/msg/en";
 
-import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-backend-webgpu";
-
 import { simulizer } from "@/utils/wasm/engine";
 import { unpackF64Arrays } from "@/utils/ziparray";
 import {
@@ -19,7 +16,7 @@ import {
 import { xmlArrayBlocks, registerDynamicArrayBlocks, compileArrayLiteralBlock } from "@/utils/blockly/array";
 import { xmlBoolBlocks } from "@/utils/blockly/bool";
 import { xmlDebugBlocks } from "@/utils/blockly/debug";
-import { xmlLatexBlocks, clearLatexRegistry, getLatexRegistry } from "@/utils/blockly/latex";
+import { xmlLatexBlocks } from "@/utils/blockly/latex";
 import { xmlI32Blocks } from "@/utils/blockly/i32";
 import { xmlLocalBlocks } from "@/utils/blockly/locals";
 import { xmlTensorBlocks, registerDynamicTensorBlocks } from "@/utils/blockly/tensor";
@@ -47,6 +44,8 @@ import { xmlBoundaryBlocks } from "@/utils/blockly/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
 import { Prism } from "react-syntax-highlighter";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 
 // Register Blockly locale explicitly to prevent context menu labels from being undefined
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
@@ -656,29 +655,36 @@ const BlocklyWasmIDE: React.FC = () => {
     const workspaceRef  = useRef<Blockly.WorkspaceSvg | null>(null);
     const wasmWorkerRef = useRef<Worker | null>(null);
 
-    const [runState, setRunState]     = useState<RunState>("idle");
-    const [result, setResult]             = useState<string | null>(null);
-    const [tfBackend, setTfBackend]       = useState<string>("initializing");
-    const [watSource, setWatSource] = useState<string>("");
-    const [customFuncs, setCustomFuncs]   = useState<CustomFuncSpec[]>([]);
-    const customFuncsRef = useRef<CustomFuncSpec[]>([]);
-    const [showFuncMgr, setShowFuncMgr]   = useState(false);
-    const [newFuncName, setNewFuncName]   = useState("myFunc");
-    const [newFuncRet,  setNewFuncRet]    = useState<"i32"|"f64"|"void">("i32");
+    const [runState, setRunState]           = useState<RunState>("idle");
+    const [result, setResult]               = useState<string | null>(null);
+    const [tfBackend, setTfBackend]         = useState<string>("initializing");
+    const [watSource, setWatSource]         = useState<string>("");
+    const [customFuncs, setCustomFuncs]     = useState<CustomFuncSpec[]>([]);
+    const customFuncsRef                    = useRef<CustomFuncSpec[]>([]);
+    const [showFuncMgr, setShowFuncMgr]     = useState(false);
+    const [newFuncName, setNewFuncName]     = useState("myFunc");
+    const [newFuncRet,  setNewFuncRet]      = useState<"i32"|"f64"|"void">("i32");
     const [newFuncParams, setNewFuncParams] = useState<{name:string;type:"i32"|"f64"}[]>([]);
 
     const [bd2Arrays, setBd2Arrays]   = useState<Bd2ArrayEntry[]>([]);
     const bd2ArraysRef                = useRef<Bd2ArrayEntry[]>([]);
-    const [newBd2Name, setNewBd2Name]  = useState("boundary");
-    const bd2FileInputRef              = useRef<HTMLInputElement>(null);
+    const [newBd2Name, setNewBd2Name] = useState("boundary");
+    const bd2FileInputRef             = useRef<HTMLInputElement>(null);
 
     const [bd3Arrays, setBd3Arrays]   = useState<Bd3ArrayEntry[]>([]);
     const bd3ArraysRef                = useRef<Bd3ArrayEntry[]>([]);
-    const [newBd3Name, setNewBd3Name]  = useState("boundary");
-    const bd3FileInputRef              = useRef<HTMLInputElement>(null);
+    const [newBd3Name, setNewBd3Name] = useState("boundary");
+    const bd3FileInputRef             = useRef<HTMLInputElement>(null);
 
     const [showBdMgr, setShowBdMgr]   = useState(false);
     const [bdMgrTab,  setBdMgrTab]    = useState<"2d" | "3d">("2d");
+
+    const [showLatexOcr, setShowLatexOcr] = useState(false);
+    const [ocrLatex, setOcrLatex]         = useState("");
+    const [ocrStreaming, setOcrStreaming] = useState(false);
+    const [ocrImageUrl, setOcrImageUrl]   = useState<string | null>(null);
+    const ocrFileInputRef                 = useRef<HTMLInputElement>(null);
+    const ocrAbortRef                     = useRef<AbortController | null>(null);
 
     const [errorModal, setErrorModal] = useState<string | null>(null);
     const showErrorModal = useCallback((msg: string) => setErrorModal(msg), []);
@@ -689,12 +695,85 @@ const BlocklyWasmIDE: React.FC = () => {
     const [chatPrompt, setChatPrompt]           = useState("");
     const [chatOutput, setChatOutput]           = useState("");
     const [chatResult, setChatResult]           = useState<object | null>(null);
-    const [chatStreaming, setChatStreaming]      = useState(false);
+    const [chatStreaming, setChatStreaming]     = useState(false);
     const chatAbortRef                          = useRef<AbortController | null>(null);
     const [chatDiffData, setChatDiffData]       = useState<{ tree: any; modeMap: Record<string, "insert" | "delete" | "common"> } | null>(null);
     const chatPrevStateRef                      = useRef<object | null>(null);
     const chatDiffDivRef                        = useRef<HTMLDivElement>(null);
     const chatDiffWsRef                         = useRef<Blockly.WorkspaceSvg | null>(null);
+
+    const handleLatexOcr = useCallback(async (file: File) => {
+        ocrAbortRef.current?.abort();
+        const ctrl = new AbortController();
+        ocrAbortRef.current = ctrl;
+
+        const url = URL.createObjectURL(file);
+        setOcrImageUrl(url);
+        setOcrLatex("");
+        setOcrStreaming(true);
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const res = await fetch("http://localhost:8000/texocr", { method: "POST", body: formData, signal: ctrl.signal });
+            const reader = res.body!.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? "";
+                for (const line of lines) {
+                    if (line.startsWith("data:")) {
+                        try {
+                            const { content } = JSON.parse(line.slice(5).trim());
+                            if (content) setOcrLatex(prev => prev + content);
+                        } catch { /* ignore malformed chunk */ }
+                    } else if (line.startsWith("event: done")) {
+                        break;
+                    }
+                }
+            }
+        } catch (e: any) {
+            if (e?.name !== "AbortError") setOcrLatex(prev => prev || "오류가 발생했습니다.");
+        } finally {
+            setOcrStreaming(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!showLatexOcr) return;
+        const handler = (e: ClipboardEvent) => {
+            const item = Array.from(e.clipboardData?.items ?? []).find(i => i.type.startsWith("image/"));
+            if (!item) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const file = item.getAsFile();
+            if (file) handleLatexOcr(file);
+        };
+        window.addEventListener("paste", handler, true);
+        return () => window.removeEventListener("paste", handler, true);
+    }, [showLatexOcr, handleLatexOcr]);
+
+    const handleLatexOcrApply = useCallback((latex: string) => {
+        const ws = workspaceRef.current;
+        if (!ws || !latex.trim()) return;
+        const clean = latex.trim().replace(/^\$\$|\$\$$/g, "").replace(/^\$|\$$/g, "").trim();
+        const block = ws.newBlock("latex_expr");
+        block.setFieldValue(clean, "LATEX");
+        block.initSvg();
+        block.render();
+        const metrics = ws.getMetrics();
+        block.moveBy(
+            metrics.viewLeft + metrics.viewWidth / 2 - 60,
+            metrics.viewTop + metrics.viewHeight / 2 - 20,
+        );
+        ws.centerOnBlock(block.id);
+        setShowLatexOcr(false);
+    }, []);
 
     const handleChat = useCallback(async () => {
         const ws = workspaceRef.current;
@@ -786,11 +865,11 @@ const BlocklyWasmIDE: React.FC = () => {
     }, [chatPrompt]);
 
     const [showBlocks, setShowBlocks] = useState(false);
-    const [blockData, setBlockData]     = useState<string>("");
-    const [blockMode, setBlockMode]     = useState<"export" | "import" | "wat">("export");
-    const [saveName, setSaveName]         = useState<string>("");
-    const fileInputRef                  = useRef<HTMLInputElement>(null);
-    const [lang, , pack, langReady] = useLanguagePack();
+    const [blockData, setBlockData]   = useState<string>("");
+    const [blockMode, setBlockMode]   = useState<"export" | "import" | "wat">("export");
+    const [saveName, setSaveName]     = useState<string>("");
+    const fileInputRef                = useRef<HTMLInputElement>(null);
+    const [lang, , pack, langReady]   = useLanguagePack();
 
     const LS_PREFIX = "simphy_blocks_";
     const getSavedList = () =>
@@ -815,31 +894,16 @@ const BlocklyWasmIDE: React.FC = () => {
     }, [logAreaRef]);
 
 
-    // Initialize TF backend (once on app start, main thread only)
-    useEffect(() => {
-        (async () => {
-            const backends = ["webgpu", "webgl", "cpu"] as const;
-            for (const backend of backends) {
-                try {
-                    const ok = await tf.setBackend(backend);
-                    if (!ok) continue;
-                    await tf.ready();
-                    setTfBackend(tf.getBackend() ?? backend);
-                    return;
-                } catch {
-                    // Backend not supported → try next
-                }
-            }
-            setTfBackend("cpu");
-        })();
-    }, []);
-
     // Create WASM Worker (once on app mount, then reused)
     useEffect(() => {
         const worker = new Worker(
             new URL("@/utils/wasm/wasm-worker.ts", import.meta.url),
             { type: "module" }
         );
+        worker.onmessage = (e) => {
+            const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
+            if (msg.type === "backend-switched") setTfBackend(msg.backend);
+        };
         // Start TF initialization immediately inside Worker
         worker.postMessage({ type: "init" });
         wasmWorkerRef.current = worker;
@@ -849,21 +913,16 @@ const BlocklyWasmIDE: React.FC = () => {
         };
     }, []);
 
-    const handleSwitchBackend = useCallback(async (backend: string) => {
-        try {
-            setTfBackend("initializing");
-            const ok = await tf.setBackend(backend);
-            if (!ok) throw new Error("setBackend returned false");
-            await tf.ready();
-            setTfBackend(tf.getBackend() ?? backend);
-
-            // Sync backend to the worker
-            if (wasmWorkerRef.current) {
-                wasmWorkerRef.current.postMessage({ type: "switch-backend", backend });
-            }
-        } catch {
-            setTfBackend(tf.getBackend() ?? "cpu");
-        }
+    const handleSwitchBackend = useCallback((backend: string) => {
+        const worker = wasmWorkerRef.current;
+        if (!worker) return;
+        setTfBackend("initializing");
+        worker.onmessage = (e) => {
+            const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
+            if (msg.type === "backend-switched") setTfBackend(msg.backend);
+            else if (msg.type === "error") setTfBackend(backend);
+        };
+        worker.postMessage({ type: "switch-backend", backend });
     }, []);
 
     // Initialize Blockly
@@ -894,9 +953,10 @@ const BlocklyWasmIDE: React.FC = () => {
         });
 
         workspaceRef.current = ws;
-        ws.registerButtonCallback("OPEN_FUNC_MGR", () => setShowFuncMgr(true));
-        ws.registerButtonCallback("OPEN_BD2_MGR",  () => { setBdMgrTab("2d"); setShowBdMgr(true); });
-        ws.registerButtonCallback("OPEN_BD3_MGR",  () => { setBdMgrTab("3d"); setShowBdMgr(true); });
+        ws.registerButtonCallback("OPEN_FUNC_MGR",   () => setShowFuncMgr(true));
+        ws.registerButtonCallback("OPEN_BD2_MGR",    () => { setBdMgrTab("2d"); setShowBdMgr(true); });
+        ws.registerButtonCallback("OPEN_BD3_MGR",    () => { setBdMgrTab("3d"); setShowBdMgr(true); });
+        ws.registerButtonCallback("OPEN_LATEX_OCR",  () => { setOcrLatex(""); setOcrImageUrl(null); setShowLatexOcr(true); });
         
         const refreshInfo = () => {
             const mainBlock = ws.getAllBlocks(false).find(b => b.type === "wasm_func_main");
@@ -1052,8 +1112,6 @@ const BlocklyWasmIDE: React.FC = () => {
         _customFuncSpecs = customFuncsRef.current;
         _bd2Arrays = bd2ArraysRef.current;
         _bd3Arrays = bd3ArraysRef.current;
-        clearLatexRegistry();
-
         try {
             const mainBlock = ws.getAllBlocks(false).find((b) => b.type === "wasm_func_main");
             if (!mainBlock) {
@@ -1084,32 +1142,34 @@ const BlocklyWasmIDE: React.FC = () => {
                 addLog("info", pack.workspace.logs.func_compile_complete.replace("$0", spec.name));
             }
 
-            mod.add_import(new simulizer.ImportDef("debug",  "log",           "func", "log_i32",       "(param i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log",           "func", "log_f64",       "(param f64)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log_ptr",       "func", "log_ptr",       "(param i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log_arr_i32",   "func", "log_arr_i32",   "(param i32 i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log_arr_f64",   "func", "log_arr_f64",   "(param i32 i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log_tensor",    "func", "log_tensor",    "(param i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log_vec2",      "func", "log_vec2",      "(param f64 f64)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log_vec3",      "func", "log_vec3",      "(param f64 f64 f64)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "debug_series",  "func", "debug_series",  "(result i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "debug_set_holder", "func", "debug_set_holder", "(param i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "debug_bar",     "func", "debug_bar",     "(param i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "debug_bar_set", "func", "debug_bar_set", "(param i32 i32)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "log_latex",     "func", "log_latex",     "(param i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_random", "func", "tensor_random", "(param i32 i32 f64 f64 i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_create", "func", "tensor_create", "(param i32 i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_add",    "func", "tensor_add",    "(param i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_sub",    "func", "tensor_sub",    "(param i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_matmul", "func", "tensor_matmul", "(param i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_neg",    "func", "tensor_neg",    "(param i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_elemul", "func", "tensor_elemul", "(param i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_scale",  "func", "tensor_scale",  "(param i32 f64) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_save",   "func", "tensor_save",   "(param i32 i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_set",    "func", "tensor_set",    "(param i32 i32 i32 i32 i32 i32 i32 i32 f64) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_get",    "func", "tensor_get",    "(param i32 i32 i32 i32 i32 i32 i32 i32) (result f64)"));
-            mod.add_import(new simulizer.ImportDef("debug",  "show_mat",      "func", "show_mat",      "(param i32) (result i32)"));
-            mod.add_import(new simulizer.ImportDef("tensor", "tensor_perlin", "func", "tensor_perlin", "(param i32 i32 i32) (result i32)"));
+            const allImports: simulizer.ImportDef[] = [
+                new simulizer.ImportDef("debug",  "log",              "func", "log_i32",          "(param i32)"),
+                new simulizer.ImportDef("debug",  "log",              "func", "log_f64",          "(param f64)"),
+                new simulizer.ImportDef("debug",  "log_ptr",          "func", "log_ptr",          "(param i32)"),
+                new simulizer.ImportDef("debug",  "log_arr_i32",      "func", "log_arr_i32",      "(param i32 i32)"),
+                new simulizer.ImportDef("debug",  "log_arr_f64",      "func", "log_arr_f64",      "(param i32 i32)"),
+                new simulizer.ImportDef("debug",  "log_tensor",       "func", "log_tensor",       "(param i32)"),
+                new simulizer.ImportDef("debug",  "log_vec2",         "func", "log_vec2",         "(param f64 f64)"),
+                new simulizer.ImportDef("debug",  "log_vec3",         "func", "log_vec3",         "(param f64 f64 f64)"),
+                new simulizer.ImportDef("debug",  "debug_series",     "func", "debug_series",     "(result i32)"),
+                new simulizer.ImportDef("debug",  "debug_set_holder", "func", "debug_set_holder", "(param i32)"),
+                new simulizer.ImportDef("debug",  "debug_bar",        "func", "debug_bar",        "(param i32 i32) (result i32)"),
+                new simulizer.ImportDef("debug",  "debug_bar_set",    "func", "debug_bar_set",    "(param i32 i32)"),
+                new simulizer.ImportDef("tensor", "tensor_random",    "func", "tensor_random",    "(param i32 i32 f64 f64 i32 i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_create",    "func", "tensor_create",    "(param i32 i32 i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_add",       "func", "tensor_add",       "(param i32 i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_sub",       "func", "tensor_sub",       "(param i32 i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_matmul",    "func", "tensor_matmul",    "(param i32 i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_neg",       "func", "tensor_neg",       "(param i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_elemul",    "func", "tensor_elemul",    "(param i32 i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_scale",     "func", "tensor_scale",     "(param i32 f64) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_save",      "func", "tensor_save",      "(param i32 i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_set",       "func", "tensor_set",       "(param i32 i32 i32 i32 i32 i32 i32 i32 f64) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_get",       "func", "tensor_get",       "(param i32 i32 i32 i32 i32 i32 i32 i32) (result f64)"),
+                new simulizer.ImportDef("debug",  "show_mat",         "func", "show_mat",         "(param i32) (result i32)"),
+                new simulizer.ImportDef("tensor", "tensor_perlin",    "func", "tensor_perlin",    "(param i32 i32 i32) (result i32)"),
+            ];
+            for (const imp of allImports) mod.add_import(imp);
 
             // bd2/bd3 배열 데이터를 WASM 데이터 세그먼트로 삽입
             for (const bd2 of bd2ArraysRef.current) {
@@ -1118,6 +1178,11 @@ const BlocklyWasmIDE: React.FC = () => {
             for (const bd3 of bd3ArraysRef.current) {
                 mod.add_data(bd3.offset, new Uint8Array(bd3.data.buffer, bd3.data.byteOffset, bd3.data.byteLength));
             }
+
+            // WAT를 먼저 컴파일해 실제로 call되는 import만 남긴다
+            const watFull = mod.compile();
+            const calledFns = new Set(Array.from(watFull.matchAll(/call \$(\w+)/g), m => m[1]));
+            mod.imports = mod.imports.filter(imp => calledFns.has(imp.internalName));
 
             const wat = mod.compile();
             setWatSource(wat);
@@ -1170,7 +1235,7 @@ const BlocklyWasmIDE: React.FC = () => {
                     setRunState("error");
                     reject(e);
                 };
-                worker.postMessage({ type: "run", wasmBuffer: wasm.buffer, latexStrings: getLatexRegistry() }, [wasm.buffer]);
+                worker.postMessage({ type: "run", wasmBuffer: wasm.buffer }, [wasm.buffer]);
             });
         } catch (err) {
             if (runState !== "error") {
@@ -1190,7 +1255,10 @@ const BlocklyWasmIDE: React.FC = () => {
             { type: "module" }
         );
         worker.postMessage({ type: "init" });
-        worker.onmessage = null;
+        worker.onmessage = (e) => {
+            const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
+            if (msg.type === "backend-switched") setTfBackend(msg.backend);
+        };
         worker.onerror = null;
         wasmWorkerRef.current = worker;
 
@@ -1988,6 +2056,112 @@ const BlocklyWasmIDE: React.FC = () => {
                 </Modal>
             )}
 
+
+            {/* LaTeX OCR modal */}
+            {showLatexOcr && (
+                <Modal onClose={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }} width="min(560px,95vw)">
+                    <ModalHeader onClose={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }}>
+                        <Text variant="label" tone="accent">Image → LaTeX OCR</Text>
+                    </ModalHeader>
+                    <ModalBody style={{ display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
+                        {/* Image upload area */}
+                        <div
+                            onClick={() => ocrFileInputRef.current?.click()}
+                            onDragOver={e => e.preventDefault()}
+                            onDrop={e => {
+                                e.preventDefault();
+                                const file = e.dataTransfer.files[0];
+                                if (file && file.type.startsWith("image/")) handleLatexOcr(file);
+                            }}
+                            style={{
+                                border: `2px dashed ${token.color.borderStrong}`,
+                                borderRadius: token.radius.md,
+                                padding: token.space.sp4,
+                                textAlign: "center",
+                                cursor: "pointer",
+                                background: token.color.bgSubtle,
+                                minHeight: 100,
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: token.space.sp2,
+                            }}
+                        >
+                            {ocrImageUrl
+                                ? <img src={ocrImageUrl} alt="uploaded" style={{ maxHeight: 160, maxWidth: "100%", borderRadius: token.radius.sm, objectFit: "contain" }} />
+                                : <>
+                                    <Icon.Upload size={22} />
+                                    <Text variant="body" tone="muted">클릭, 드래그, 또는 Ctrl+V로 이미지 업로드</Text>
+                                  </>
+                            }
+                        </div>
+                        <input
+                            ref={ocrFileInputRef}
+                            type="file"
+                            accept="image/*"
+                            style={{ display: "none" }}
+                            onChange={e => {
+                                const file = e.target.files?.[0];
+                                if (file) handleLatexOcr(file);
+                                e.target.value = "";
+                            }}
+                        />
+
+                        {/* LaTeX result with katex preview */}
+                        {(ocrLatex || ocrStreaming) && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
+                                <Text variant="label" tone="muted">LaTeX 결과</Text>
+                                <div style={{
+                                    background: token.color.bgCanvas,
+                                    border: `1px solid ${token.color.border}`,
+                                    borderRadius: token.radius.md,
+                                    padding: token.space.sp3,
+                                    fontFamily: token.font.family.mono,
+                                    fontSize: token.font.size.fs12,
+                                    color: token.color.fg,
+                                    whiteSpace: "pre-wrap",
+                                    wordBreak: "break-all",
+                                    minHeight: 48,
+                                }}>
+                                    {ocrLatex}{ocrStreaming && <span style={{ opacity: 0.5, animation: "pulse 1s infinite" }}>▍</span>}
+                                </div>
+
+                                {/* KaTeX rendered preview */}
+                                {ocrLatex.trim() && (() => {
+                                    try {
+                                        const raw = ocrLatex.trim().replace(/^\$\$|\$\$$/g, "").replace(/^\$|\$$/g, "").trim();
+                                        const html = katex.renderToString(raw, { throwOnError: false, displayMode: true });
+                                        return (
+                                            <div style={{
+                                                background: token.color.bgSubtle,
+                                                border: `1px solid ${token.color.border}`,
+                                                borderRadius: token.radius.md,
+                                                padding: token.space.sp3,
+                                                overflowX: "auto",
+                                                textAlign: "center",
+                                            }}
+                                                dangerouslySetInnerHTML={{ __html: html }}
+                                            />
+                                        );
+                                    } catch { return null; }
+                                })()}
+                            </div>
+                        )}
+                    </ModalBody>
+                    <ModalFooter>
+                        <Button variant="ghost" size="sm" onClick={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }}>취소</Button>
+                        <Button
+                            variant="run"
+                            size="sm"
+                            onClick={() => handleLatexOcrApply(ocrLatex)}
+                            disabled={!ocrLatex.trim() || ocrStreaming}
+                        >
+                            Apply
+                        </Button>
+                    </ModalFooter>
+                </Modal>
+            )}
 
             {/* Custom function management modal */}
             {showFuncMgr && (

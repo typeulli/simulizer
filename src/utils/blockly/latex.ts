@@ -1,31 +1,20 @@
-import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
+import { latexToExpr } from "../tex/codegen";
 import "./FieldLatex";
 
-const latexRegistry: string[] = [];
-
-export function clearLatexRegistry(): void {
-    latexRegistry.length = 0;
-}
-
-export function getLatexRegistry(): string[] {
-    return [...latexRegistry];
-}
-
 export const LATEX_BLOCKS: BlockSet = {
-    latex_print: new BlockBuilder("latex_print", undefined, 200, "LaTeX 수식 출력 (브라우저 콘솔)", false)
+    latex_expr: new BlockBuilder("latex_expr", undefined, 200, "LaTeX 수식 → 코드 생성", false)
         .addBody("LaTeX %1")
-        .addArg("field_latex", "LATEX", undefined, "x^2 + y^2 = r^2")
-        .stmt((block, _ctx) => {
+        .addArg("field_latex", "LATEX", undefined, "x = 3 + 7")
+        .stmt((block, ctx) => {
             const latex = (block.getFieldValue("LATEX") as string) ?? "";
-            const id = latexRegistry.length;
-            latexRegistry.push(latex);
-            return new simulizer.Call("log_latex", [simulizer.i32c(id)], simulizer.void_);
+            return latexToExpr(latex, ctx);
         }),
 };
 
-export function xmlLatexBlocks(cat: string) {
+export function xmlLatexBlocks(cat: string, ocrBtnLabel = "📷 Image → LaTeX") {
     return `<category name="${cat}" colour="200">
-    <block type="latex_print"></block>
+    <button text="${ocrBtnLabel}" callbackKey="OPEN_LATEX_OCR"></button>
+    <block type="latex_expr"></block>
 </category>`;
 }

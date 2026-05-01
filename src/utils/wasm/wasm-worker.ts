@@ -23,7 +23,7 @@ import { simulizer } from "./engine";
 // Message type definitions────────────
 
 export type WorkerInMsg =
-    | { type: "run"; wasmBuffer: ArrayBuffer; latexStrings?: string[] }
+    | { type: "run"; wasmBuffer: ArrayBuffer }
     | { type: "init" }
     | { type: "switch-backend"; backend: string };
 
@@ -73,6 +73,7 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
     if (msg.type === "init") {
         await tfReadyPromise;
         post({ type: "ready" });
+        post({ type: "backend-switched", backend: tf.getBackend() ?? "cpu" });
         return;
     }
 
@@ -98,8 +99,6 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
     barIdCounter = 0;
     holderCounter = 1;
     currentHolderId = 0;
-
-    const latexStrings = msg.latexStrings ?? [];
 
     // Wait if TF is still initializing
     if (!tfReady) await tfReadyPromise;
@@ -137,7 +136,6 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
                 debug_bar_set: (barId: number, val: number) => {
                     post({ type: "bar_set", barId, val });
                 },
-                log_latex: (id: number) => log(latexStrings[id] ?? ""),
                 debug_series: (): number => {
                     const id = holderCounter++;
                     post({ type: "holder_create", holderId: id, kind: "series" });
