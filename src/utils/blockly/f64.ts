@@ -1,15 +1,6 @@
 import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
-export function xmlF64Blocks(cat: string) {
-    return `<category name="${cat}" colour="${160}">
-    <block type="f64_const"></block>
-    <block type="f64_binop"></block>
-    <block type="f64_unop"></block>
-    <block type="f64_cmp"></block>
-</category>`;
-}
-
 export const F64_BLOCKS: BlockSet = {
     CONST: new BlockBuilder("f64_const", "f64", 160, "실수 상수 (64-bit float)")
         .addBody("float %1")
@@ -76,4 +67,15 @@ export const F64_BLOCKS: BlockSet = {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return (simulizer.f64ops[op] as any)(lhs, rhs);
         })
+}
+
+export function xmlF64Blocks(cat: string) {
+    return `<category name="${cat}" colour="${160}">
+    <sep gap="16"></sep>
+    <label text="Float"></label>
+    <block type="f64_const"></block>
+    <block type="f64_binop"></block>
+    <block type="f64_unop"></block>
+    <block type="f64_cmp"></block>
+</category>`;
 }

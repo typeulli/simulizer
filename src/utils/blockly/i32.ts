@@ -62,6 +62,8 @@ export const I32_BLOCKS: BlockSet = {
 
 export function xmlI32Blocks(cat: string) {
     return `<category name="${cat}" colour="${230}">
+    <sep gap="16"></sep>
+    <label text="Integer"></label>
     <block type="i32_const"></block>
     <block type="i32_binop"></block>
     <block type="i32_unop"></block>

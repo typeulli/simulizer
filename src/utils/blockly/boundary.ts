@@ -246,21 +246,25 @@ export const BOUNDARY_BLOCKS: BlockSet = {
 
 export function xmlBoundaryBlocks(cat: string, btnLabel: string) {
     return `<category name="${cat}" colour="${200}">
+    <sep gap="16"></sep>
+    <label text="Boundary Condition"></label>
     <button text="${btnLabel}" callbackKey="OPEN_BD2_MGR"></button>
-    <category name="2D" colour="${200}">
-        <block type="local_decl_bd2"></block>
-        <block type="local_get_bd2"></block>
-        <block type="local_get_bd2_point"></block>
-        <block type="local_get_bd2_tangent"></block>
-        <block type="local_get_bd2_normal"></block>
-        <block type="flow_for_bd2"></block>
-    </category>
-    <category name="3D" colour="${200}">
-        <block type="local_decl_bd3"></block>
-        <block type="local_get_bd3"></block>
-        <block type="local_get_bd3_point"></block>
-        <block type="local_get_bd3_normal"></block>
-        <block type="flow_for_bd3"></block>
-    </category>
+    <label text="2D"></label>
+    <sep gap="2"></sep>
+    <label text="─────────────────"></label>
+    <block type="local_decl_bd2"></block>
+    <block type="local_get_bd2"></block>
+    <block type="local_get_bd2_point"></block>
+    <block type="local_get_bd2_tangent"></block>
+    <block type="local_get_bd2_normal"></block>
+    <block type="flow_for_bd2"></block>
+    <label text="3D"></label>
+    <sep gap="2"></sep>
+    <label text="─────────────────"></label>
+    <block type="local_decl_bd3"></block>
+    <block type="local_get_bd3"></block>
+    <block type="local_get_bd3_point"></block>
+    <block type="local_get_bd3_normal"></block>
+    <block type="flow_for_bd3"></block>
 </category>`;
 }

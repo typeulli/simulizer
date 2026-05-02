@@ -31,8 +31,12 @@ import { Icon } from "@/components/atoms/Icons";
 import { Logo } from "@/components/atoms/Logo";
 import { Spinner } from "@/components/atoms/Spinner";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
-import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
 import { token } from "@/components/tokens";
+import { BlockManagerModal } from "@/components/workspace-modals/BlockManagerModal";
+import { BoundaryManagerModal } from "@/components/workspace-modals/BoundaryManagerModal";
+import { ErrorModal } from "@/components/workspace-modals/ErrorModal";
+import { FunctionManagerModal } from "@/components/workspace-modals/FunctionManagerModal";
+import { LatexOcrModal } from "@/components/workspace-modals/LatexOcrModal";
 
 import { useConsolePanel } from "@/components/console";
 import useLanguagePack from "@/hooks/useLanguagePack";
@@ -44,8 +48,8 @@ import { xmlBoundaryBlocks } from "@/utils/blockly/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
 import { Prism } from "react-syntax-highlighter";
-import katex from "katex";
-import "katex/dist/katex.min.css";
+import { useRouter } from "next/navigation";
+import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 
 // Register Blockly locale explicitly to prevent context menu labels from being undefined
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
@@ -555,10 +559,14 @@ function buildBaseToolboxXml(p: langpack): string {
     ${xmlBoundaryBlocks(tb.boundary, tb.boundary_btn)}
     ${xmlLatexBlocks("LaTeX")}
     <category name="${tb.cast}" colour="${45}">
+        <sep gap="16"></sep>
+        <label text="Cast"></label>
         <block type="f64_from_i32"></block>
         <block type="i32_from_f64"></block>
     </category>
     <category name="${tb.func}" colour="${290}">
+    <sep gap="16"></sep>
+        <label text="Function"></label>
         <button text="${tb.func_btn}" callbackKey="OPEN_FUNC_MGR"></button>
         <block type="wasm_func_main"></block>
         <block type="wasm_return_i32"></block>
@@ -647,6 +655,7 @@ type RunState = "idle" | "compiling" | "running" | "done" | "error";
 interface InfoEntry {
     level: "info" | "warn" | "error";
     message: string;
+    kind?: "no_main" | "duplicate_decl" | "compile_fail";
     blockId?: string;
 }
 
@@ -654,10 +663,13 @@ const BlocklyWasmIDE: React.FC = () => {
     const blocklyDivRef = useRef<HTMLDivElement>(null);
     const workspaceRef  = useRef<Blockly.WorkspaceSvg | null>(null);
     const wasmWorkerRef = useRef<Worker | null>(null);
+    const router = useRouter();
 
     const [runState, setRunState]           = useState<RunState>("idle");
     const [result, setResult]               = useState<string | null>(null);
     const [tfBackend, setTfBackend]         = useState<string>("initializing");
+    const [lastRunBackend, setLastRunBackend] = useState<string | null>(null);
+    const [lastRunDurationMs, setLastRunDurationMs] = useState<number | null>(null);
     const [watSource, setWatSource]         = useState<string>("");
     const [customFuncs, setCustomFuncs]     = useState<CustomFuncSpec[]>([]);
     const customFuncsRef                    = useRef<CustomFuncSpec[]>([]);
@@ -701,6 +713,7 @@ const BlocklyWasmIDE: React.FC = () => {
     const chatPrevStateRef                      = useRef<object | null>(null);
     const chatDiffDivRef                        = useRef<HTMLDivElement>(null);
     const chatDiffWsRef                         = useRef<Blockly.WorkspaceSvg | null>(null);
+    const runStartedAtRef                      = useRef<number | null>(null);
 
     const handleLatexOcr = useCallback(async (file: File) => {
         ocrAbortRef.current?.abort();
@@ -897,47 +910,170 @@ const BlocklyWasmIDE: React.FC = () => {
         typeof window !== "undefined" ? getSavedList() : []
     );
 
-    const { logAreaRef, addLog, addBar, setBar, clearLog, addMatShow, addSeries, logToHolder, visualToHolder } = useConsolePanel();
+    const { logAreaRef, addLog, addBar, setBar, clearLog, addSeries, logToHolder, visualToHolder } = useConsolePanel();
+    const pendingRunRef = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
+    const pendingBackendSwitchRef = useRef<{ previous: string } | null>(null);
+    const tfBackendRef = useRef(tfBackend);
+    const workerBindingsRef = useRef({
+        addLog,
+        addBar,
+        setBar,
+        addSeries,
+        logToHolder,
+        visualToHolder,
+        pack,
+    });
 
-    // appendToLogArea is used by Worker message handler (visual) to insert DOM directly
-    const appendToLogArea = useCallback((el: HTMLElement) => {
-        const area = logAreaRef.current;
-        if (!area) return;
-        const placeholder = area.querySelector("[data-placeholder]");
-        if (placeholder) area.removeChild(placeholder);
-        area.appendChild(el);
-        area.scrollTop = area.scrollHeight;
-    }, [logAreaRef]);
-
-
-    // Create WASM Worker (once on app mount, then reused)
     useEffect(() => {
+        tfBackendRef.current = tfBackend;
+    }, [tfBackend]);
+
+    useEffect(() => {
+        workerBindingsRef.current = {
+            addLog,
+            addBar,
+            setBar,
+            addSeries,
+            logToHolder,
+            visualToHolder,
+            pack,
+        };
+    }, [addLog, addBar, setBar, addSeries, logToHolder, visualToHolder, pack]);
+
+    const handleWorkerMessage = useCallback((e: MessageEvent<WorkerOutMsg>) => {
+        const msg = e.data;
+        const {
+            addLog: currentAddLog,
+            addBar: currentAddBar,
+            setBar: currentSetBar,
+            addSeries: currentAddSeries,
+            logToHolder: currentLogToHolder,
+            visualToHolder: currentVisualToHolder,
+            pack: currentPack,
+        } = workerBindingsRef.current;
+
+        if (msg.type === "ready") return;
+
+        if (msg.type === "backend-switched") {
+            pendingBackendSwitchRef.current = null;
+            setTfBackend(msg.backend);
+            return;
+        }
+
+        if (msg.type === "holder_create") {
+            if (msg.kind === "series") currentAddSeries(msg.holderId);
+            return;
+        }
+
+        if (msg.type === "log") {
+            currentLogToHolder(msg.holderId, msg.kind, msg.text);
+            return;
+        }
+
+        if (msg.type === "bar_create") {
+            currentAddBar(msg.min, msg.max, msg.barId);
+            return;
+        }
+
+        if (msg.type === "bar_set") {
+            currentSetBar(msg.barId, msg.val);
+            return;
+        }
+
+        if (msg.type === "visual_vec") {
+            const imageUrl = vec_field_to_image_url(new Float32Array(msg.dx), new Float32Array(msg.dy), msg.rows, msg.cols);
+            currentVisualToHolder(msg.holderId, imageUrl, msg.rows, msg.cols);
+            return;
+        }
+
+        if (msg.type === "visual") {
+            const imageUrl = mat_data_to_image_url(new Float32Array(msg.data), msg.rows, msg.cols);
+            currentVisualToHolder(msg.holderId, imageUrl, msg.rows, msg.cols);
+            return;
+        }
+
+        if (msg.type === "result") {
+            setResult(msg.value);
+            currentAddLog("success", `🎉 결과: ${msg.value}`);
+            return;
+        }
+
+        if (msg.type === "done") {
+            if (runStartedAtRef.current !== null) {
+                setLastRunDurationMs(performance.now() - runStartedAtRef.current);
+                runStartedAtRef.current = null;
+            }
+            setRunState("done");
+            pendingRunRef.current?.resolve();
+            pendingRunRef.current = null;
+            return;
+        }
+
+        if (msg.type === "error") {
+            if (pendingBackendSwitchRef.current) {
+                setTfBackend(pendingBackendSwitchRef.current.previous);
+                pendingBackendSwitchRef.current = null;
+                currentAddLog("error", currentPack.workspace.logs.error_prefix.replace("$0", msg.message));
+                return;
+            }
+
+            if (pendingRunRef.current) {
+                if (runStartedAtRef.current !== null) {
+                    setLastRunDurationMs(performance.now() - runStartedAtRef.current);
+                    runStartedAtRef.current = null;
+                }
+                pendingRunRef.current.reject(new Error(msg.message));
+                pendingRunRef.current = null;
+                return;
+            }
+
+            currentAddLog("error", currentPack.workspace.logs.error_prefix.replace("$0", msg.message));
+        }
+    }, []);
+
+    const handleWorkerError = useCallback((e: ErrorEvent) => {
+        const { addLog: currentAddLog, pack: currentPack } = workerBindingsRef.current;
+
+        if (pendingRunRef.current) {
+            pendingRunRef.current.reject(new Error(e.message));
+            pendingRunRef.current = null;
+            return;
+        }
+
+        currentAddLog("error", currentPack.workspace.logs.worker_error.replace("$0", e.message));
+    }, []);
+
+    const createWasmWorker = useCallback(() => {
         const worker = new Worker(
             new URL("@/utils/wasm/wasm-worker.ts", import.meta.url),
             { type: "module" }
         );
-        worker.onmessage = (e) => {
-            const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
-            if (msg.type === "backend-switched") setTfBackend(msg.backend);
-        };
-        // Start TF initialization immediately inside Worker
+        worker.addEventListener("message", handleWorkerMessage);
+        worker.addEventListener("error", handleWorkerError);
         worker.postMessage({ type: "init" });
         wasmWorkerRef.current = worker;
+        return worker;
+    }, [handleWorkerMessage, handleWorkerError]);
+
+
+    // Create WASM Worker (once on app mount, then reused)
+    useEffect(() => {
+        const worker = createWasmWorker();
         return () => {
             worker.terminate();
-            wasmWorkerRef.current = null;
+            pendingRunRef.current = null;
+            pendingBackendSwitchRef.current = null;
+            if (wasmWorkerRef.current === worker) {
+                wasmWorkerRef.current = null;
+            }
         };
-    }, []);
+    }, [createWasmWorker]);
 
     const handleSwitchBackend = useCallback((backend: string) => {
         const worker = wasmWorkerRef.current;
         if (!worker) return;
+        pendingBackendSwitchRef.current = { previous: tfBackendRef.current };
         setTfBackend("initializing");
-        worker.onmessage = (e) => {
-            const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
-            if (msg.type === "backend-switched") setTfBackend(msg.backend);
-            else if (msg.type === "error") setTfBackend(backend);
-        };
         worker.postMessage({ type: "switch-backend", backend });
     }, []);
 
@@ -977,12 +1113,12 @@ const BlocklyWasmIDE: React.FC = () => {
         const refreshInfo = () => {
             const mainBlock = ws.getAllBlocks(false).find(b => b.type === "wasm_func_main");
             if (!mainBlock) {
-                setInfos([{ level: "warn", message: "wasm_func_main 블록이 없습니다." }]);
+                setInfos([{ level: "warn", kind: "no_main", message: "wasm_func_main 블록이 없습니다." }]);
                 return;
             }
             const result = buildFuncDef(mainBlock);
             if (typeof result === "string") {
-                setInfos([{ level: "error", message: result }]);
+                setInfos([{ level: "error", kind: "compile_fail", message: result }]);
                 return;
             }
             const { declarations } = result.func.getLocalTypes();
@@ -991,6 +1127,7 @@ const BlocklyWasmIDE: React.FC = () => {
                 if (bucket.length > 1) {
                     entries.push({
                         level: "error",
+                        kind: "duplicate_decl",
                         message: `변수 '${name}'이(가) ${bucket.length}번 선언되었습니다.`,
                         blockId: bucket[1].blockId,
                     });
@@ -1005,8 +1142,29 @@ const BlocklyWasmIDE: React.FC = () => {
         ws.addChangeListener(handleBlockChange);
         
         Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
+
+        const slimToolboxBars = () => {
+            blocklyDivRef.current?.querySelectorAll<HTMLElement>(".blocklyToolboxCategory").forEach(el => {
+                const styleAttr = el.getAttribute("style") ?? "";
+                const match = styleAttr.match(/border-left:\s*\S+\s+\S+\s+([^;]+)/);
+                const color = match?.[1]?.trim();
+                if (color) {
+                    el.style.removeProperty("border-left");
+                    const icon = el.querySelector<HTMLElement>(".blocklyToolboxCategoryIcon");
+                    if (icon) icon.style.backgroundColor = color;
+                }
+            });
+        };
+        setTimeout(slimToolboxBars, 200);
+        const barObserver = new MutationObserver(slimToolboxBars);
+        barObserver.observe(blocklyDivRef.current, {
+            childList: true, subtree: true,
+            attributes: true, attributeFilter: ["style"],
+        });
+
         return () => {
             ws.removeChangeListener(handleBlockChange);
+            barObserver.disconnect();
             ws.dispose();
         };
     }, []);
@@ -1025,6 +1183,8 @@ const BlocklyWasmIDE: React.FC = () => {
     useEffect(() => {
         const ws = workspaceRef.current;
         if (!ws || !langReady) return;
+        // Skip until the requested language and fetched pack match.
+        if (lang && pack.meta.langc !== lang) return;
         const defs = buildCustomBlockDefs(pack);
         defs.forEach(def => {
             Blockly.Blocks[(def as { type: string }).type] = {
@@ -1034,11 +1194,11 @@ const BlocklyWasmIDE: React.FC = () => {
         // Restore dynamic blocks that were overwritten above
         registerDynamicTensorBlocks();
         registerDynamicArrayBlocks();
-        const savedXml = Blockly.Xml.workspaceToDom(ws);
+        const savedState = Blockly.serialization.workspaces.save(ws);
         ws.clear();
-        Blockly.Xml.domToWorkspace(savedXml, ws);
+        Blockly.serialization.workspaces.load(savedState, ws);
         ws.updateToolbox(buildToolboxXml(customFuncs, pack));
-    }, [lang]);
+    }, [lang, pack]);
 
     // Update toolbox when custom functions change
     useEffect(() => {
@@ -1058,6 +1218,31 @@ const BlocklyWasmIDE: React.FC = () => {
         document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
     }, [showChatPopover]);
+
+    // Clear Blockly selection when clicking outside the workspace pane.
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            const target = e.target as Node | null;
+            const workspaceHost = blocklyDivRef.current;
+            const ws = workspaceRef.current;
+            if (!target || !workspaceHost) return;
+            if (workspaceHost.contains(target)) return;
+
+            const focusManager = (Blockly as any).getFocusManager?.();
+            if (ws && focusManager?.focusNode) {
+                focusManager.focusNode(ws);
+                return;
+            }
+
+            const selected = (Blockly.common as any).getSelected?.();
+            if (selected?.unselect) {
+                selected.unselect();
+            }
+        };
+
+        document.addEventListener("pointerdown", handler, true);
+        return () => document.removeEventListener("pointerdown", handler, true);
+    }, []);
 
     // Diff Blockly workspace lifecycle
     useEffect(() => {
@@ -1121,6 +1306,9 @@ const BlocklyWasmIDE: React.FC = () => {
         // Commit edited fields (number inputs, etc.) and close dropdowns
         Blockly.hideChaff();
 
+        setLastRunBackend(tfBackendRef.current);
+        setLastRunDurationMs(null);
+        runStartedAtRef.current = performance.now();
         setResult(null); setWatSource(""); setRunState("compiling");
         clearLog();
 
@@ -1216,71 +1404,36 @@ const BlocklyWasmIDE: React.FC = () => {
             if (!worker) throw new Error("Worker not initialized");
 
             await new Promise<void>((resolve, reject) => {
-                worker.onmessage = (e) => {
-                    const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
-                    if (msg.type === "ready") {
-                        // init 완료 신호 — run 중에는 무시
-                    } else if (msg.type === "holder_create") {
-                        if (msg.kind === "series") addSeries(msg.holderId);
-                    } else if (msg.type === "log") {
-                        logToHolder(msg.holderId, msg.kind, msg.text);
-                    } else if (msg.type === "bar_create") {
-                        addBar(msg.min, msg.max, msg.barId);
-                    } else if (msg.type === "bar_set") {
-                        setBar(msg.barId, msg.val);
-                    } else if (msg.type === "visual_vec") {
-                        const imageUrl = vec_field_to_image_url(new Float32Array(msg.dx), new Float32Array(msg.dy), msg.rows, msg.cols);
-                        visualToHolder(msg.holderId, imageUrl, msg.rows, msg.cols);
-                    } else if (msg.type === "visual") {
-                        const imageUrl = mat_data_to_image_url(new Float32Array(msg.data), msg.rows, msg.cols);
-                        visualToHolder(msg.holderId, imageUrl, msg.rows, msg.cols);
-                    } else if (msg.type === "result") {
-                        setResult(msg.value);
-                        addLog("success", `🎉 결과: ${msg.value}`);
-                    } else if (msg.type === "done") {
-                        setRunState("done");
-                        resolve();
-                    } else if (msg.type === "error") {
-                        addLog("error", pack.workspace.logs.error_prefix.replace("$0", msg.message));
-                        setRunState("error");
-                        reject(new Error(msg.message));
-                    }
-                };
-                worker.onerror = (e) => {
-                    addLog("error", pack.workspace.logs.worker_error.replace("$0", e.message));
-                    setRunState("error");
-                    reject(e);
-                };
+                pendingRunRef.current = { resolve, reject };
                 worker.postMessage({ type: "run", wasmBuffer: wasm.buffer }, [wasm.buffer]);
             });
         } catch (err) {
-            if (runState !== "error") {
+            if ((err as Error).name !== "AbortError") {
                 addLog("error", pack.workspace.logs.error_prefix.replace("$0", err instanceof Error ? err.message : String(err)));
                 setRunState("error");
             }
             console.error(err);
         }
-    }, [addLog, addBar, setBar, addMatShow, addSeries, logToHolder, visualToHolder, appendToLogArea, pack]);
+    }, [addLog, pack, clearLog]);
 
     const handleStop = useCallback(() => {
         const oldWorker = wasmWorkerRef.current;
         if (oldWorker) oldWorker.terminate();
 
-        const worker = new Worker(
-            new URL("@/utils/wasm/wasm-worker.ts", import.meta.url),
-            { type: "module" }
-        );
-        worker.postMessage({ type: "init" });
-        worker.onmessage = (e) => {
-            const msg = e.data as import("@/utils/wasm/wasm-worker").WorkerOutMsg;
-            if (msg.type === "backend-switched") setTfBackend(msg.backend);
-        };
-        worker.onerror = null;
-        wasmWorkerRef.current = worker;
+        if (pendingRunRef.current) {
+            const abortError = new Error("Execution stopped");
+            abortError.name = "AbortError";
+            pendingRunRef.current.reject(abortError);
+            pendingRunRef.current = null;
+        }
+        runStartedAtRef.current = null;
+        pendingBackendSwitchRef.current = null;
+
+        createWasmWorker();
 
         setRunState("idle");
         addLog("info", "실행이 중단되었습니다.");
-    }, [addLog]);
+    }, [addLog, createWasmWorker]);
 
     const handleReset = useCallback(() => {
         const ws = workspaceRef.current;
@@ -1572,20 +1725,34 @@ const BlocklyWasmIDE: React.FC = () => {
         e.target.value = "";
     }, []);
 
-    // Common form element styles
-    const inputStyle: React.CSSProperties = {
-        padding: "4px 8px", borderRadius: token.radius.sm,
-        border: `1px solid ${token.color.borderStrong}`,
-        background: token.color.bgRaised, color: token.color.fg,
-        fontFamily: "inherit", fontSize: token.font.size.fs14, outline: "none",
-    };
-    const selectStyle: React.CSSProperties = { ...inputStyle };
-
     const isRunning = runState === "compiling" || runState === "running";
+    const formatRunDuration = (ms: number | null) => {
+        if (ms == null) return "—";
+        if (ms < 1000) return `${ms.toFixed(1)} ms`;
+        return `${(ms / 1000).toFixed(2)} s`;
+    };
 
     // UI-only state (no business logic)
     const [rightTab, setRightTab]     = useState<"console" | "result" | "infos">("console");
     const [infos, setInfos]           = useState<InfoEntry[]>([]);
+
+    const focusInfoEntry = useCallback((entry: InfoEntry) => {
+        if (!entry.blockId) return;
+
+        const ws = workspaceRef.current;
+        if (!ws) return;
+
+        setCanvasTab("blocks");
+        const block = ws.getBlockById(entry.blockId);
+        if (!block) return;
+        ws.centerOnBlock(block.id);
+        const focusManager = (Blockly as any).getFocusManager?.();
+        if (focusManager?.focusNode) {
+            focusManager.focusNode(block);
+        } else {
+            block.select();
+        }
+    }, []);
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
@@ -1804,7 +1971,7 @@ const BlocklyWasmIDE: React.FC = () => {
                                 { label: pack.workspace.ui.shortcut_boundary_2d, icon:<Icon.Grid size={11} />,   href:"/boundary/2d" },
                                 { label: pack.workspace.ui.shortcut_boundary_3d, icon:<Icon.Layers size={11} />, href:"/boundary/3d" },
                             ] as const).map(({ label, icon, href }) => (
-                                <button key={href} onClick={() => { window.location.href = href; }}
+                                <button key={href} onClick={() => router.push(href)}
                                     style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"4px 9px", border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, background:"none", cursor:"pointer", color:token.color.fgMuted, fontSize:token.font.size.fs11, fontWeight:500, transition:"all 0.1s" }}
                                     onMouseEnter={e => { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; }}
                                     onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = token.color.fgMuted; }}
@@ -1902,7 +2069,7 @@ const BlocklyWasmIDE: React.FC = () => {
                         </button>
                         <button onClick={() => setRightTab("infos")}
                             style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 12px", fontSize:token.font.size.fs12, border:"none", background:"none", cursor:"pointer", color:rightTab==="infos" ? token.color.fg : token.color.fgMuted, fontWeight:500, borderRadius:`${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom:-1, borderBottom:rightTab==="infos" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}>
-                            Infos
+                            {pack.workspace.ui.infos_tab}
                             {infos.filter(i => i.level !== "info").length > 0 && (
                                 <span style={{ marginLeft:2, padding:"1px 5px", borderRadius:999, background: infos.some(i => i.level === "error") ? token.color.danger : token.color.warning, color:"#fff", fontSize:token.font.size.fs10, fontWeight:700, lineHeight:1.4 }}>
                                     {infos.filter(i => i.level !== "info").length}
@@ -1946,19 +2113,41 @@ const BlocklyWasmIDE: React.FC = () => {
                         <div style={{ flex:1, overflowY:"auto", padding:"8px 0" }}>
                             {infos.length === 0 ? (
                                 <div style={{ padding:"3px 14px", color:token.color.fgSubtle, fontFamily:token.font.family.mono, fontSize:token.font.size.fs11 }}>
-                                    블록을 편집하면 정보가 표시됩니다.
+                                    {pack.workspace.ui.infos_empty}
                                 </div>
                             ) : infos.map((entry, i) => {
                                 const levelColor = entry.level === "error" ? token.color.danger : entry.level === "warn" ? token.color.warning : token.color.fgMuted;
                                 const icon = entry.level === "error" ? "✕" : entry.level === "warn" ? "⚠" : "ℹ";
+                                const clickable = Boolean(entry.blockId);
                                 return (
-                                    <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"3px 14px", fontFamily:token.font.family.mono, fontSize:token.font.size.fs11, lineHeight:1.6 }}>
+                                    <button
+                                        key={i}
+                                        type="button"
+                                        onClick={() => focusInfoEntry(entry)}
+                                        disabled={!clickable}
+                                        title={clickable ? "클릭하여 관련 블록으로 이동" : undefined}
+                                        style={{
+                                            display:"flex",
+                                            alignItems:"flex-start",
+                                            gap:8,
+                                            width:"100%",
+                                            padding:"3px 14px",
+                                            fontFamily:token.font.family.mono,
+                                            fontSize:token.font.size.fs11,
+                                            lineHeight:1.6,
+                                            border:"none",
+                                            background:"none",
+                                            textAlign:"left",
+                                            cursor: clickable ? "pointer" : "default",
+                                            opacity: clickable ? 1 : 0.9,
+                                        }}
+                                    >
                                         <span style={{ color:levelColor, flexShrink:0, marginTop:1 }}>{icon}</span>
                                         <span style={{ color:token.color.fg, flex:1, wordBreak:"break-all" }}>{entry.message}</span>
-                                        {entry.blockId && (
-                                            <span style={{ color:token.color.fgSubtle, flexShrink:0 }}>#{entry.blockId.slice(0,6)}</span>
+                                        {entry.kind && (
+                                            <span style={{ color:token.color.fgSubtle, flexShrink:0 }}>{{ no_main: "no-main-block", duplicate_decl: "redefinition", compile_fail: "compile-error" }[entry.kind]}</span>
                                         )}
-                                    </div>
+                                    </button>
                                 );
                             })}
                         </div>
@@ -1971,7 +2160,11 @@ const BlocklyWasmIDE: React.FC = () => {
                             </div>
                             <div style={{ color:token.color.fgMuted, fontFamily:token.font.family.mono, fontSize:token.font.size.fs12 }}>{pack.workspace.ui.output_label}</div>
                             <div style={{ marginTop:24, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:1, background:token.color.border, border:`1px solid ${token.color.border}`, borderRadius:token.radius.md, overflow:"hidden" }}>
-                                {[[pack.workspace.ui.stat_backend, tfBackend], [pack.workspace.ui.stat_status, runState], [pack.workspace.ui.stat_run, isRunning ? pack.workspace.ui.stat_running : pack.workspace.ui.stat_done]].map(([label, val]) => (
+                                {[
+                                    [pack.workspace.ui.stat_backend, lastRunBackend ?? "—"],
+                                    [pack.workspace.ui.stat_status, runState],
+                                    ["실행 시간", formatRunDuration(lastRunDurationMs)],
+                                ].map(([label, val]) => (
                                     <div key={label} style={{ padding:"10px 8px", background:token.color.bg, display:"flex", flexDirection:"column", gap:2 }}>
                                         <span style={{ fontSize:token.font.size.fs10, textTransform:"uppercase", letterSpacing:"0.06em", color:token.color.fgSubtle, fontWeight:600 }}>{label}</span>
                                         <b style={{ fontFamily:token.font.family.mono, fontSize:token.font.size.fs13, color:token.color.fg, fontWeight:500 }}>{val}</b>
@@ -1984,364 +2177,81 @@ const BlocklyWasmIDE: React.FC = () => {
                 </aside>
             </div>
 
-            {/* Block management modal */}
-            {showBlocks && (
-                <Modal onClose={() => setShowBlocks(false)} width="min(700px,90vw)">
-                    {/* Tab bar header */}
-                    <div style={{ display:"flex", alignItems:"center", padding:"0 16px", borderBottom:`1px solid ${token.color.border}`, background:token.color.bg, flexShrink:0 }}>
-                        <div style={{ display:"flex", gap:0, flex:1 }}>
-                            {([
-                                { mode:"export" as const, label: pack.workspace.ui.export_button, icon: <Icon.File size={11}/> },
-                                { mode:"import" as const, label: pack.workspace.ui.import_button, icon: <Icon.Layers size={11}/> },
-                                ...(watSource ? [{ mode:"wat" as const, label: pack.workspace.ui.wat_button, icon: <Icon.Terminal size={11}/> }] : []),
-                            ]).map(({ mode, label, icon }) => (
-                                <button key={mode} onClick={() => mode === "import" ? handleOpenImport() : setBlockMode(mode)}
-                                    style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"12px 14px", fontSize:token.font.size.fs12, fontWeight: blockMode===mode ? 600 : 400, border:"none", background:"none", cursor:"pointer", color: blockMode===mode ? token.color.fg : token.color.fgMuted, borderBottom: blockMode===mode ? `2px solid ${token.color.accent}` : "2px solid transparent", marginBottom:-1, transition:"all 0.1s" }}>
-                                    {icon}{label}
-                                </button>
-                            ))}
-                        </div>
-                        <Button variant="ghost" size="xs" onClick={() => setShowBlocks(false)} style={{ padding: token.space.sp1 }}>
-                            <Icon.X size={13} />
-                        </Button>
-                    </div>
+            <BlockManagerModal
+                open={showBlocks}
+                mode={blockMode}
+                blockData={blockData}
+                savedList={savedList}
+                watSource={watSource}
+                fileInputRef={fileInputRef}
+                pack={pack}
+                onClose={() => setShowBlocks(false)}
+                onModeChange={setBlockMode}
+                onBlockDataChange={setBlockData}
+                onOpenImport={handleOpenImport}
+                onSaveToStorage={handleSaveToStorage}
+                onDownloadFile={handleDownloadFile}
+                onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
+                onResetWorkspace={() => { handleReset(); setShowBlocks(false); }}
+                onDeleteSaved={handleDeleteFromStorage}
+                onLoadSaved={handleLoadFromStorage}
+                onApplyImport={handleLoadBlocks}
+                onFileInput={handleFileInput}
+            />
 
-                    <ModalBody style={{ padding:0, display:"flex", flexDirection:"column", minHeight:0 }}>
-                        {blockMode === "export" && (<>
-                            {/* Toolbar */}
-                            <div style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderBottom:`1px solid ${token.color.border}`, flexShrink:0 }}>
-                                <Button variant="accent" size="sm" leading={<Icon.Save size={11}/>} onClick={handleSaveToStorage}>{pack.workspace.ui.save_local_button}</Button>
-                                <Button variant="ghost"  size="sm" leading={<Icon.Download size={11}/>} onClick={handleDownloadFile}>{pack.workspace.ui.save_file_button}</Button>
-                                <Button variant="ghost"  size="sm" leading={<Icon.Check size={11}/>} onClick={() => navigator.clipboard.writeText(blockData)}>{pack.workspace.ui.copy_button}</Button>
-                                <div style={{ marginLeft:"auto" }}>
-                                    <Button variant="danger" size="sm" onClick={() => { handleReset(); setShowBlocks(false); }}>{pack.workspace.ui.reset_button}</Button>
-                                </div>
-                            </div>
-                            {/* Saved list */}
-                            {savedList.length > 0 && (
-                                <div style={{ display:"flex", flexWrap:"wrap", gap:4, padding:"8px 16px", borderBottom:`1px solid ${token.color.border}`, flexShrink:0 }}>
-                                    {savedList.map(name => (
-                                        <span key={name} style={{ display:"inline-flex", alignItems:"center", gap:4, background:token.color.bgCanvas, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, padding:"2px 8px 2px 10px", fontSize:token.font.size.fs11, color:token.color.fg, fontFamily:token.font.family.mono }}>
-                                            {name}
-                                            <button onClick={() => handleDeleteFromStorage(name)}
-                                                style={{ display:"flex", alignItems:"center", background:"none", border:"none", color:token.color.fgSubtle, cursor:"pointer", padding:2, borderRadius:3, lineHeight:1 }}
-                                                onMouseEnter={e => (e.currentTarget.style.color = token.color.danger)}
-                                                onMouseLeave={e => (e.currentTarget.style.color = token.color.fgSubtle)}>
-                                                <Icon.X size={10}/>
-                                            </button>
-                                        </span>
-                                    ))}
-                                </div>
-                            )}
-                            {/* Code view */}
-                            <pre style={{ overflow:"auto", flex:1, margin:0, padding:"16px", fontSize:token.font.size.fs11, color:token.color.fgMuted, lineHeight:1.7, whiteSpace:"pre-wrap", wordBreak:"break-all", fontFamily:token.font.family.mono, background:token.color.bgCanvas, minHeight:300 }}>{blockData}</pre>
-                        </>)}
+            <LatexOcrModal
+                open={showLatexOcr}
+                imageUrl={ocrImageUrl}
+                latex={ocrLatex}
+                streaming={ocrStreaming}
+                fileInputRef={ocrFileInputRef}
+                onClose={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }}
+                onUpload={handleLatexOcr}
+                onApply={() => handleLatexOcrApply(ocrLatex)}
+            />
 
-                        {blockMode === "import" && (<>
-                            {/* Toolbar */}
-                            <div style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderBottom:`1px solid ${token.color.border}`, flexShrink:0 }}>
-                                <Button variant="ghost" size="sm" leading={<Icon.File size={11}/>} onClick={() => fileInputRef.current?.click()}>{pack.workspace.ui.open_file_button}</Button>
-                                <input ref={fileInputRef} type="file" accept=".simphy,.json" onChange={handleFileInput} style={{ display:"none" }} />
-                                <div style={{ marginLeft:"auto" }}>
-                                    <Button variant="ai" size="sm" onClick={handleLoadBlocks}>{pack.workspace.ui.apply_button}</Button>
-                                </div>
-                            </div>
-                            {/* Saved list */}
-                            {savedList.length > 0 && (
-                                <div style={{ display:"flex", flexWrap:"wrap", gap:4, padding:"8px 16px", borderBottom:`1px solid ${token.color.border}`, flexShrink:0 }}>
-                                    {savedList.map(name => (
-                                        <button key={name} onClick={() => handleLoadFromStorage(name)}
-                                            style={{ display:"inline-flex", alignItems:"center", gap:4, background:token.color.bgCanvas, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, padding:"2px 10px", fontSize:token.font.size.fs11, color:token.color.fg, fontFamily:token.font.family.mono, cursor:"pointer", transition:"all 0.1s" }}
-                                            onMouseEnter={e => { e.currentTarget.style.borderColor = token.color.accent; e.currentTarget.style.color = token.color.accent; }}
-                                            onMouseLeave={e => { e.currentTarget.style.borderColor = token.color.border; e.currentTarget.style.color = token.color.fg; }}>
-                                            <Icon.File size={10}/>{name}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                            <textarea value={blockData} onChange={(e) => setBlockData(e.target.value)}
-                                placeholder={pack.workspace.ui.xml_textarea_placeholder} spellCheck={false}
-                                style={{ flex:1, margin:0, padding:16, fontSize:token.font.size.fs11, color:token.color.fg, lineHeight:1.7, background:token.color.bgCanvas, border:"none", outline:"none", resize:"none", fontFamily:token.font.family.mono, minHeight:300 }}
-                            />
-                        </>)}
+            <FunctionManagerModal
+                open={showFuncMgr}
+                onClose={() => setShowFuncMgr(false)}
+                pack={pack}
+                customFuncs={customFuncs}
+                newFuncName={newFuncName}
+                newFuncRet={newFuncRet}
+                newFuncParams={newFuncParams}
+                onChangeName={setNewFuncName}
+                onChangeRet={setNewFuncRet}
+                onChangeParamName={(index, value) => setNewFuncParams(prev => prev.map((x, j) => j === index ? { ...x, name: value } : x))}
+                onChangeParamType={(index, value) => setNewFuncParams(prev => prev.map((x, j) => j === index ? { ...x, type: value } : x))}
+                onRemoveParam={(index) => setNewFuncParams(prev => prev.filter((_, j) => j !== index))}
+                onAddParam={() => setNewFuncParams(prev => [...prev, { name: `p${prev.length}`, type: "i32" }])}
+                onAddFunc={handleAddFunc}
+                onRemoveFunc={handleRemoveFunc}
+            />
 
-                        {blockMode === "wat" && (
-                            <pre style={{ overflow:"auto", flex:1, margin:0, padding:16, fontSize:token.font.size.fs12, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", fontFamily:token.font.family.mono, background:token.color.bgCanvas, minHeight:300 }}>{watSource}</pre>
-                        )}
-                    </ModalBody>
-                </Modal>
-            )}
+            <BoundaryManagerModal
+                open={showBdMgr}
+                tab={bdMgrTab}
+                arrays2d={bd2Arrays}
+                arrays3d={bd3Arrays}
+                name2d={newBd2Name}
+                name3d={newBd3Name}
+                fileInputRef2d={bd2FileInputRef}
+                fileInputRef3d={bd3FileInputRef}
+                onClose={() => setShowBdMgr(false)}
+                onTabChange={setBdMgrTab}
+                onName2dChange={setNewBd2Name}
+                onName3dChange={setNewBd3Name}
+                onFile2d={handleBd2FileInput}
+                onFile3d={handleBd3FileInput}
+                onRemove2d={handleRemoveBd2}
+                onRemove3d={handleRemoveBd3}
+            />
 
-
-            {/* LaTeX OCR modal */}
-            {showLatexOcr && (
-                <Modal onClose={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }} width="min(560px,95vw)">
-                    <ModalHeader onClose={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }}>
-                        <Text variant="label" tone="accent">Image → LaTeX OCR</Text>
-                    </ModalHeader>
-                    <ModalBody style={{ display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
-                        {/* Image upload area */}
-                        <div
-                            onClick={() => ocrFileInputRef.current?.click()}
-                            onDragOver={e => e.preventDefault()}
-                            onDrop={e => {
-                                e.preventDefault();
-                                const file = e.dataTransfer.files[0];
-                                if (file && file.type.startsWith("image/")) handleLatexOcr(file);
-                            }}
-                            style={{
-                                border: `2px dashed ${token.color.borderStrong}`,
-                                borderRadius: token.radius.md,
-                                padding: token.space.sp4,
-                                textAlign: "center",
-                                cursor: "pointer",
-                                background: token.color.bgSubtle,
-                                minHeight: 100,
-                                display: "flex",
-                                flexDirection: "column",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                gap: token.space.sp2,
-                            }}
-                        >
-                            {ocrImageUrl
-                                ? <img src={ocrImageUrl} alt="uploaded" style={{ maxHeight: 160, maxWidth: "100%", borderRadius: token.radius.sm, objectFit: "contain" }} />
-                                : <>
-                                    <Icon.Upload size={22} />
-                                    <Text variant="body" tone="muted">클릭, 드래그, 또는 Ctrl+V로 이미지 업로드</Text>
-                                  </>
-                            }
-                        </div>
-                        <input
-                            ref={ocrFileInputRef}
-                            type="file"
-                            accept="image/*"
-                            style={{ display: "none" }}
-                            onChange={e => {
-                                const file = e.target.files?.[0];
-                                if (file) handleLatexOcr(file);
-                                e.target.value = "";
-                            }}
-                        />
-
-                        {/* LaTeX result with katex preview */}
-                        {(ocrLatex || ocrStreaming) && (
-                            <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
-                                <Text variant="label" tone="muted">LaTeX 결과</Text>
-                                <div style={{
-                                    background: token.color.bgCanvas,
-                                    border: `1px solid ${token.color.border}`,
-                                    borderRadius: token.radius.md,
-                                    padding: token.space.sp3,
-                                    fontFamily: token.font.family.mono,
-                                    fontSize: token.font.size.fs12,
-                                    color: token.color.fg,
-                                    whiteSpace: "pre-wrap",
-                                    wordBreak: "break-all",
-                                    minHeight: 48,
-                                }}>
-                                    {ocrLatex}{ocrStreaming && <span style={{ opacity: 0.5, animation: "pulse 1s infinite" }}>▍</span>}
-                                </div>
-
-                                {/* KaTeX rendered preview */}
-                                {ocrLatex.trim() && (() => {
-                                    try {
-                                        const parts = ocrLatex.split("$");
-                                        const formulas: string[] = [];
-                                        for (let i = 1; i < parts.length; i += 2) {
-                                            const f = parts[i].trim();
-                                            if (f) formulas.push(f);
-                                        }
-                                        if (formulas.length === 0) {
-                                            const raw = ocrLatex.trim();
-                                            if (raw) formulas.push(raw);
-                                        }
-                                        return (
-                                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                                {formulas.map((formula, i) => {
-                                                    const html = katex.renderToString(formula, { throwOnError: false, displayMode: true });
-                                                    return (
-                                                        <div key={i} style={{
-                                                            background: token.color.bgSubtle,
-                                                            border: `1px solid ${token.color.border}`,
-                                                            borderRadius: token.radius.md,
-                                                            padding: token.space.sp3,
-                                                            overflowX: "auto",
-                                                            textAlign: "center",
-                                                        }}
-                                                            dangerouslySetInnerHTML={{ __html: html }}
-                                                        />
-                                                    );
-                                                })}
-                                            </div>
-                                        );
-                                    } catch { return null; }
-                                })()}
-                            </div>
-                        )}
-                    </ModalBody>
-                    <ModalFooter>
-                        <Button variant="ghost" size="sm" onClick={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }}>취소</Button>
-                        <Button
-                            variant="run"
-                            size="sm"
-                            onClick={() => handleLatexOcrApply(ocrLatex)}
-                            disabled={!ocrLatex.trim() || ocrStreaming}
-                        >
-                            Apply
-                        </Button>
-                    </ModalFooter>
-                </Modal>
-            )}
-
-            {/* Custom function management modal */}
-            {showFuncMgr && (
-                <Modal onClose={() => setShowFuncMgr(false)} width="min(560px,95vw)">
-                    <ModalHeader onClose={() => setShowFuncMgr(false)}>
-                        <Text variant="label" tone="accent">{pack.workspace.ui.func_mgr_title}</Text>
-                    </ModalHeader>
-
-                    <ModalBody>
-                        <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:12 }}>
-                            {customFuncs.length === 0 && (
-                                <Text variant="body" tone="muted">{pack.workspace.ui.func_empty_message}</Text>
-                            )}
-                            {customFuncs.map(spec => (
-                                <div key={spec.id} style={{ background:token.color.bgSubtle, border:`1px solid ${token.color.borderStrong}`, borderRadius:token.radius.md, padding:"8px 12px", display:"flex", alignItems:"center", gap:8 }}>
-                                    <div style={{ flex:1, fontSize:token.font.size.fs12 }}>
-                                        <span style={{ color:token.color.accent, fontWeight:700 }}>{spec.name}</span>
-                                        <span style={{ color:token.color.fgMuted }}> → {spec.retType}</span>
-                                        {spec.params.length > 0 && (
-                                            <span style={{ color: token.color.info }}>
-                                                {"  "}({spec.params.map(p => `${p.name}:${p.type}`).join(", ")})
-                                            </span>
-                                        )}
-                                    </div>
-                                    <button onClick={() => handleRemoveFunc(spec.id)}
-                                        style={{ background:token.color.dangerSoft, border:`1px solid ${token.color.danger}`, borderRadius:5, color:token.color.danger, cursor:"pointer", fontSize:token.font.size.fs11, padding:"3px 10px" }}>{pack.workspace.ui.delete_button}</button>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div style={{ borderTop:`1px solid ${token.color.border}`, marginBottom:12 }} />
-
-                        <Text variant="label" tone="accent" style={{ marginBottom:8, display:"block" }}>{pack.workspace.ui.add_func_section}</Text>
-                        <div style={{ display:"flex", gap:6, marginBottom:8 }}>
-                            <input value={newFuncName} onChange={e => setNewFuncName(e.target.value)} placeholder={pack.workspace.ui.func_name_placeholder}
-                                style={{ ...inputStyle, flex:2 }} />
-                            <select value={newFuncRet} onChange={e => setNewFuncRet(e.target.value as "i32"|"f64"|"void")}
-                                style={{ ...selectStyle, flex:1 }}>
-                                <option value="i32">i32</option>
-                                <option value="f64">f64</option>
-                                <option value="void">void</option>
-                            </select>
-                        </div>
-                        <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:8 }}>
-                            {newFuncParams.map((p, i) => (
-                                <div key={i} style={{ display:"flex", gap:6, alignItems:"center" }}>
-                                    <input value={p.name}
-                                        onChange={e => setNewFuncParams(prev => prev.map((x,j) => j===i ? {...x,name:e.target.value} : x))}
-                                        placeholder={`param${i}`} style={{ ...inputStyle, flex:2 }} />
-                                    <select value={p.type}
-                                        onChange={e => setNewFuncParams(prev => prev.map((x,j) => j===i ? {...x,type:e.target.value as "i32"|"f64"} : x))}
-                                        style={{ ...selectStyle, flex:1 }}>
-                                        <option value="i32">i32</option>
-                                        <option value="f64">f64</option>
-                                    </select>
-                                    <button onClick={() => setNewFuncParams(prev => prev.filter((_,j) => j!==i))}
-                                        style={{ background:"none", border:"none", color:token.color.fgMuted, cursor:"pointer", fontSize:token.font.size.fs16 }}>✕</button>
-                                </div>
-                            ))}
-                            <Button variant="reset" size="sm" style={{ alignSelf:"flex-start" }}
-                                onClick={() => setNewFuncParams(prev => [...prev, { name:`p${prev.length}`, type:"i32" }])}>
-                                {pack.workspace.ui.add_param_button}
-                            </Button>
-                        </div>
-                        <Button variant="run" style={{ width:"100%" }} onClick={handleAddFunc}>{pack.workspace.ui.add_button}</Button>
-                    </ModalBody>
-                </Modal>
-            )}
-
-            {/* Boundary 2D/3D unified management modal */}
-            {showBdMgr && (() => {
-                const is2d   = bdMgrTab === "2d";
-                const arrays = is2d ? bd2Arrays : bd3Arrays;
-                const onRemove = is2d ? handleRemoveBd2 : handleRemoveBd3;
-                const nameVal  = is2d ? newBd2Name : newBd3Name;
-                const setName  = is2d ? setNewBd2Name : setNewBd3Name;
-                const fileRef  = is2d ? bd2FileInputRef : bd3FileInputRef;
-                const onFile   = is2d ? handleBd2FileInput : handleBd3FileInput;
-                const fmt      = is2d
-                    ? "f64 × 7 × N 바이트 (t, x, y, tx, ty, nx, ny 순서)"
-                    : "f64 × 10 × N 바이트 (t, x, y, z, tx, ty, tz, nx, ny, nz 순서)";
-                const prefix = is2d ? "bd2" : "bd3";
-                return (
-                    <Modal onClose={() => setShowBdMgr(false)} width="min(560px,95vw)">
-                        <ModalHeader onClose={() => setShowBdMgr(false)}>
-                            <Inline gap="sp1">
-                                <Button variant="secondary" size="sm"
-                                    onClick={() => setBdMgrTab("2d")}
-                                    style={{ background: bdMgrTab === "2d" ? token.color.border : "none" }}>
-                                    🗺 Boundary 2D
-                                </Button>
-                                <Button variant="secondary" size="sm"
-                                    onClick={() => setBdMgrTab("3d")}
-                                    style={{ background: bdMgrTab === "3d" ? token.color.border : "none" }}>
-                                    🌐 Boundary 3D
-                                </Button>
-                            </Inline>
-                        </ModalHeader>
-
-                        <ModalBody>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-                                {arrays.length === 0 && (
-                                    <Text variant="body" tone="muted">업로드된 배열이 없습니다.</Text>
-                                )}
-                                {arrays.map(entry => (
-                                    <div key={entry.id} style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.borderStrong}`, borderRadius: token.radius.md, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-                                        <div style={{ flex: 1, fontSize: token.font.size.fs12 }}>
-                                            <span style={{ color: token.color.accent, fontWeight: 700 }}>{entry.name}</span>
-                                            <span style={{ color: token.color.fgMuted }}> — {entry.count}개 원소</span>
-                                            <span style={{ color: token.color.fgMuted, fontSize: token.font.size.fs11 }}> (0x{entry.offset.toString(16)})</span>
-                                        </div>
-                                        <Button variant="danger" size="sm" onClick={() => onRemove(entry.id)}>삭제</Button>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div style={{ borderTop: `1px solid ${token.color.border}`, marginBottom: 12 }} />
-
-                            <Text variant="label" tone="accent" style={{ marginBottom: 8, display: "block" }}>새 배열 업로드</Text>
-                            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                                <input value={nameVal} onChange={e => setName(e.target.value)}
-                                    placeholder="변수명 (영문)" style={{ ...inputStyle, flex: 1 }} />
-                                <Button variant="blocks" size="sm" onClick={() => fileRef.current?.click()}>.bin 파일 선택</Button>
-                                <input ref={fileRef} type="file" accept=".bin" onChange={onFile} style={{ display: "none" }} />
-                            </div>
-                            <Text variant="caption" tone="muted" style={{ lineHeight: 1.6 }}>
-                                형식: {fmt}<br />
-                                블록 사용: <span style={{ color: token.color.fgMuted }}>{prefix} 변수 선언</span> → <span style={{ color: token.color.fgMuted }}>{prefix} 반복</span>
-                            </Text>
-                        </ModalBody>
-                    </Modal>
-                );
-            })()}
-
-            {/* Error modal */}
-            {errorModal && (
-                <Modal onClose={() => setErrorModal(null)} width="min(480px,90vw)">
-                    <ModalHeader onClose={() => setErrorModal(null)}>
-                        <Text variant="label" tone="danger">⚠ 오류</Text>
-                    </ModalHeader>
-                    <ModalBody style={{ padding:0 }}>
-                        <pre style={{ margin:0, padding:"16px", fontSize:token.font.size.fs12, color:token.color.fgMuted, lineHeight:1.7, whiteSpace:"pre-wrap", wordBreak:"break-all", overflowY:"auto", maxHeight:300 }}>{errorModal}</pre>
-                    </ModalBody>
-                    <ModalFooter>
-                        <Button variant="reset" size="sm" onClick={() => navigator.clipboard.writeText(errorModal)}>복사</Button>
-                        <Button variant="blocks" size="sm" onClick={() => setErrorModal(null)}>닫기</Button>
-                    </ModalFooter>
-                </Modal>
-            )}
+            <ErrorModal
+                message={errorModal}
+                onClose={() => setErrorModal(null)}
+                onCopy={(message) => navigator.clipboard.writeText(message)}
+            />
 
 
         </div>

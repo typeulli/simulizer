@@ -64,6 +64,8 @@ export const LOCAL_BLOCKS: BlockSet = {
 
 export function xmlLocalBlocks(cat: string) {
     return `<category name="${cat}" colour="${330}">
+    <sep gap="16"></sep>
+    <label text="Variable"></label>
     <block type="local_decl_i32"><value name="INIT"><block type="i32_const"></block></value></block>
     <block type="local_decl_f64"><value name="INIT"><block type="f64_const"></block></value></block>
     <block type="local_set_i32"><value name="VALUE"><block type="i32_const"></block></value></block>

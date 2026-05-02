@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { token } from "@/components/tokens";
 import { Icon } from "@/components/atoms/Icons";
 import { Logo } from "@/components/atoms/Logo";
@@ -17,6 +18,7 @@ interface TopbarBrandProps {
 export const TopbarBrand: React.FC<TopbarBrandProps> = ({ onDrafts, pack = en }) => {
     const [open, setOpen] = useState(false);
     const { theme, toggleTheme } = useTheme();
+    const router = useRouter();
 
     const t = pack.topbar;
 
@@ -61,7 +63,7 @@ export const TopbarBrand: React.FC<TopbarBrandProps> = ({ onDrafts, pack = en })
                         <Divider style={{ margin: "4px 0", opacity: 0.5 }} />
 
                         <button style={menuBtn}
-                            onClick={() => { setOpen(false); window.location.href = "/"; }}
+                            onClick={() => { setOpen(false); router.push("/"); }}
                             onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                             onMouseLeave={e => (e.currentTarget.style.background = "none")}
                         >
@@ -98,7 +100,7 @@ export const TopbarBrand: React.FC<TopbarBrandProps> = ({ onDrafts, pack = en })
                             <span>{theme === "dark" ? t.light_mode : t.dark_mode}</span>
                         </button>
                         <button style={menuBtn}
-                            onClick={() => { setOpen(false); window.location.href = "/setting"; }}
+                            onClick={() => { setOpen(false); router.push("/setting"); }}
                             onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                             onMouseLeave={e => (e.currentTarget.style.background = "none")}
                         >

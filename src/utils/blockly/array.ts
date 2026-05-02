@@ -317,6 +317,8 @@ export function compileArrayLiteralBlock(
 
 export function xmlArrayBlocks(cat: string) {
     return `<category name="${cat}" colour="${120}">
+    <sep gap="16"></sep>
+    <label text="Array"></label>
     <block type="local_array_decl_i32"><value name="SIZE"><block type="i32_const"></block></value></block>
     <block type="local_array_decl_f64"><value name="SIZE"><block type="i32_const"></block></value></block>
     <block type="array_get_i32">

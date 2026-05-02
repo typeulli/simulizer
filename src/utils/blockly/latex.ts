@@ -22,6 +22,8 @@ export const LATEX_BLOCKS: BlockSet = {
 
 export function xmlLatexBlocks(cat: string, ocrBtnLabel = "📷 Image → LaTeX") {
     return `<category name="${cat}" colour="200">
+    <sep gap="16"></sep>
+    <label text="LaTeX"></label>
     <button text="${ocrBtnLabel}" callbackKey="OPEN_LATEX_OCR"></button>
     <block type="latex_expr"></block>
     <block type="latex_value"></block>

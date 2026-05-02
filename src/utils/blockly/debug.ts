@@ -105,6 +105,8 @@ export const DEBUG_BLOCKS: BlockSet = {
 
 export function xmlDebugBlocks(cat: string) {
     return `<category name="${cat}" colour="${0}">
+    <sep gap="16"></sep>
+    <label text="Debug"></label>
     <block type="debug_log"><value name="VALUE"><block type="i32_const"></block></value></block>
     <block type="debug_log"><value name="VALUE"><block type="vec2_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value></block></value></block>
     <block type="debug_log"><value name="VALUE"><block type="vec3_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value><value name="Z"><block type="f64_const"></block></value></block></value></block>

@@ -329,6 +329,8 @@ export function registerDynamicTensorBlocks() {
 
 export function xmlTensorBlocks(cat: string) {
     return `<category name="${cat}" colour="${160}">
+    <sep gap="16"></sep>
+    <label text="Tensor"></label>
     <block type="tensor_create">
         <value name="ARRAY"><block type="local_array_get_i32"></block></value>
     </block>

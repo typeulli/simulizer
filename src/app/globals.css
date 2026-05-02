@@ -1026,3 +1026,134 @@ svg[display=none] { display: none; }
 .v1-root[data-density="comfy"] { font-size: var(--fs-14); }
 .v1-root[data-density="comfy"] .v1-cat { padding: 9px 12px; }
 .v1-root[data-density="comfy"] .v1-flyout-list { gap: 12px; padding: 16px; }
+
+/* ── Blockly Toolbox Override ─────────────────────────────────────────── */
+
+.blocklyToolbox {
+  font-family: var(--font-sans) !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.blocklyToolboxCategoryContainer {
+  outline: none !important;
+}
+
+/* Top-level category list */
+.blocklyToolbox > .blocklyToolboxCategoryGroup {
+  padding: 6px 6px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+}
+
+/* Row — border-left removed by JS; indicator is the icon span inside */
+.blocklyToolboxCategory {
+  display: flex !important;
+  align-items: center !important;
+  gap: 24px !important;
+  border-radius: var(--r-sm) !important;
+  padding: 16px 8px !important;
+  min-width: 160px !important;
+  outline: none !important;
+  transition: background var(--motion-fast) var(--ease-out) !important;
+}
+
+.blocklyToolboxCategory:hover {
+  background: var(--surface-hover) !important;
+}
+
+.blocklyToolboxCategoryContainer[aria-selected="true"] .blocklyToolboxCategory {
+  background: var(--surface-active) !important;
+  outline: none !important;
+}
+
+/* Icon + label row */
+.blocklyTreeRowContentContainer {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+/* Colored vertical bar indicator (background-color set by JS) */
+.blocklyToolboxCategoryIcon {
+  display: block !important;
+  visibility: visible !important;
+  width: 3px !important;
+  height: 16px !important;
+  border-radius: 0 !important;
+  flex-shrink: 0 !important;
+  font-size: 0 !important;
+  overflow: hidden !important;
+  background-image: none !important;
+}
+
+.blocklyToolboxCategoryIcon::before,
+.blocklyToolboxCategoryIcon::after {
+  content: none !important;
+}
+
+/* Category label */
+.blocklyToolboxCategoryLabel {
+  font-family: var(--font-sans) !important;
+  font-size: var(--fs-14) !important;
+  font-weight: 600 !important;
+  color: var(--fg-muted) !important;
+  line-height: 1.4 !important;
+  letter-spacing: -0.01em !important;
+}
+
+.blocklyToolboxCategoryContainer[aria-selected="true"] .blocklyToolboxCategoryLabel {
+  color: var(--fg) !important;
+  font-weight: 700 !important;
+}
+
+/* Chevron arrow for expandable parent categories */
+.blocklyToolboxCategoryContainer[aria-expanded][aria-level="1"] > .blocklyToolboxCategory .blocklyToolboxCategoryIcon {
+  display: none !important;
+}
+
+.blocklyToolboxCategoryContainer[aria-expanded][aria-level="1"] > .blocklyToolboxCategory > .blocklyTreeRowContentContainer::before {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid var(--fg-muted);
+  border-bottom: 1.5px solid var(--fg-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  margin-left: -1px;
+  margin-right: -1px;
+}
+
+.blocklyToolboxCategoryContainer[aria-expanded="true"][aria-level="1"] > .blocklyToolboxCategory > .blocklyTreeRowContentContainer::before {
+  transform: rotate(45deg);
+}
+
+/* Sub-category indent + no selected/hover bleed from parent */
+.blocklyToolboxCategoryContainer[aria-level="2"] .blocklyToolboxCategory {
+  padding-left: 20px !important;
+}
+
+.blocklyToolboxCategoryContainer[aria-level="2"]:not([aria-selected="true"]) .blocklyToolboxCategory {
+  background: transparent !important;
+}
+
+.blocklyToolboxCategoryContainer[aria-level="2"]:not([aria-selected="true"]) .blocklyToolboxCategory:hover {
+  background: var(--surface-hover) !important;
+}
+
+/* ── Blockly Flyout Override ──────────────────────────────────────────── */
+
+.blocklyFlyoutBackground {
+  fill: var(--bg-subtle) !important;
+}
+
+.blocklyFlyout .blocklyScrollbarBackground {
+  opacity: 0 !important;
+}
+.blocklyFlyout .blocklyScrollbarHandle {
+  fill: var(--border-strong) !important;
+}

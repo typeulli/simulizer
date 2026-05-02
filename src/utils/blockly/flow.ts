@@ -100,6 +100,8 @@ export const FLOW_BLOCKS: BlockSet = {
 
 export function xmlFlowBlocks(cat: string) {
     return `<category name="${cat}" colour="${120}">
+    <sep gap="16"></sep>
+    <label text="Control Flow"></label>
     <block type="flow_if"></block>
     <block type="flow_while"></block>
     <block type="flow_for"></block>

@@ -937,6 +937,8 @@ export const VECTOR_BLOCKS: BlockSet = {
 export function xmlVectorBlocks(cat: string) {
     return `<category name="${cat}" colour="${200}">
     <category name="2D vec2" colour="${200}">
+        <sep gap="16"></sep>
+    <label text="2D Vector"></label>
         <block type="vec2_literal">
             <value name="X"><block type="f64_const"></block></value>
             <value name="Y"><block type="f64_const"></block></value>
@@ -968,6 +970,8 @@ export function xmlVectorBlocks(cat: string) {
         <block type="vec2_proj_vec"></block>
     </category>
     <category name="3D vec3" colour="${160}">
+    <sep gap="16"></sep>
+    <label text="3D Vector"></label>
         <block type="vec3_literal">
             <value name="X"><block type="f64_const"></block></value>
             <value name="Y"><block type="f64_const"></block></value>

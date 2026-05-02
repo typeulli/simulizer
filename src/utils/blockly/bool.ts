@@ -36,6 +36,8 @@ export const BOOL_BLOCKS: BlockSet = {
 
 export function xmlBoolBlocks(cat: string) {
     return `<category name="${cat}" colour="${60}">
+    <sep gap="16"></sep>
+    <label text="Boolean"></label>
     <block type="bool_const"></block>
     <block type="bool_binop"></block>
     <block type="bool_not"></block>
