@@ -61,7 +61,7 @@ export function normalize(block: any, ctx: NormalizeContext) {
             }
             // Fill non-stmt inputs BEFORE serializing so they're captured in the hash.
             for (const __key of type2inputs.get(type)!) {
-                if (!stmtSet.has(inputs[__key]?.block?.type)) {
+                if (inputs[__key]?.block && !stmtSet.has(inputs[__key].block.type)) {
                     o.inputs[__key] = serialize_inputs(inputs[__key].block);
                 }
             }
@@ -86,7 +86,7 @@ export function normalize(block: any, ctx: NormalizeContext) {
     return root;
 }
 type UnnormalizeResult = {
-    tree: any;
+    tree: any[];
     modeMap: Record<string, "insert" | "delete" | "common">;
 };
 
@@ -163,6 +163,7 @@ export function unnormalize(root: TreeDiffNode, ctx: NormalizeContext): Unnormal
         return block;
     }
 
-    const tree = buildChain(root.content === -1 ? root.children : [root]);
+    const rootChildren = root.content === -1 ? root.children : [root];
+    const tree = rootChildren.map(child => buildBlock(child));
     return { tree, modeMap };
 }

@@ -7,10 +7,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "build:wasm": "node src/lib/treediff/build.js && node src/lib/bctool2d/build.js && node src/lib/bctool3d/build.js"
+    "build:wasm": "node src/lib/treediff/build.js && node src/lib/bctool2d/build.js && node src/lib/bctool3d/build.js",
+    "build:console": "node esbuild.console.mjs --minify"
   },
   "dependencies": {
     "@litertjs/core": "^2.4.0",
+    "@microsoft/fetch-event-source": "^2.0.1",
     "@react-router/node": "7.12.0",
     "@react-router/serve": "7.12.0",
     "@tensorflow/tfjs": "^4.22.0",
@@ -35,6 +37,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "esbuild": "^0.28.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

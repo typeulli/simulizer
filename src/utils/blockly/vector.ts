@@ -87,6 +87,22 @@ class Vec2Component extends simulizer.Expr {
     }
 }
 
+class Vec2ComponentSet extends simulizer.Expr {
+    constructor(
+        public lx: simulizer.Local,
+        public ly: simulizer.Local,
+        public axis: "x" | "y",
+        public val: simulizer.Expr,
+    ) { super("vec2_component_set"); }
+    inferType() { return simulizer.void_; }
+    compile() {
+        return [
+            this.val.compile(),
+            `local.set $${(this.axis === "x" ? this.lx : this.ly).name}`,
+        ].join("\n");
+    }
+}
+
 class Vec2Len extends simulizer.Expr {
     constructor(
         public v: simulizer.Expr,
@@ -306,6 +322,24 @@ class Vec3Component extends simulizer.Expr {
             `local.set $${this.tv.y.name}`,
             `local.set $${this.tv.x.name}`,
             `local.get $${keep.name}`,
+        ].join("\n");
+    }
+}
+
+class Vec3ComponentSet extends simulizer.Expr {
+    constructor(
+        public lx: simulizer.Local,
+        public ly: simulizer.Local,
+        public lz: simulizer.Local,
+        public axis: "x" | "y" | "z",
+        public val: simulizer.Expr,
+    ) { super("vec3_component_set"); }
+    inferType() { return simulizer.void_; }
+    compile() {
+        const targetLocal = this.axis === "x" ? this.lx : this.axis === "y" ? this.ly : this.lz;
+        return [
+            this.val.compile(),
+            `local.set $${targetLocal.name}`,
         ].join("\n");
     }
 }
@@ -592,6 +626,24 @@ export const VECTOR_BLOCKS: BlockSet = {
             );
         }),
 
+    VEC2_COMPONENT_SET: new BlockBuilder("vec2_component_set", undefined, C2, "vec2 성분 수정")
+        .addBody("vec2 %1 .%2 ← %3")
+        .addArg("field_input", "NAME", "v")
+        .addArgDropdown("AXIS", [["x", "x"], ["y", "y"]])
+        .addArgValue("VAL", "f64")
+        .stmt((block, ctx) => {
+            const name = block.getFieldValue("NAME") as string;
+            const axis = block.getFieldValue("AXIS") as "x" | "y";
+            const val = ctx.blockToExpr(block.getInputTargetBlock("VAL"), ctx);
+            if (!val) return null;
+            return new Vec2ComponentSet(
+                ctx.getOrCreateLocal(ctx, xKey(name), simulizer.f64),
+                ctx.getOrCreateLocal(ctx, yKey(name), simulizer.f64),
+                axis,
+                ctx.coerce(val, simulizer.f64),
+            );
+        }),
+
     // ── vec2 성분 / 크기 ───────────────────────────────────────────────────────
 
     VEC2_X: new BlockBuilder("vec2_x", "f64", C2, "vec2의 x 성분")
@@ -784,6 +836,25 @@ export const VECTOR_BLOCKS: BlockSet = {
             );
         }),
 
+    VEC3_COMPONENT_SET: new BlockBuilder("vec3_component_set", undefined, C3, "vec3 성분 수정")
+        .addBody("vec3 %1 .%2 ← %3")
+        .addArg("field_input", "NAME", "v")
+        .addArgDropdown("AXIS", [["x", "x"], ["y", "y"], ["z", "z"]])
+        .addArgValue("VAL", "f64")
+        .stmt((block, ctx) => {
+            const name = block.getFieldValue("NAME") as string;
+            const axis = block.getFieldValue("AXIS") as "x" | "y" | "z";
+            const val = ctx.blockToExpr(block.getInputTargetBlock("VAL"), ctx);
+            if (!val) return null;
+            return new Vec3ComponentSet(
+                ctx.getOrCreateLocal(ctx, x3Key(name), simulizer.f64),
+                ctx.getOrCreateLocal(ctx, y3Key(name), simulizer.f64),
+                ctx.getOrCreateLocal(ctx, z3Key(name), simulizer.f64),
+                axis,
+                ctx.coerce(val, simulizer.f64),
+            );
+        }),
+
     // ── vec3 성분 / 크기 ───────────────────────────────────────────────────────
 
     VEC3_X: new BlockBuilder("vec3_x", "f64", C3, "vec3의 x 성분")
@@ -956,6 +1027,9 @@ export function xmlVectorBlocks(cat: string) {
                 <value name="Y"><block type="f64_const"></block></value>
             </block></value>
         </block>
+        <block type="vec2_component_set">
+            <value name="VAL"><block type="f64_const"></block></value>
+        </block>
         <block type="vec2_x"></block>
         <block type="vec2_y"></block>
         <block type="vec2_len"></block>
@@ -991,6 +1065,9 @@ export function xmlVectorBlocks(cat: string) {
                 <value name="Y"><block type="f64_const"></block></value>
                 <value name="Z"><block type="f64_const"></block></value>
             </block></value>
+        </block>
+        <block type="vec3_component_set">
+            <value name="VAL"><block type="f64_const"></block></value>
         </block>
         <block type="vec3_x"></block>
         <block type="vec3_y"></block>

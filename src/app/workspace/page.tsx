@@ -50,6 +50,7 @@ import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdi
 import { Prism } from "react-syntax-highlighter";
 import { useRouter } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 
 // Register Blockly locale explicitly to prevent context menu labels from being undefined
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
@@ -391,8 +392,8 @@ function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimphyExpr |
 
 
         // Select
-        case "select_i32":
-        case "select_f64": {
+        case "i32_select":
+        case "f64_select": {
             const cond = blockToExpr(block.getInputTargetBlock("COND"),    ctx);
             const onT    = blockToExpr(block.getInputTargetBlock("TRUE"),    ctx);
             const onF    = blockToExpr(block.getInputTargetBlock("FALSE"), ctx);
@@ -472,10 +473,23 @@ function stmtChainToExprs(block: Blockly.Block | null, ctx: CompileCtx): SimphyE
     return exprs;
 }
 
-/** wasm_func_main → FuncDef | error message */
+function allPathsReturn(exprs: SimphyExpr[]): boolean {
+    if (exprs.length === 0) return false;
+    const last = exprs[exprs.length - 1];
+    if (last instanceof simulizer.Return) return true;
+    if (last instanceof simulizer.Unreachable) return true;
+    if (last instanceof simulizer.If) {
+        return last.else_.length > 0 && allPathsReturn(last.then) && allPathsReturn(last.else_);
+    }
+    return false;
+}
+
+type BuildFuncError = { kind: "no_return" | "compile_fail"; message: string };
+
+/** wasm_func_main → FuncDef | error */
 function buildFuncDef(
     mainBlock: Blockly.Block,
-): { func: simulizer.FuncDef; module: simulizer.ModuleDef } | string {
+): { func: simulizer.FuncDef; module: simulizer.ModuleDef } | BuildFuncError {
     const retTypeName = mainBlock.getFieldValue("RET_TYPE") as "i32" | "f64" | "void";
     const declaredRetType = retTypeMap[retTypeName] ?? simulizer.void_;
 
@@ -522,8 +536,8 @@ function buildFuncDef(
 
     const body = stmtChainToExprs(mainBlock.getInputTargetBlock("BODY"), ctx);
 
-    if (body.length === 0 && !declaredRetType.equals(simulizer.void_)) {
-        return "Body is empty. Add a return block.";
+    if (!declaredRetType.equals(simulizer.void_) && !allPathsReturn(body)) {
+        return { kind: "no_return", message: "모든 경로에 return 블록이 필요합니다." };
     }
 
     body.forEach((e) => func.add_expr(e));
@@ -655,7 +669,7 @@ type RunState = "idle" | "compiling" | "running" | "done" | "error";
 interface InfoEntry {
     level: "info" | "warn" | "error";
     message: string;
-    kind?: "no_main" | "duplicate_decl" | "compile_fail";
+    kind?: "no_main" | "duplicate_decl" | "compile_fail" | "no_return";
     blockId?: string;
 }
 
@@ -704,12 +718,16 @@ const BlocklyWasmIDE: React.FC = () => {
     const [showChatPopover, setShowChatPopover] = useState(false);
     const chatPopoverRef                        = useRef<HTMLDivElement>(null);
     const [canvasTab, setCanvasTab]             = useState<"blocks" | "wat" | "ai">("blocks");
+    const [watLang, setWatLang]                 = useState<"wat" | "cpp">("wat");
+    const [translatedSource, setTranslatedSource] = useState<string | null>(null);
+    const [translating, setTranslating]         = useState(false);
+    const [compiling, setCompiling]             = useState(false);
     const [chatPrompt, setChatPrompt]           = useState("");
     const [chatOutput, setChatOutput]           = useState("");
     const [chatResult, setChatResult]           = useState<object | null>(null);
     const [chatStreaming, setChatStreaming]     = useState(false);
-    const chatAbortRef                          = useRef<AbortController | null>(null);
-    const [chatDiffData, setChatDiffData]       = useState<{ tree: any; modeMap: Record<string, "insert" | "delete" | "common"> } | null>(null);
+    const chatAbortRef                          = useRef<{ abort: () => void } | null>(null);
+    const [chatDiffData, setChatDiffData]       = useState<{ tree: any[]; modeMap: Record<string, "insert" | "delete" | "common"> } | null>(null);
     const chatPrevStateRef                      = useRef<object | null>(null);
     const chatDiffDivRef                        = useRef<HTMLDivElement>(null);
     const chatDiffWsRef                         = useRef<Blockly.WorkspaceSvg | null>(null);
@@ -804,7 +822,7 @@ const BlocklyWasmIDE: React.FC = () => {
         setShowLatexOcr(false);
     }, []);
 
-    const handleChat = useCallback(async () => {
+    const handleChat = useCallback(() => {
         const ws = workspaceRef.current;
         if (!ws || !chatPrompt.trim()) return;
 
@@ -814,83 +832,76 @@ const BlocklyWasmIDE: React.FC = () => {
         setChatDiffData(null);
 
         chatAbortRef.current?.abort();
+
         const ctrl = new AbortController();
-        chatAbortRef.current = ctrl;
+        chatAbortRef.current = { abort: () => ctrl.abort() };
 
         setChatOutput("");
         setChatResult(null);
         setChatStreaming(true);
         let firstChunk = true;
 
-        try {
-            const url = new URL("http://127.0.0.1:8000/chat");
-            url.searchParams.set("message", chatPrompt.trim());
-            url.searchParams.set("blockly_json", blocklyJson);
-
-            const res = await fetch(url.toString(), { signal: ctrl.signal });
-            if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buf = "";
-
-            outer: while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                buf += decoder.decode(value, { stream: true });
-                const lines = buf.split("\n");
-                buf = lines.pop() ?? "";
-                for (const line of lines) {
-                    if (!line.startsWith("data: ")) continue;
-                    const raw = line.slice(6);
-                    if (raw === "[DONE]") break outer;
-                    try {
-                        const parsed = JSON.parse(raw);
-                        if (typeof parsed.content === "string") {
-                            if (firstChunk) {
-                                firstChunk = false;
-                                setCanvasTab("ai");
-                                setShowChatPopover(false);
-                            }
-                            setChatOutput(prev => prev + parsed.content);
-                        } else if (parsed.result !== undefined) {
-                            setChatResult(parsed.result);
-                            setChatOutput(prev => prev + "\n\n```json\n" + JSON.stringify(parsed.result, null, 2) + "\n```");
-                            const prevState = chatPrevStateRef.current;
-                            if (prevState) {
-                                try {
-                                    const prevBlocks = (prevState as any).blocks?.blocks?.[0];
-                                    const newBlocks = (parsed.result as any).blocks?.blocks?.[0];
-                                    if (prevBlocks && newBlocks) {
-                                        const ctx = new NormalizeContext();
-                                        const n1 = normalize(prevBlocks, ctx);
-                                        const ws = workspaceRef.current;
-                                        const sanitized = ws ? sanitizeBlocksJson(newBlocks, ws) : newBlocks;
-                                        const n2 = normalize(sanitized, ctx);
-                                        loadTreeDiff().then(td => {
-                                            const diffResult = td.treeDiff(n1, n2);
-                                            const diffTree = generateDiffTree(n1, n2, diffResult);
-                                            const { tree, modeMap } = unnormalize(diffTree, ctx);
-                                            if (tree) setChatDiffData({ tree, modeMap });
-                                        }).catch(console.error);
-                                    }
-                                } catch (e) {
-                                    console.error("Diff computation failed:", e);
+        fetchEventSource("http://127.0.0.1:8000/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: chatPrompt.trim(), blockjson: blocklyJson }),
+            signal: ctrl.signal,
+            onmessage(e) {
+                if (e.event === "done") {
+                    ctrl.abort();
+                    setChatStreaming(false);
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(e.data);
+                    if (typeof parsed.content === "string") {
+                        if (firstChunk) {
+                            firstChunk = false;
+                            setCanvasTab("ai");
+                            setShowChatPopover(false);
+                        }
+                        setChatOutput(prev => prev + parsed.content);
+                    } else if (parsed.result !== undefined) {
+                        setChatResult(parsed.result);
+                        setChatOutput(prev => prev + "\n\n```json\n" + JSON.stringify(parsed.result, null, 2) + "\n```");
+                        const prevState = chatPrevStateRef.current;
+                        if (prevState) {
+                            try {
+                                const prevBlocks = (prevState as any).blocks?.blocks?.[0];
+                                const newBlocks = (parsed.result as any).blocks?.blocks?.[0];
+                                if (prevBlocks && newBlocks) {
+                                    const ctx = new NormalizeContext();
+                                    const n1 = normalize(prevBlocks, ctx);
+                                    const ws = workspaceRef.current;
+                                    const sanitized = ws ? sanitizeBlocksJson(newBlocks, ws) : newBlocks;
+                                    const n2 = normalize(sanitized, ctx);
+                                    loadTreeDiff().then(td => {
+                                        const diffResult = td.treeDiff(n1, n2);
+                                        const diffTree = generateDiffTree(n1, n2, diffResult);
+                                        const { tree, modeMap } = unnormalize(diffTree, ctx);
+                                        if (tree) setChatDiffData({ tree, modeMap });
+                                    }).catch(console.error);
                                 }
+                            } catch (err) {
+                                console.error("Diff computation failed:", err);
                             }
                         }
-                    } catch {
-                        // JSON이 아닌 라인은 무시
                     }
+                } catch {
+                    // JSON이 아닌 데이터는 무시
                 }
-            }
-        } catch (err) {
-            if ((err as Error).name !== "AbortError") {
-                setChatOutput(prev => prev + `\n\n[오류] ${err instanceof Error ? err.message : String(err)}`);
-            }
-        } finally {
-            setChatStreaming(false);
-        }
+            },
+            onerror(err) {
+                if ((err as Error)?.name !== "AbortError") {
+                    setChatOutput(prev => prev + `\n\n[오류] ${err instanceof Error ? err.message : String(err)}`);
+                }
+                setChatStreaming(false);
+                throw err; // fetchEventSource 재시도 방지
+            },
+            onclose() {
+                setChatStreaming(false);
+            },
+        });
     }, [chatPrompt]);
 
     const [showBlocks, setShowBlocks] = useState(false);
@@ -1113,12 +1124,12 @@ const BlocklyWasmIDE: React.FC = () => {
         const refreshInfo = () => {
             const mainBlock = ws.getAllBlocks(false).find(b => b.type === "wasm_func_main");
             if (!mainBlock) {
-                setInfos([{ level: "warn", kind: "no_main", message: "wasm_func_main 블록이 없습니다." }]);
+                setInfos([{ level: "error", kind: "no_main", message: "wasm_func_main 블록이 없습니다." }]);
                 return;
             }
             const result = buildFuncDef(mainBlock);
-            if (typeof result === "string") {
-                setInfos([{ level: "error", kind: "compile_fail", message: result }]);
+            if ("kind" in result) {
+                setInfos([{ level: "error", kind: result.kind, message: result.message }]);
                 return;
             }
             const { declarations } = result.func.getLocalTypes();
@@ -1268,12 +1279,15 @@ const BlocklyWasmIDE: React.FC = () => {
         chatDiffWsRef.current = diffWs;
 
         const { tree, modeMap } = chatDiffData;
-        tree.x = 40;
-        tree.y = 40;
+        tree.forEach((blk: any, i: number) => { blk.x = 40; blk.y = 40 + i * 400; });
+
+        // Register dynamic blocks before loading to ensure block definitions exist
+        registerDynamicTensorBlocks();
+        registerDynamicArrayBlocks();
 
         try {
             Blockly.serialization.workspaces.load(
-                { blocks: { languageVersion: 0, blocks: [tree] } },
+                { blocks: { languageVersion: 0, blocks: tree } },
                 diffWs,
             );
         } catch (e) {
@@ -1297,9 +1311,119 @@ const BlocklyWasmIDE: React.FC = () => {
         diffWs.scrollCenter();
     }, [chatDiffData, canvasTab]);
 
+    useEffect(() => {
+        if (canvasTab !== "wat") return;
+        clearLog();
+        generateWat();
+    // generateWat을 dep에 넣으면 무한루프 — canvasTab 전환 시 1회만 실행
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [canvasTab]);
+
+    useEffect(() => {
+        if (canvasTab !== "wat" || watLang === "wat") {
+            setTranslatedSource(null);
+            return;
+        }
+        const ws = workspaceRef.current;
+        if (!ws) return;
+        const blocklyJson = JSON.stringify(Blockly.serialization.workspaces.save(ws));
+        setTranslating(true);
+        fetch("http://localhost:8000/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lang: watLang, code: blocklyJson }),
+        })
+            .then(r => r.json())
+            .then(data => setTranslatedSource(data.result ?? null))
+            .catch(() => setTranslatedSource(null))
+            .finally(() => setTranslating(false));
+    }, [canvasTab, watLang, watSource]);
+
     // Compile and run
+    const generateWat = useCallback(async (): Promise<{ wat: string; mod: simulizer.ModuleDef } | null> => {
+        const ws = workspaceRef.current;
+        if (!ws) return null;
+
+        _customFuncSpecs = customFuncsRef.current;
+        _bd2Arrays = bd2ArraysRef.current;
+        _bd3Arrays = bd3ArraysRef.current;
+
+        const mainBlock = ws.getAllBlocks(false).find((b) => b.type === "wasm_func_main");
+        if (!mainBlock) {
+            addLog("error", pack.workspace.logs.main_block_not_found);
+            return null;
+        }
+
+        addLog("info", pack.workspace.compile.block_to_ast);
+        const funcOrErr = buildFuncDef(mainBlock);
+        if ("kind" in funcOrErr) {
+            addLog("error", funcOrErr.message); return null;
+        }
+        const { func, module: mod } = funcOrErr;
+
+        addLog("info",
+            pack.workspace.logs.ast_complete
+                .replace("$0", func.ret_type.name)
+                .replace("$1", String(func.locals.length))
+                .replace("$2", String(func.body.length))
+        );
+
+        for (const spec of customFuncsRef.current) {
+            const defBlock = ws.getAllBlocks(false).find(b => b.type === `wasm_func_def_${spec.id}`);
+            if (!defBlock) { addLog("error", pack.workspace.logs.func_block_not_found.replace("$0", spec.name)); continue; }
+            const customFunc = buildCustomFunc(defBlock, spec, mod);
+            mod.add_func(customFunc);
+            addLog("info", pack.workspace.logs.func_compile_complete.replace("$0", spec.name));
+        }
+
+        const allImports: simulizer.ImportDef[] = [
+            new simulizer.ImportDef("debug",  "log",              "func", "log_i32",          "(param i32)"),
+            new simulizer.ImportDef("debug",  "log",              "func", "log_f64",          "(param f64)"),
+            new simulizer.ImportDef("debug",  "log_ptr",          "func", "log_ptr",          "(param i32)"),
+            new simulizer.ImportDef("debug",  "log_arr_i32",      "func", "log_arr_i32",      "(param i32 i32)"),
+            new simulizer.ImportDef("debug",  "log_arr_f64",      "func", "log_arr_f64",      "(param i32 i32)"),
+            new simulizer.ImportDef("debug",  "log_tensor",       "func", "log_tensor",       "(param i32)"),
+            new simulizer.ImportDef("debug",  "log_vec2",         "func", "log_vec2",         "(param f64 f64)"),
+            new simulizer.ImportDef("debug",  "log_vec3",         "func", "log_vec3",         "(param f64 f64 f64)"),
+            new simulizer.ImportDef("debug",  "debug_series",     "func", "debug_series",     "(result i32)"),
+            new simulizer.ImportDef("debug",  "debug_set_holder", "func", "debug_set_holder", "(param i32)"),
+            new simulizer.ImportDef("debug",  "debug_bar",        "func", "debug_bar",        "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("debug",  "debug_bar_set",    "func", "debug_bar_set",    "(param i32 i32)"),
+            new simulizer.ImportDef("tensor", "tensor_random",    "func", "tensor_random",    "(param i32 i32 f64 f64 i32 i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_create",    "func", "tensor_create",    "(param i32 i32 i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_add",       "func", "tensor_add",       "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_sub",       "func", "tensor_sub",       "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_matmul",    "func", "tensor_matmul",    "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_neg",       "func", "tensor_neg",       "(param i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_elemul",    "func", "tensor_elemul",    "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_scale",     "func", "tensor_scale",     "(param i32 f64) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_save",      "func", "tensor_save",      "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_set",       "func", "tensor_set",       "(param i32 i32 i32 i32 i32 i32 i32 i32 f64) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_get",       "func", "tensor_get",       "(param i32 i32 i32 i32 i32 i32 i32 i32) (result f64)"),
+            new simulizer.ImportDef("debug",  "show_mat",         "func", "show_mat",         "(param i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_perlin",    "func", "tensor_perlin",    "(param i32 i32 i32) (result i32)"),
+        ];
+        for (const imp of allImports) mod.add_import(imp);
+
+        for (const bd2 of bd2ArraysRef.current) {
+            mod.add_data(bd2.offset, new Uint8Array(bd2.data.buffer, bd2.data.byteOffset, bd2.data.byteLength));
+        }
+        for (const bd3 of bd3ArraysRef.current) {
+            mod.add_data(bd3.offset, new Uint8Array(bd3.data.buffer, bd3.data.byteOffset, bd3.data.byteLength));
+        }
+
+        const watFull = mod.compile();
+        const calledFns = new Set(Array.from(watFull.matchAll(/call \$(\w+)/g), m => m[1]));
+        mod.imports = mod.imports.filter(imp => calledFns.has(imp.internalName));
+
+        const wat = mod.compile();
+        setWatSource(wat);
+        addLog("info", pack.workspace.logs.wat_generated);
+        return { wat, mod };
+    }, [addLog, pack]);
+
     const handleRun = useCallback(async () => {
-        
+
         const ws = workspaceRef.current;
         if (!ws) return;
 
@@ -1312,85 +1436,10 @@ const BlocklyWasmIDE: React.FC = () => {
         setResult(null); setWatSource(""); setRunState("compiling");
         clearLog();
 
-        // Update module-level references so blockToExpr can access them
-        _customFuncSpecs = customFuncsRef.current;
-        _bd2Arrays = bd2ArraysRef.current;
-        _bd3Arrays = bd3ArraysRef.current;
         try {
-            const mainBlock = ws.getAllBlocks(false).find((b) => b.type === "wasm_func_main");
-            if (!mainBlock) {
-                addLog("error", pack.workspace.logs.main_block_not_found);
-                setRunState("error"); return;
-            }
-
-            addLog("info", pack.workspace.compile.block_to_ast);
-            const funcOrErr = buildFuncDef(mainBlock);
-            if (typeof funcOrErr === "string") {
-                addLog("error", funcOrErr); setRunState("error"); return;
-            }
-            const { func, module: mod } = funcOrErr;
-
-            addLog("info",
-                pack.workspace.logs.ast_complete
-                    .replace("$0", func.ret_type.name)
-                    .replace("$1", String(func.locals.length))
-                    .replace("$2", String(func.body.length))
-            );
-
-            // Compile custom functions
-            for (const spec of customFuncsRef.current) {
-                const defBlock = ws.getAllBlocks(false).find(b => b.type === `wasm_func_def_${spec.id}`);
-                if (!defBlock) { addLog("error", pack.workspace.logs.func_block_not_found.replace("$0", spec.name)); continue; }
-                const customFunc = buildCustomFunc(defBlock, spec, mod);
-                mod.add_func(customFunc);
-                addLog("info", pack.workspace.logs.func_compile_complete.replace("$0", spec.name));
-            }
-
-            const allImports: simulizer.ImportDef[] = [
-                new simulizer.ImportDef("debug",  "log",              "func", "log_i32",          "(param i32)"),
-                new simulizer.ImportDef("debug",  "log",              "func", "log_f64",          "(param f64)"),
-                new simulizer.ImportDef("debug",  "log_ptr",          "func", "log_ptr",          "(param i32)"),
-                new simulizer.ImportDef("debug",  "log_arr_i32",      "func", "log_arr_i32",      "(param i32 i32)"),
-                new simulizer.ImportDef("debug",  "log_arr_f64",      "func", "log_arr_f64",      "(param i32 i32)"),
-                new simulizer.ImportDef("debug",  "log_tensor",       "func", "log_tensor",       "(param i32)"),
-                new simulizer.ImportDef("debug",  "log_vec2",         "func", "log_vec2",         "(param f64 f64)"),
-                new simulizer.ImportDef("debug",  "log_vec3",         "func", "log_vec3",         "(param f64 f64 f64)"),
-                new simulizer.ImportDef("debug",  "debug_series",     "func", "debug_series",     "(result i32)"),
-                new simulizer.ImportDef("debug",  "debug_set_holder", "func", "debug_set_holder", "(param i32)"),
-                new simulizer.ImportDef("debug",  "debug_bar",        "func", "debug_bar",        "(param i32 i32) (result i32)"),
-                new simulizer.ImportDef("debug",  "debug_bar_set",    "func", "debug_bar_set",    "(param i32 i32)"),
-                new simulizer.ImportDef("tensor", "tensor_random",    "func", "tensor_random",    "(param i32 i32 f64 f64 i32 i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_create",    "func", "tensor_create",    "(param i32 i32 i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_add",       "func", "tensor_add",       "(param i32 i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_sub",       "func", "tensor_sub",       "(param i32 i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_matmul",    "func", "tensor_matmul",    "(param i32 i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_neg",       "func", "tensor_neg",       "(param i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_elemul",    "func", "tensor_elemul",    "(param i32 i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_scale",     "func", "tensor_scale",     "(param i32 f64) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_save",      "func", "tensor_save",      "(param i32 i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_set",       "func", "tensor_set",       "(param i32 i32 i32 i32 i32 i32 i32 i32 f64) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_get",       "func", "tensor_get",       "(param i32 i32 i32 i32 i32 i32 i32 i32) (result f64)"),
-                new simulizer.ImportDef("debug",  "show_mat",         "func", "show_mat",         "(param i32) (result i32)"),
-                new simulizer.ImportDef("tensor", "tensor_perlin",    "func", "tensor_perlin",    "(param i32 i32 i32) (result i32)"),
-            ];
-            for (const imp of allImports) mod.add_import(imp);
-
-            // bd2/bd3 배열 데이터를 WASM 데이터 세그먼트로 삽입
-            for (const bd2 of bd2ArraysRef.current) {
-                mod.add_data(bd2.offset, new Uint8Array(bd2.data.buffer, bd2.data.byteOffset, bd2.data.byteLength));
-            }
-            for (const bd3 of bd3ArraysRef.current) {
-                mod.add_data(bd3.offset, new Uint8Array(bd3.data.buffer, bd3.data.byteOffset, bd3.data.byteLength));
-            }
-
-            // WAT를 먼저 컴파일해 실제로 call되는 import만 남긴다
-            const watFull = mod.compile();
-            const calledFns = new Set(Array.from(watFull.matchAll(/call \$(\w+)/g), m => m[1]));
-            mod.imports = mod.imports.filter(imp => calledFns.has(imp.internalName));
-
-            const wat = mod.compile();
-            setWatSource(wat);
-            addLog("info", pack.workspace.logs.wat_generated);
+            const result = await generateWat();
+            if (!result) { setRunState("error"); return; }
+            const { mod } = result;
 
             addLog("info", pack.workspace.logs.wat_compiling);
             setRunState("running");
@@ -1434,6 +1483,43 @@ const BlocklyWasmIDE: React.FC = () => {
         setRunState("idle");
         addLog("info", "실행이 중단되었습니다.");
     }, [addLog, createWasmWorker]);
+
+    const handleCompile = useCallback(async () => {
+        const ws = workspaceRef.current;
+        if (!ws || compiling) return;
+        const blocklyJson = JSON.stringify(Blockly.serialization.workspaces.save(ws));
+        setCompiling(true);
+        try {
+            const res = await fetch("http://localhost:8000/compile", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: blocklyJson }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }));
+                addLog("error", err.detail ?? "Compile failed");
+                return;
+            }
+            const { uuid } = await res.json();
+            const dlRes = await fetch(`http://localhost:8000/compile/download?uuid=${uuid}`);
+            if (!dlRes.ok) {
+                const err = await dlRes.json().catch(() => ({ detail: dlRes.statusText }));
+                addLog("error", err.detail ?? "Download failed");
+                return;
+            }
+            const blob = await dlRes.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "output.exe";
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            addLog("error", e instanceof Error ? e.message : String(e));
+        } finally {
+            setCompiling(false);
+        }
+    }, [watSource, compiling, addLog]);
 
     const handleReset = useCallback(() => {
         const ws = workspaceRef.current;
@@ -1735,6 +1821,7 @@ const BlocklyWasmIDE: React.FC = () => {
     // UI-only state (no business logic)
     const [rightTab, setRightTab]     = useState<"console" | "result" | "infos">("console");
     const [infos, setInfos]           = useState<InfoEntry[]>([]);
+    const hasError = infos.some(e => e.level === "error");
 
     const focusInfoEntry = useCallback((entry: InfoEntry) => {
         if (!entry.blockId) return;
@@ -1934,7 +2021,8 @@ const BlocklyWasmIDE: React.FC = () => {
                     </div>
                     {/* Run */}
                     <button onClick={isRunning ? handleStop : handleRun}
-                        style={{ display:"inline-flex", alignItems:"center", gap:7, padding:"6px 11px", borderRadius:token.radius.sm, background:isRunning ? token.color.danger : token.color.gradient.ai, color:"#fff", fontSize:token.font.size.fs12, fontWeight:600, border:"none", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)" }}>
+                        disabled={!isRunning && hasError}
+                        style={{ display:"inline-flex", alignItems:"center", gap:7, padding:"6px 11px", borderRadius:token.radius.sm, background:isRunning ? token.color.danger : token.color.gradient.ai, color:"#fff", fontSize:token.font.size.fs12, fontWeight:600, border:"none", cursor:(!isRunning && hasError) ? "not-allowed" : "pointer", opacity:(!isRunning && hasError) ? 0.45 : 1, boxShadow:"0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)" }}>
                         {isRunning ? <Icon.Square size={10} /> : <Icon.Play size={11} fill />}
                         <span>{isRunning ? pack.workspace.ui.run_button_running : pack.workspace.ui.run_button}</span>
                         {/* <kbd style={{ padding:"1px 5px", background:"rgba(0,0,0,0.25)", borderRadius:3, fontFamily:token.font.family.mono, fontSize:token.font.size.fs10, color:"rgba(255,255,255,0.7)" }}>⌘↵</kbd> */}
@@ -1987,9 +2075,46 @@ const BlocklyWasmIDE: React.FC = () => {
                         <div ref={blocklyDivRef} style={{ position:"absolute", inset:0 }} />
                     </div>
                     {canvasTab === "wat" && (
-                        watSource
-                            ? <Prism language="wasm" customStyle={{ flex:1, overflow:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{watSource}</Prism>
-                            : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>{pack.workspace.ui.wat_empty}</div>
+                        <div style={{ flex:1, position:"relative", overflow:"hidden" }}>
+                            {/* Floating control bar */}
+                            <div style={{ position:"absolute", top:8, right:24, zIndex:10, display:"flex", alignItems:"center", gap:4 }}>
+                                <select
+                                    value={watLang}
+                                    onChange={e => setWatLang(e.target.value as "wat" | "cpp")}
+                                    disabled={translating}
+                                    style={{ padding:"3px 6px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer", opacity: translating ? 0.5 : 1 }}
+                                >
+                                    <option value="wat">WAT</option>
+                                    <option value="cpp">CPP</option>
+                                </select>
+                                <button
+                                    onClick={() => { const src = watLang === "wat" ? watSource : (translatedSource ?? ""); navigator.clipboard.writeText(src); }}
+                                    disabled={translating || !(watLang === "wat" ? watSource : translatedSource)}
+                                    style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer" }}
+                                >
+                                    Copy
+                                </button>
+                                {watLang === "cpp" && (
+                                    <button
+                                        onClick={handleCompile}
+                                        disabled={compiling || !watSource}
+                                        style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer", opacity: compiling || !watSource ? 0.5 : 1 }}
+                                    >
+                                        {compiling ? "Compiling…" : "Compile"}
+                                    </button>
+                                )}
+                            </div>
+                            {translating
+                                ? <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>Translating…</div>
+                                : watLang === "wat"
+                                    ? watSource
+                                        ? <Prism language="wasm" customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{watSource}</Prism>
+                                        : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>{pack.workspace.ui.wat_empty}</div>
+                                    : translatedSource
+                                        ? <Prism language="cpp" customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{translatedSource}</Prism>
+                                        : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>{pack.workspace.ui.wat_empty}</div>
+                            }
+                        </div>
                     )}
                     {canvasTab === "ai" && (
                         <div style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
@@ -2145,7 +2270,7 @@ const BlocklyWasmIDE: React.FC = () => {
                                         <span style={{ color:levelColor, flexShrink:0, marginTop:1 }}>{icon}</span>
                                         <span style={{ color:token.color.fg, flex:1, wordBreak:"break-all" }}>{entry.message}</span>
                                         {entry.kind && (
-                                            <span style={{ color:token.color.fgSubtle, flexShrink:0 }}>{{ no_main: "no-main-block", duplicate_decl: "redefinition", compile_fail: "compile-error" }[entry.kind]}</span>
+                                            <span style={{ color:token.color.fgSubtle, flexShrink:0 }}>{{ no_main: "no-main-block", duplicate_decl: "redefinition", compile_fail: "compile-error", no_return: "no-return" }[entry.kind]}</span>
                                         )}
                                     </button>
                                 );

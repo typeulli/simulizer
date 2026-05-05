@@ -205,6 +205,24 @@ export const ARRAY_BLOCKS: BlockSet = {
             const name = block.getFieldValue("NAME") as string;
             return ctx.getOrCreateLocal(ctx, `__arr_${name}`, simulizer.i32);
         }),
+    ARRAY_LEN_I32: new BlockBuilder("array_len_i32", "i32", 120, "int 배열 길이")
+        .addBody("len(%1)")
+        .addArgValue("ARRAY", "i32*")
+        .expr((block, ctx) => {
+            const arrExpr = ctx.blockToExpr(block.getInputTargetBlock("ARRAY"), ctx);
+            if (!arrExpr) return null;
+            const ops = new simulizer.ArrayOps(simulizer.i32Array);
+            return ops.length(ctx.coerce(arrExpr, simulizer.i32));
+        }),
+    ARRAY_LEN_F64: new BlockBuilder("array_len_f64", "i32", 120, "float 배열 길이")
+        .addBody("len(%1)")
+        .addArgValue("ARRAY", "f64*")
+        .expr((block, ctx) => {
+            const arrExpr = ctx.blockToExpr(block.getInputTargetBlock("ARRAY"), ctx);
+            if (!arrExpr) return null;
+            const ops = new simulizer.ArrayOps(simulizer.f64Array);
+            return ops.length(ctx.coerce(arrExpr, simulizer.i32));
+        }),
 }
 
 const MAX_LITERAL_SIZE = 32;
@@ -224,17 +242,12 @@ function buildArrayLiteralBlock(
             this.appendValueInput("VAL_0")
                 .setCheck(elemType)
                 .appendField("[0]");
-            this.appendValueInput("VAL_1")
-                .setCheck(elemType)
-                .appendField("[1]");
-            this.appendValueInput("VAL_2")
-                .setCheck(elemType)
-                .appendField("[2]");
             this.setInputsInline(true);
             this.setOutput(true, elemType === "i32" ? "i32*" : "f64*");
             this.setColour(colour);
             this.setTooltip(`${label}* 리터럴 — 값을 채운 뒤 포인터를 반환합니다`);
             this.setOnChange(() => (this as any).updateShape_());
+            (this as any).updateShape_();
         },
         mutationToDom(this: Blockly.Block) {
             const el = document.createElement("mutation");
@@ -255,7 +268,7 @@ function buildArrayLiteralBlock(
                         .appendField(`[${i}]`);
                 }
             } else {
-                for (let i = existing - 1; i >= size; i--) {
+                for (let i = existing - 1; i > size - 1; i--) {
                     this.removeInput(`VAL_${i}`);
                 }
             }
@@ -338,6 +351,12 @@ export function xmlArrayBlocks(cat: string) {
         <value name="ARRAY"><block type="local_array_get_f64"></block></value>
         <value name="INDEX"><block type="i32_const"></block></value>
         <value name="VALUE"><block type="f64_const"></block></value>
+    </block>
+    <block type="array_len_i32">
+        <value name="ARRAY"><block type="local_array_get_i32"></block></value>
+    </block>
+    <block type="array_len_f64">
+        <value name="ARRAY"><block type="local_array_get_f64"></block></value>
     </block>
     <block type="local_array_get_i32"></block>
     <block type="local_array_get_f64"></block>

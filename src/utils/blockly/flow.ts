@@ -64,7 +64,7 @@ export const FLOW_BLOCKS: BlockSet = {
             const local = ctx.getOrCreateLocal(ctx, varName, simulizer.i32);
             const init = new simulizer.LocalSet(local, ctx.coerce(start, simulizer.i32));
             
-            const cond = simulizer.i32ops.le_s(local, ctx.coerce(end, simulizer.i32));
+            const cond = simulizer.i32ops.lt_s(local, ctx.coerce(end, simulizer.i32));
             const incr = new simulizer.LocalSet(local, simulizer.i32ops.add(local, simulizer.i32c(1)));
 
             const uid                     = Math.random().toString(36).slice(2, 7);
@@ -86,16 +86,38 @@ export const FLOW_BLOCKS: BlockSet = {
             if (!label) return null;
             return new simulizer.Br(label);
         }),
-    FLOW_SELECT_I32: new BlockBuilder("select_i32", "i32", 120, "i32 select (삼항 연산자)")
+    FLOW_SELECT_I32: new BlockBuilder("i32_select", "i32", 120, "i32 select (삼항 연산자)")
         .addBody("%1 ? %2 : %3")
         .addArgValue("COND", "bool")
-        .addArgValue("TRUE", "i32")
-        .addArgValue("FALSE", "i32"),
-    FLOW_SELECT_F64: new BlockBuilder("select_f64", "f64", 120, "f64 select (삼항 연산자)")
+        .addArgValue("THEN", "i32")
+        .addArgValue("ELSE", "i32")
+        .expr((block, ctx) => {
+            const cond = ctx.blockToExpr(block.getInputTargetBlock("COND"), ctx);
+            const thenVal = ctx.blockToExpr(block.getInputTargetBlock("THEN"), ctx);
+            const elseVal = ctx.blockToExpr(block.getInputTargetBlock("ELSE"), ctx);
+            if (!cond || !thenVal || !elseVal) return null;
+            return new simulizer.Select(
+                ctx.coerce(cond, simulizer.i32),
+                ctx.coerce(thenVal, simulizer.i32),
+                ctx.coerce(elseVal, simulizer.i32)
+            );
+        }),
+    FLOW_SELECT_F64: new BlockBuilder("f64_select", "f64", 120, "f64 select (삼항 연산자)")
         .addBody("%1 ? %2 : %3")
         .addArgValue("COND", "bool")
-        .addArgValue("TRUE", "f64")
-        .addArgValue("FALSE", "f64"),
+        .addArgValue("THEN", "f64")
+        .addArgValue("ELSE", "f64")
+        .expr((block, ctx) => {
+            const cond = ctx.blockToExpr(block.getInputTargetBlock("COND"), ctx);
+            const thenVal = ctx.blockToExpr(block.getInputTargetBlock("THEN"), ctx);
+            const elseVal = ctx.blockToExpr(block.getInputTargetBlock("ELSE"), ctx);
+            if (!cond || !thenVal || !elseVal) return null;
+            return new simulizer.Select(
+                ctx.coerce(cond, simulizer.i32),
+                ctx.coerce(thenVal, simulizer.f64),
+                ctx.coerce(elseVal, simulizer.f64)
+            );
+        }),
 }
 
 export function xmlFlowBlocks(cat: string) {
@@ -105,7 +127,7 @@ export function xmlFlowBlocks(cat: string) {
     <block type="flow_if"></block>
     <block type="flow_while"></block>
     <block type="flow_for"></block>
-    <block type="select_i32"></block>
-    <block type="select_f64"></block>
+    <block type="i32_select"></block>
+    <block type="f64_select"></block>
 </category>`;
 }

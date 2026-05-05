@@ -3,28 +3,48 @@ import { simulizer } from "../wasm/engine";
 import { BlockBuilder, GetVarID, type BlockSet, type CompileCtx } from "./$base";
 import { MAX_DIM } from "../wasm/tensor";
 
-function buildTensorCreateCall(block: Blockly.Block, ctx: CompileCtx): simulizer.Call | null {
-    const name = `__tensor_${block.id}`;
+function buildTensorNewCall(block: Blockly.Block, ctx: CompileCtx): simulizer.Expr | null {
+    const tensorName = `__tensor_${block.id}`;
+    const dim = Math.max(1, parseInt(block.getFieldValue("DIM") || "1", 10));
 
-    const arrBlock = block.getInputTargetBlock("ARRAY");
-    if (!arrBlock) return null;
+    const uid = Math.random().toString(36).slice(2, 7);
+    const arrayType = simulizer.i32Array;
 
-    const arrName = arrBlock.getFieldValue("NAME") as string;
-    const arrInfo = ctx.arrays?.get(arrName);
-    const capacity = arrInfo ? arrInfo.def.capacity : 0;
+    const baseOffset = ctx.nextArrayOffset ?? 0x1000;
+    ctx.nextArrayOffset = baseOffset + arrayType.totalBytes(dim);
 
-    const val = ctx.blockToExpr(arrBlock, ctx);
-    if (!val) return null;
+    const arrDef = new simulizer.ArrayDef(`__tensor_new_${uid}`, arrayType, dim, baseOffset);
+    const ptr = arrDef.register(ctx.module);
 
-    return new simulizer.Call(
-        "tensor_create",
-        [
-            simulizer.i32c(GetVarID(name)),
-            ctx.coerce(val, simulizer.i32),
-            simulizer.i32c(capacity),
-        ],
-        simulizer.i32
+    const ptrLocal = ctx.getOrCreateLocal(ctx, `__tensor_new_ptr_${uid}`, simulizer.i32);
+
+    const ops = new simulizer.ArrayOps(arrayType);
+    const exprs: simulizer.Expr[] = [new simulizer.LocalSet(ptrLocal, ptr)];
+
+    for (let i = 0; i < dim; i++) {
+        const dimBlock = block.getInputTargetBlock(`DIM_${i}`);
+        const dimExpr = dimBlock ? ctx.blockToExpr(dimBlock, ctx) : simulizer.i32c(1);
+        if (!dimExpr) return null;
+        exprs.push(ops.set(
+            ctx.coerce(ptrLocal, simulizer.i32),
+            simulizer.i32c(i),
+            ctx.coerce(dimExpr, simulizer.i32),
+        ));
+    }
+
+    exprs.push(
+        new simulizer.Call(
+            "tensor_create",
+            [
+                simulizer.i32c(GetVarID(tensorName)),
+                ctx.coerce(ptrLocal, simulizer.i32),
+                simulizer.i32c(dim),
+            ],
+            simulizer.i32,
+        ),
     );
+
+    return new simulizer.Block(`tensor_new_${uid}`, exprs, simulizer.i32);
 }
 
 function buildTensorRandomCall(block: Blockly.Block, ctx: CompileCtx): simulizer.Call | null {
@@ -131,10 +151,9 @@ export const TENSOR_BLOCKS: BlockSet = {
         .addArgValue("PARAM2", "f64")
         .addArgValue("ARRAY", "i32*")
         .expr((block, ctx) => buildTensorRandomCall(block, ctx)),
-    TENSOR_CREATE: new BlockBuilder("tensor_create", "i32", 160,"텐서 생성 (id 반환)")
-        .addBody("TENSOR_CREATE (data: %1)")
-        .addArgValue("ARRAY", "i32*")
-        .expr((block, ctx) => buildTensorCreateCall(block, ctx)),
+    TENSOR_NEW: new BlockBuilder("tensor_new", "i32", 160,"텐서 초기화 (id 반환)")
+        .addBody("dummy — registered directly via Blockly.Blocks")
+        .expr((block, ctx) => buildTensorNewCall(block, ctx)),
     TENSOR_GET: new BlockBuilder("tensor_get", "i32", 160,"텐서 가져오기 (id 반환)")
         .addBody("TENSOR_GET %1")
         .addArg("field_input", "NAME", "t")
@@ -242,22 +261,29 @@ export const TENSOR_BLOCKS: BlockSet = {
 export function registerDynamicTensorBlocks() {
     Blockly.Blocks["tensor_set_by_index"] = {
             init(this: Blockly.Block) {
-                this.appendDummyInput("HEADER")
-                    .appendField("TENSOR")
+                this.appendDummyInput()
                     .appendField(new Blockly.FieldTextInput("t"), "TENSOR_NAME")
                     .appendField("[");
-                this.appendValueInput("INDEX_0").setCheck("i32");
-                this.appendDummyInput("MID").appendField("] =");
+                this.appendDummyInput()
+                    .appendField("]")
+                    .appendField("=");
                 this.appendValueInput("VALUE").setCheck("f64");
-                this.appendDummyInput("DIM_ROW")
-                    .appendField("dims:")
+                this.appendDummyInput()
                     .appendField(new Blockly.FieldNumber(1, 1, MAX_DIM, 1), "DIM");
                 this.setInputsInline(true);
                 this.setPreviousStatement(true, null);
                 this.setNextStatement(true, null);
                 this.setColour(160);
                 this.setTooltip("텐서 요소 설정");
+                const dimField = this.getField("DIM");
+                if (dimField) {
+                    dimField.setValidator((val: number) => {
+                        (this as any).updateShape_(val);
+                        return val;
+                    });
+                }
                 this.setOnChange(() => (this as any).updateShape_());
+                (this as any).updateShape_();
             },
             mutationToDom(this: Blockly.Block) {
                 const el = document.createElement("mutation");
@@ -268,17 +294,41 @@ export function registerDynamicTensorBlocks() {
                 const dim = Math.max(1, parseInt(xmlElement.getAttribute("dim") || "1", 10));
                 (this as any).updateShape_(dim);
             },
+            saveExtraState(this: Blockly.Block) {
+                return { dim: Math.max(1, parseInt(this.getFieldValue("DIM") || "1", 10)) };
+            },
+            loadExtraState(this: Blockly.Block, state: { dim: number }) {
+                (this as any).updateShape_(state.dim);
+            },
             updateShape_(this: Blockly.Block, targetDim?: number) {
                 const dim = targetDim ?? Math.max(1, parseInt(this.getFieldValue("DIM") || "1", 10));
                 const existing = this.inputList.filter(i => i.name.startsWith("INDEX_")).length;
                 if (dim > existing) {
                     for (let i = existing; i < dim; i++) {
                         this.appendValueInput(`INDEX_${i}`).setCheck("i32");
-                        this.moveInputBefore(`INDEX_${i}`, "MID");
+                        if (i < dim - 1) {
+                            this.appendDummyInput(`COMMA_${i}`)
+                                .appendField(",");
+                        }
+                        // Move before the "]=" input
+                        const inputs = this.inputList.map(inp => inp.name);
+                        const closeBracketIndex = inputs.findIndex(n => n.startsWith("dummy") && 
+                            this.getInput(n) && 
+                            (this.getInput(n) as any).fieldRow.some((f: any) => f.text === "]"));
+                        if (closeBracketIndex > 0) {
+                            const closeBracketName = inputs[closeBracketIndex];
+                            this.moveInputBefore(`INDEX_${i}`, closeBracketName);
+                            if (i < dim - 1) {
+                                this.moveInputBefore(`COMMA_${i}`, closeBracketName);
+                            }
+                        }
                     }
                 } else {
-                    for (let i = existing - 1; i >= dim; i--) {
+                    for (let i = existing - 1; i > dim - 1; i--) {
                         this.removeInput(`INDEX_${i}`);
+                        if (this.getInput(`COMMA_${i}`)) {
+                            this.removeInput(`COMMA_${i}`);
+                        }
                     }
                 }
             },
@@ -286,20 +336,29 @@ export function registerDynamicTensorBlocks() {
 
     Blockly.Blocks["tensor_get_by_index"] = {
             init(this: Blockly.Block) {
-                this.appendDummyInput("HEADER")
+                this.appendDummyInput()
                     .appendField("TENSOR")
                     .appendField(new Blockly.FieldTextInput("t"), "TENSOR_NAME")
                     .appendField("[");
                 this.appendValueInput("INDEX_0").setCheck("i32");
-                this.appendDummyInput("FOOTER").appendField("]");
-                this.appendDummyInput("DIM_ROW")
+                this.appendDummyInput()
+                    .appendField("]");
+                this.appendDummyInput()
                     .appendField("dims:")
                     .appendField(new Blockly.FieldNumber(1, 1, MAX_DIM, 1), "DIM");
                 this.setInputsInline(true);
                 this.setOutput(true, "f64");
                 this.setColour(160);
                 this.setTooltip("텐서 요소 읽기");
+                const dimField = this.getField("DIM");
+                if (dimField) {
+                    dimField.setValidator((val: number) => {
+                        (this as any).updateShape_(val);
+                        return val;
+                    });
+                }
                 this.setOnChange(() => (this as any).updateShape_());
+                (this as any).updateShape_();
             },
             mutationToDom(this: Blockly.Block) {
                 const el = document.createElement("mutation");
@@ -310,30 +369,82 @@ export function registerDynamicTensorBlocks() {
                 const dim = Math.max(1, parseInt(xmlElement.getAttribute("dim") || "1", 10));
                 (this as any).updateShape_(dim);
             },
+            saveExtraState(this: Blockly.Block) {
+                return { dim: Math.max(1, parseInt(this.getFieldValue("DIM") || "1", 10)) };
+            },
+            loadExtraState(this: Blockly.Block, state: { dim: number }) {
+                (this as any).updateShape_(state.dim);
+            },
             updateShape_(this: Blockly.Block, targetDim?: number) {
                 const dim = targetDim ?? Math.max(1, parseInt(this.getFieldValue("DIM") || "1", 10));
                 const existing = this.inputList.filter(i => i.name.startsWith("INDEX_")).length;
                 if (dim > existing) {
                     for (let i = existing; i < dim; i++) {
                         this.appendValueInput(`INDEX_${i}`).setCheck("i32");
-                        this.moveInputBefore(`INDEX_${i}`, "FOOTER");
+                        // Move to appropriate position
+                        const inputs = this.inputList.map(inp => inp.name);
+                        const closeBracketIndex = inputs.findIndex(n => !n.startsWith("INDEX_") && n !== `INDEX_0`);
+                        if (closeBracketIndex > 0) {
+                            const closeBracketName = inputs[closeBracketIndex];
+                            this.moveInputBefore(`INDEX_${i}`, closeBracketName);
+                        }
                     }
                 } else {
-                    for (let i = existing - 1; i >= dim; i--) {
+                    for (let i = existing - 1; i > dim - 1; i--) {
                         this.removeInput(`INDEX_${i}`);
                     }
                 }
             },
         };
+
+    Blockly.Blocks["tensor_new"] = {
+        init(this: Blockly.Block) {
+            this.appendDummyInput("HEADER")
+                .appendField("[tensor]")
+                .appendField("차원:")
+                .appendField(new Blockly.FieldNumber(2, 1, MAX_DIM, 1), "DIM");
+            this.appendValueInput("DIM_0")
+                .setCheck("i32")
+                .appendField("dim[0]");
+            this.setInputsInline(true);
+            this.setOutput(true, "i32");
+            this.setColour(160);
+            this.setTooltip("텐서 생성 — 차원 크기를 지정하면 텐서 id를 반환합니다");
+            this.setOnChange(() => (this as any).updateShape_());
+            (this as any).updateShape_();
+        },
+        mutationToDom(this: Blockly.Block) {
+            const el = document.createElement("mutation");
+            el.setAttribute("dim", String(Math.max(1, parseInt(this.getFieldValue("DIM") || "1", 10))));
+            return el;
+        },
+        domToMutation(this: Blockly.Block, xmlElement: Element) {
+            const dim = Math.max(1, parseInt(xmlElement.getAttribute("dim") || "1", 10));
+            (this as any).updateShape_(dim);
+        },
+        updateShape_(this: Blockly.Block, targetDim?: number) {
+            const dim = targetDim ?? Math.max(1, parseInt(this.getFieldValue("DIM") || "1", 10));
+            const existing = this.inputList.filter(i => i.name.startsWith("DIM_")).length;
+            if (dim > existing) {
+                for (let i = existing; i < dim; i++) {
+                    this.appendValueInput(`DIM_${i}`)
+                        .setCheck("i32")
+                        .appendField(`dim[${i}]`);
+                }
+            } else {
+                for (let i = existing - 1; i > dim - 1; i--) {
+                    this.removeInput(`DIM_${i}`);
+                }
+            }
+        },
+    };
 }
 
 export function xmlTensorBlocks(cat: string) {
     return `<category name="${cat}" colour="${160}">
     <sep gap="16"></sep>
     <label text="Tensor"></label>
-    <block type="tensor_create">
-        <value name="ARRAY"><block type="local_array_get_i32"></block></value>
-    </block>
+    <block type="tensor_new"></block>
     <block type="tensor_get"></block>
     <block type="tensor_binop">
         <value name="LHS"><block type="tensor_get"></block></value>
