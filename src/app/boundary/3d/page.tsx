@@ -9,6 +9,7 @@ import { Icon } from "@/components/atoms/Icons";
 import { Button } from "@/components/atoms/Button";
 import { Input, Textarea } from "@/components/atoms/Input";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
+import useLanguagePack from "@/hooks/useLanguagePack";
 
 /* ── reshape flat array → 2D array[nu][nv] for Plotly surface ─── */
 function to2D(arr: Float64Array, nu: number, nv: number): number[][] {
@@ -82,6 +83,8 @@ let _nextId = 1;
 function nextId() { return _nextId++; }
 
 export default function Boundary3DPage() {
+    const [, , pack] = useLanguagePack();
+    const t = pack.boundary;
     const [entries, setEntries] = useState<Entry[]>([
         { id: nextId(), kind: "wasm", xFn: "local.get 0", yFn: "local.get 1", zFn: "local.get 0\nlocal.get 0\nf64.mul\nlocal.get 1\nlocal.get 1\nf64.mul\nf64.add" },
     ]);
@@ -157,7 +160,7 @@ export default function Boundary3DPage() {
             }
 
             if (results.length === 0) {
-                setError("실행할 데이터가 없습니다.");
+                setError(t.no_data_error);
                 return;
             }
 
@@ -273,7 +276,7 @@ export default function Boundary3DPage() {
                 <span style={{ color: token.color.fgSubtle, fontWeight: 300 }}>/</span>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", borderRadius: token.radius.sm, color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>
                     <Icon.Layers size={12} />
-                    <span>경계조건 3D</span>
+                    <span>{t.breadcrumb_3d}</span>
                 </div>
 
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>

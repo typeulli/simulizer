@@ -149,7 +149,7 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
             readOnly: true,
             scrollbars: false,
             zoom: { controls: false, wheel: false, startScale: 0.85 },
-            move: { scrollbars: false, drag: false, wheel: false },
+            move: { scrollbars: false, drag: true, wheel: false },
             renderer: "zelos",
             theme,
         });
@@ -170,6 +170,7 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
             style={{
                 width: "100%",
                 height,
+                pointerEvents: "none",
                 ...style,
             }}
         />

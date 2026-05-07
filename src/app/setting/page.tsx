@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { token } from "@/components/tokens";
 import { Icon } from "@/components/atoms/Icons";
 import { Button } from "@/components/atoms/Button";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import useLanguagePack from "@/hooks/useLanguagePack";
-import Link from "next/link";
+import { useAuth } from "@/hooks/useAuth";
+
 
 const LANGUAGES = [
   { code: "en", name: "English", nativeName: "English", flag: "🇺🇸" },
@@ -16,11 +18,12 @@ const LANGUAGES = [
 const LS_LANG_KEY = "language";
 
 export default function SettingPage() {
+  useAuth();
+  const router = useRouter();
   const [, , pack] = useLanguagePack();
   const t = pack.setting;
 
   const [selected, setSelected] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(LS_LANG_KEY);
@@ -29,7 +32,6 @@ export default function SettingPage() {
 
   function handleSelect(code: string) {
     setSelected(code);
-    setSaved(false);
   }
 
   function handleSave() {
@@ -39,8 +41,7 @@ export default function SettingPage() {
     } else {
       localStorage.setItem(LS_LANG_KEY, selected);
     }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    window.location.reload();
   }
 
   return (
@@ -65,7 +66,7 @@ export default function SettingPage() {
       }}>
         {/* Left: Brand + Breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap" }}>
-          <TopbarBrand pack={pack} />
+          <TopbarBrand />
           <span style={{ color: token.color.fgSubtle, fontWeight: 300 }}>/</span>
           <div style={{
             display: "inline-flex",
@@ -91,8 +92,8 @@ export default function SettingPage() {
 
         {/* Right: Actions */}
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <Link
-            href="/workspace"
+          <button
+            onClick={() => router.back()}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -104,7 +105,7 @@ export default function SettingPage() {
               color: token.color.fgMuted,
               fontSize: 12,
               fontWeight: 500,
-              textDecoration: "none",
+              cursor: "pointer",
               transition: token.motion.transition.fast,
             }}
             onMouseEnter={e => {
@@ -116,8 +117,8 @@ export default function SettingPage() {
               e.currentTarget.style.background = token.color.bgSubtle;
             }}
           >
-            <span>{t.go_to_workspace}</span>
-          </Link>
+            <span>{t.back}</span>
+          </button>
         </div>
       </header>
 
@@ -194,9 +195,7 @@ export default function SettingPage() {
                 fontSize: token.font.size.fs14,
                 fontWeight: 700,
                 letterSpacing: "0.02em",
-                background: saved
-                  ? "linear-gradient(135deg, #22c55e, #10b981)"
-                  : token.color.gradient.ai,
+                background: token.color.gradient.ai,
                 color: "#fff",
                 border: "none",
                 borderRadius: token.radius.md,
@@ -214,19 +213,10 @@ export default function SettingPage() {
                 e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)";
               }}
             >
-              {saved ? t.saved_button : t.save_button}
+              {t.save_button}
             </Button>
           </div>
 
-          <p style={{
-            marginTop: token.space.sp4,
-            fontSize: token.font.size.fs11,
-            color: token.color.fgSubtle,
-            textAlign: "center",
-            fontFamily: token.font.family.mono
-          }}>
-            {t.reload_hint}
-          </p>
         </div>
       </main>
     </div>

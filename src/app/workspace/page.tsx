@@ -48,12 +48,94 @@ import { xmlBoundaryBlocks } from "@/utils/blockly/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
 import { Prism } from "react-syntax-highlighter";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
+import { getMe, getFile, saveFile, renameFile, uploadThumbnail } from "@/lib/authapi";
 
 // Register Blockly locale explicitly to prevent context menu labels from being undefined
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
+
+// SVG elements loaded as <img> are sandboxed — CSS class selectors don't resolve.
+// Walk the live DOM and inline getComputedStyle onto each cloned element before serializing.
+function inlineSvgStyles(orig: Element, clone: Element) {
+    const props = [
+        "fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity",
+        "stroke-dasharray", "stroke-linecap", "stroke-linejoin",
+        "opacity", "display", "visibility",
+        "font-family", "font-size", "font-weight", "font-style",
+        "text-anchor", "dominant-baseline",
+    ];
+    const cs = window.getComputedStyle(orig);
+    for (const p of props) {
+        const v = cs.getPropertyValue(p);
+        if (v) (clone as SVGElement).style.setProperty(p, v);
+    }
+    for (let i = 0; i < orig.children.length; i++) {
+        if (clone.children[i]) inlineSvgStyles(orig.children[i], clone.children[i]);
+    }
+}
+
+function generateThumbnailBlob(ws: Blockly.WorkspaceSvg): Promise<Blob | null> {
+    const bbox = ws.getBlocksBoundingBox();
+    const bw = bbox.right - bbox.left;
+    const bh = bbox.bottom - bbox.top;
+    if (bw <= 0 || bh <= 0) return Promise.resolve(null);
+
+    const blockCanvas = ws.getCanvas();
+    const ctm = blockCanvas.getCTM();
+    if (!ctm) return Promise.resolve(null);
+
+    const pad = 20;
+    const svgLeft = bbox.left * ctm.a + ctm.e;
+    const svgTop  = bbox.top  * ctm.d + ctm.f;
+    const svgW    = bw * ctm.a;
+    const svgH    = bh * ctm.d;
+    const thumbW  = Math.round(svgW + pad * 2);
+    const thumbH  = Math.round(svgH + pad * 2);
+
+    const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svgEl.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    svgEl.setAttribute("viewBox", `${svgLeft - pad} ${svgTop - pad} ${thumbW} ${thumbH}`);
+    svgEl.setAttribute("width", String(thumbW));
+    svgEl.setAttribute("height", String(thumbH));
+
+    // Copy defs (gradients, filters, etc.) from parent SVG
+    const parentSvg = ws.getParentSvg();
+    for (const child of Array.from(parentSvg.childNodes)) {
+        const el = child as Element;
+        if (el.tagName === "defs") {
+            svgEl.appendChild(child.cloneNode(true));
+        }
+    }
+
+    // Clone canvas, then inline computed styles so fills survive img sandboxing
+    const canvasClone = blockCanvas.cloneNode(true) as SVGGElement;
+    inlineSvgStyles(blockCanvas, canvasClone);
+    const { a, b, c, d, e, f } = ctm;
+    canvasClone.setAttribute("transform", `matrix(${a},${b},${c},${d},${e},${f})`);
+    svgEl.appendChild(canvasClone);
+
+    const svgStr = new XMLSerializer().serializeToString(svgEl);
+    const svgBlob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
+    const svgUrl = URL.createObjectURL(svgBlob);
+
+    return new Promise<Blob | null>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvasEl = document.createElement("canvas");
+            canvasEl.width  = thumbW;
+            canvasEl.height = thumbH;
+            const ctx = canvasEl.getContext("2d");
+            if (!ctx) { URL.revokeObjectURL(svgUrl); resolve(null); return; }
+            ctx.drawImage(img, 0, 0, thumbW, thumbH);
+            URL.revokeObjectURL(svgUrl);
+            canvasEl.toBlob(b => resolve(b), "image/png");
+        };
+        img.onerror = () => { URL.revokeObjectURL(svgUrl); resolve(null); };
+        img.src = svgUrl;
+    });
+}
 
 // Recursively remaps input names in a Blockly JSON block tree to match the
 // registered block definition. Handles cases where the AI returns wrong input
@@ -678,6 +760,7 @@ const BlocklyWasmIDE: React.FC = () => {
     const workspaceRef  = useRef<Blockly.WorkspaceSvg | null>(null);
     const wasmWorkerRef = useRef<Worker | null>(null);
     const router = useRouter();
+    const searchParams = useSearchParams();
 
     const [runState, setRunState]           = useState<RunState>("idle");
     const [result, setResult]               = useState<string | null>(null);
@@ -907,19 +990,17 @@ const BlocklyWasmIDE: React.FC = () => {
     const [showBlocks, setShowBlocks] = useState(false);
     const [blockData, setBlockData]   = useState<string>("");
     const [blockMode, setBlockMode]   = useState<"export" | "import" | "wat">("export");
-    const [saveName, setSaveName]     = useState<string>("");
     const fileInputRef                = useRef<HTMLInputElement>(null);
     const [lang, , pack, langReady]   = useLanguagePack();
 
-    const LS_PREFIX = "simphy_blocks_";
-    const getSavedList = () =>
-        Object.keys(localStorage)
-            .filter(k => k.startsWith(LS_PREFIX))
-            .map(k => k.slice(LS_PREFIX.length))
-            .sort();
-    const [savedList, setSavedList] = useState<string[]>(() =>
-        typeof window !== "undefined" ? getSavedList() : []
-    );
+    const [fileId, setFileId]       = useState<string | null>(null);
+    const [fileName, setFileName]   = useState<string>("");
+    const [fileError, setFileError] = useState<"not_found" | "forbidden" | null>(null);
+    const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved" | "error">("saved");
+    const wsReadyRef                = useRef(false);
+    const pendingContentRef         = useRef<string | null>(null);
+    const fileIdRef                 = useRef<string | null>(null);
+    const autoSaveTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const { logAreaRef, addLog, addBar, setBar, clearLog, addSeries, logToHolder, visualToHolder } = useConsolePanel();
     const pendingRunRef = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
@@ -1088,6 +1169,8 @@ const BlocklyWasmIDE: React.FC = () => {
         worker.postMessage({ type: "switch-backend", backend });
     }, []);
 
+    useEffect(() => { fileIdRef.current = fileId; }, [fileId]);
+
     // Initialize Blockly
     useEffect(() => {
         registerDynamicTensorBlocks();
@@ -1149,10 +1232,37 @@ const BlocklyWasmIDE: React.FC = () => {
         const handleBlockChange = (event: Blockly.Events.Abstract) => {
             if (event.isUiEvent) return;
             refreshInfo();
+            setSaveStatus("unsaved");
+            if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+            autoSaveTimerRef.current = setTimeout(async () => {
+                const id = fileIdRef.current;
+                if (!id) return;
+                const content = JSON.stringify(Blockly.serialization.workspaces.save(ws));
+                setBlockData(content);
+                setSaveStatus("saving");
+                try {
+                    await saveFile(id, content);
+                    setSaveStatus("saved");
+                    generateThumbnailBlob(ws).then(blob => { if (blob) uploadThumbnail(id, blob).catch(() => {}); });
+                } catch {
+                    setSaveStatus("error");
+                }
+            }, 2000);
         };
         ws.addChangeListener(handleBlockChange);
-        
-        Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
+
+        wsReadyRef.current = true;
+        if (pendingContentRef.current) {
+            try {
+                const state = JSON.parse(pendingContentRef.current);
+                Blockly.serialization.workspaces.load(state, ws);
+            } catch {
+                Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
+            }
+            pendingContentRef.current = null;
+        } else {
+            Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
+        }
 
         const slimToolboxBars = () => {
             blocklyDivRef.current?.querySelectorAll<HTMLElement>(".blocklyToolboxCategory").forEach(el => {
@@ -1174,6 +1284,7 @@ const BlocklyWasmIDE: React.FC = () => {
         });
 
         return () => {
+            if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
             ws.removeChangeListener(handleBlockChange);
             barObserver.disconnect();
             ws.dispose();
@@ -1752,53 +1863,34 @@ const BlocklyWasmIDE: React.FC = () => {
         applyJson(blockData);
     }, [blockData, applyJson]);
 
-    const handleSaveToStorage = useCallback(() => {
-        const name = saveName.trim();
-        if (!name) { alert(pack.workspace.alerts.name_required); return; }
-        localStorage.setItem(LS_PREFIX + name, blockData);
-        setSavedList(getSavedList());
-    }, [saveName, blockData, pack]);
-
-    const handleDeleteFromStorage = useCallback((name: string) => {
-        localStorage.removeItem(LS_PREFIX + name);
-        setSavedList(getSavedList());
-    }, []);
-
-    const handleLoadFromStorage = useCallback((name: string) => {
-        const data = localStorage.getItem(LS_PREFIX + name);
-        if (!data) return;
+    const handleSaveToServer = useCallback(async () => {
+        if (!fileId) return;
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        setSaveStatus("saving");
         try {
-            // JSON 형식 시도, 실패 시 레거시 XML 폴백
-            if (data.trimStart().startsWith("{")) {
-                applyJson(data);
-            } else {
-                const ws = workspaceRef.current;
-                if (!ws) return;
-                const dom = Blockly.utils.xml.textToDom(data);
-                ws.clear();
-                Blockly.Xml.domToWorkspace(dom, ws);
-                const saved = Blockly.serialization.workspaces.save(ws);
-                // 마이그레이션: JSON으로 덮어씀
-                localStorage.setItem(LS_PREFIX + name, JSON.stringify(saved));
-                setBlockData(JSON.stringify(saved));
-                setBlockMode("export");
-                setShowBlocks(false);
+            await saveFile(fileId, blockData);
+            setSaveStatus("saved");
+            const ws = workspaceRef.current;
+            if (ws) {
+                generateThumbnailBlob(ws).then(blob => { if (blob) uploadThumbnail(fileId, blob).catch(() => {}); });
             }
-        } catch (err) {
-            const msg = pack.workspace.alerts.xml_corrupted.replace("$0", err instanceof Error ? err.message : String(err));
-            addLog("error", msg);
-            showErrorModal(msg);
+        } catch {
+            addLog("error", "파일 저장에 실패했어요.");
+            setSaveStatus("error");
         }
-    }, [applyJson, addLog, showErrorModal, pack]);
+    }, [fileId, blockData, addLog]);
 
-    const handleDownloadFile = useCallback(() => {
-        const name = saveName.trim() || "blocks";
-        const blob = new Blob([blockData], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = `${name}.simphy`; a.click();
-        URL.revokeObjectURL(url);
-    }, [saveName, blockData]);
+    const handleRenameFile = useCallback(async () => {
+        if (!fileId) return;
+        const trimmed = fileName.trim();
+        if (!trimmed) { setFileName(fileName); return; }
+        try {
+            const updated = await renameFile(fileId, trimmed);
+            setFileName(updated.name);
+        } catch (err: any) {
+            if (err?.status === 409) addLog("error", "같은 이름의 파일이 이미 있어요.");
+        }
+    }, [fileId, fileName, addLog]);
 
     const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -1810,6 +1902,48 @@ const BlocklyWasmIDE: React.FC = () => {
         reader.readAsText(file);
         e.target.value = "";
     }, []);
+
+    useEffect(() => {
+        const fileParam = searchParams.get("file");
+        const id = fileParam ?? null;
+        if (!id) {
+            router.replace("/dashboard");
+            return;
+        }
+        (async () => {
+            const me = await getMe().catch(() => null);
+            if (!me) { router.replace("/login"); return; }
+            const f = await getFile(id).catch((err) => {
+                const status = (err as { status?: number }).status;
+                setFileError(status === 403 ? "forbidden" : "not_found");
+                return null;
+            });
+            if (!f) return;
+            setFileId(f.id);
+            setFileName(f.name);
+            setSaveStatus("saved");
+            const isEmpty = f.content.trim() === "{}";
+            const content = isEmpty ? null : f.content;
+            setBlockData(f.content);
+            if (wsReadyRef.current) {
+                const ws = workspaceRef.current;
+                if (ws) {
+                    ws.clear();
+                    if (content) {
+                        try {
+                            Blockly.serialization.workspaces.load(JSON.parse(content), ws);
+                        } catch {
+                            Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
+                        }
+                    } else {
+                        Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
+                    }
+                }
+            } else {
+                pendingContentRef.current = content;
+            }
+        })();
+    }, [searchParams, router]);
 
     const isRunning = runState === "compiling" || runState === "running";
     const formatRunDuration = (ms: number | null) => {
@@ -1841,6 +1975,42 @@ const BlocklyWasmIDE: React.FC = () => {
         }
     }, []);
 
+    if (fileError) {
+        const t = pack.file_error;
+        const isForbidden = fileError === "forbidden";
+        return (
+            <div style={{
+                minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+                background: token.color.bg, fontFamily: token.font.family.sans, color: token.color.fg,
+                padding: "32px 16px",
+            }}>
+                <div style={{ width: "100%", maxWidth: 400, display: "flex", flexDirection: "column", alignItems: "center", gap: token.space.sp6, textAlign: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Logo size={22} />
+                        <span style={{ fontSize: token.font.size.fs16, fontWeight: 700, letterSpacing: "-0.02em" }}>Simulizer</span>
+                    </div>
+                    <div style={{ fontSize: 48, lineHeight: 1, color: token.color.fgSubtle }}>
+                        {isForbidden ? "🔒" : "📄"}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
+                        <div style={{ fontSize: token.font.size.fs20, fontWeight: 700, color: token.color.fgStrong, letterSpacing: token.font.tracking.tight }}>
+                            {isForbidden ? t.forbidden_title : t.not_found_title}
+                        </div>
+                        <div style={{ fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.6 }}>
+                            {isForbidden ? t.forbidden_desc : t.not_found_desc}
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => router.replace("/dashboard")}
+                        style={{ padding: "8px 20px", borderRadius: token.radius.md, background: token.color.accent, color: token.color.fgOnAccent, fontWeight: 600, fontSize: token.font.size.fs13, border: "none", cursor: "pointer" }}
+                    >
+                        {t.go_dashboard}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
             {!langReady && (
@@ -1870,14 +2040,20 @@ const BlocklyWasmIDE: React.FC = () => {
             <header style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
                 {/* Brand + filename */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap" }}>
-                    <TopbarBrand onDrafts={handleOpenBlocks} pack={pack} />
+                    <TopbarBrand />
 
                     <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>
                     <button onClick={handleOpenBlocks} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}>
                         <Icon.File size={12} />
-                        <input value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="untitled"
+                        <input
+                            value={fileName}
+                            onChange={e => setFileName(e.target.value)}
+                            onBlur={handleRenameFile}
+                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                             onClick={e => e.stopPropagation()}
-                            style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: "text" }} />
+                            placeholder="untitled"
+                            style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: "text" }}
+                        />
                         <Icon.Chevron size={11} />
                     </button>
                 </div>
@@ -1893,6 +2069,22 @@ const BlocklyWasmIDE: React.FC = () => {
 
                 {/* Actions */}
                 <div style={{ display:"flex", alignItems:"center", gap:8, justifyContent:"flex-end" }}>
+                    {/* Save button */}
+                    {saveStatus === "unsaved" && (
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>저장 안됨</span>
+                    )}
+                    {saveStatus === "error" && (
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>저장 실패</span>
+                    )}
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        leading={saveStatus === "saving" ? <Spinner size="sm" /> : <Icon.Save size={11} />}
+                        onClick={handleSaveToServer}
+                        disabled={saveStatus === "saving" || !fileId}
+                    >
+                        {saveStatus === "saving" ? "저장 중..." : "저장"}
+                    </Button>
                     {/* Backend pill */}
                     <div style={{ display:"inline-flex", alignItems:"center", gap:2, padding:"4px 8px", background:token.color.bgSubtle, border:`1px solid ${token.color.border}`, borderRadius:999, fontSize:token.font.size.fs10, color:token.color.fgMuted, fontFamily:token.font.family.mono }}>
                         {(["webgpu", "webgl", "cpu"] as const).map((b, i, arr) => {
@@ -2306,7 +2498,6 @@ const BlocklyWasmIDE: React.FC = () => {
                 open={showBlocks}
                 mode={blockMode}
                 blockData={blockData}
-                savedList={savedList}
                 watSource={watSource}
                 fileInputRef={fileInputRef}
                 pack={pack}
@@ -2314,12 +2505,8 @@ const BlocklyWasmIDE: React.FC = () => {
                 onModeChange={setBlockMode}
                 onBlockDataChange={setBlockData}
                 onOpenImport={handleOpenImport}
-                onSaveToStorage={handleSaveToStorage}
-                onDownloadFile={handleDownloadFile}
                 onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
                 onResetWorkspace={() => { handleReset(); setShowBlocks(false); }}
-                onDeleteSaved={handleDeleteFromStorage}
-                onLoadSaved={handleLoadFromStorage}
                 onApplyImport={handleLoadBlocks}
                 onFileInput={handleFileInput}
             />
@@ -2383,4 +2570,10 @@ const BlocklyWasmIDE: React.FC = () => {
     );
 };
 
-export default BlocklyWasmIDE;
+export default function WorkspacePage() {
+    return (
+        <React.Suspense>
+            <BlocklyWasmIDE />
+        </React.Suspense>
+    );
+}

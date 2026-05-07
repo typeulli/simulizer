@@ -13,7 +13,6 @@ interface BlockManagerModalProps {
     open: boolean;
     mode: BlockMode;
     blockData: string;
-    savedList: string[];
     watSource: string;
     fileInputRef: React.RefObject<HTMLInputElement | null>;
     pack: langpack;
@@ -21,12 +20,8 @@ interface BlockManagerModalProps {
     onModeChange: (mode: BlockMode) => void;
     onBlockDataChange: (value: string) => void;
     onOpenImport: () => void;
-    onSaveToStorage: () => void;
-    onDownloadFile: () => void;
     onCopyToClipboard: (text: string) => void;
     onResetWorkspace: () => void;
-    onDeleteSaved: (name: string) => void;
-    onLoadSaved: (name: string) => void;
     onApplyImport: () => void;
     onFileInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
@@ -35,7 +30,6 @@ export function BlockManagerModal({
     open,
     mode,
     blockData,
-    savedList,
     watSource,
     fileInputRef,
     pack,
@@ -43,12 +37,8 @@ export function BlockManagerModal({
     onModeChange,
     onBlockDataChange,
     onOpenImport,
-    onSaveToStorage,
-    onDownloadFile,
     onCopyToClipboard,
     onResetWorkspace,
-    onDeleteSaved,
-    onLoadSaved,
     onApplyImport,
     onFileInput,
 }: BlockManagerModalProps) {
@@ -81,30 +71,11 @@ export function BlockManagerModal({
                 {mode === "export" && (
                     <>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderBottom: `1px solid ${token.color.border}`, flexShrink: 0 }}>
-                            <Button variant="accent" size="sm" leading={<Icon.Save size={11} />} onClick={onSaveToStorage}>{pack.workspace.ui.save_local_button}</Button>
-                            <Button variant="ghost" size="sm" leading={<Icon.Download size={11} />} onClick={onDownloadFile}>{pack.workspace.ui.save_file_button}</Button>
                             <Button variant="ghost" size="sm" leading={<Icon.Check size={11} />} onClick={() => onCopyToClipboard(blockData)}>{pack.workspace.ui.copy_button}</Button>
                             <div style={{ marginLeft: "auto" }}>
                                 <Button variant="danger" size="sm" onClick={onResetWorkspace}>{pack.workspace.ui.reset_button}</Button>
                             </div>
                         </div>
-                        {savedList.length > 0 && (
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "8px 16px", borderBottom: `1px solid ${token.color.border}`, flexShrink: 0 }}>
-                                {savedList.map(name => (
-                                    <span key={name} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: token.color.bgCanvas, border: `1px solid ${token.color.border}`, borderRadius: token.radius.sm, padding: "2px 8px 2px 10px", fontSize: token.font.size.fs11, color: token.color.fg, fontFamily: token.font.family.mono }}>
-                                        {name}
-                                        <button
-                                            onClick={() => onDeleteSaved(name)}
-                                            style={{ display: "flex", alignItems: "center", background: "none", border: "none", color: token.color.fgSubtle, cursor: "pointer", padding: 2, borderRadius: 3, lineHeight: 1 }}
-                                            onMouseEnter={e => (e.currentTarget.style.color = token.color.danger)}
-                                            onMouseLeave={e => (e.currentTarget.style.color = token.color.fgSubtle)}
-                                        >
-                                            <Icon.X size={10} />
-                                        </button>
-                                    </span>
-                                ))}
-                            </div>
-                        )}
                         <pre style={{ overflow: "auto", flex: 1, margin: 0, padding: "16px", fontSize: token.font.size.fs11, color: token.color.fgMuted, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: token.font.family.mono, background: token.color.bgCanvas, minHeight: 300 }}>{blockData}</pre>
                     </>
                 )}
@@ -118,21 +89,6 @@ export function BlockManagerModal({
                                 <Button variant="ai" size="sm" onClick={onApplyImport}>{pack.workspace.ui.apply_button}</Button>
                             </div>
                         </div>
-                        {savedList.length > 0 && (
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "8px 16px", borderBottom: `1px solid ${token.color.border}`, flexShrink: 0 }}>
-                                {savedList.map(name => (
-                                    <button
-                                        key={name}
-                                        onClick={() => onLoadSaved(name)}
-                                        style={{ display: "inline-flex", alignItems: "center", gap: 4, background: token.color.bgCanvas, border: `1px solid ${token.color.border}`, borderRadius: token.radius.sm, padding: "2px 10px", fontSize: token.font.size.fs11, color: token.color.fg, fontFamily: token.font.family.mono, cursor: "pointer", transition: "all 0.1s" }}
-                                        onMouseEnter={e => { e.currentTarget.style.borderColor = token.color.accent; e.currentTarget.style.color = token.color.accent; }}
-                                        onMouseLeave={e => { e.currentTarget.style.borderColor = token.color.border; e.currentTarget.style.color = token.color.fg; }}
-                                    >
-                                        <Icon.File size={10} />{name}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
                         <textarea
                             value={blockData}
                             onChange={e => onBlockDataChange(e.target.value)}

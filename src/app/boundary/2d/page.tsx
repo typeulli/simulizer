@@ -9,6 +9,7 @@ import { Icon } from "@/components/atoms/Icons";
 import { Button } from "@/components/atoms/Button";
 import { Input, Textarea } from "@/components/atoms/Input";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
+import useLanguagePack from "@/hooks/useLanguagePack";
 
 /* ── Blues colormap ──────────────────────────────────────────── */
 const BLUES: [number, number, number][] = [
@@ -150,6 +151,8 @@ let _nextId = 1;
 function nextId() { return _nextId++; }
 
 export default function BoundaryPage() {
+    const [, , pack] = useLanguagePack();
+    const t = pack.boundary;
     const [entries, setEntries] = useState<Entry[]>([
         { id: nextId(), kind: "wasm", xFn: "local.get 0\nlocal.get 0\nf64.mul", yFn: "local.get 0\nf64.const 2\nf64.mul" },
     ]);
@@ -223,7 +226,7 @@ export default function BoundaryPage() {
             }
 
             if (results.length === 0) {
-                setError("실행할 데이터가 없습니다.");
+                setError(t.no_data_error);
                 return;
             }
 
@@ -317,7 +320,7 @@ export default function BoundaryPage() {
                 <span style={{ color: token.color.fgSubtle, fontWeight: 300 }}>/</span>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", borderRadius: token.radius.sm, color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>
                     <Icon.Grid size={12} />
-                    <span>경계조건 2D</span>
+                    <span>{t.breadcrumb_2d}</span>
                 </div>
 
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>

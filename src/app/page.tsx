@@ -1,6 +1,7 @@
 "use client";
 
 import { useTheme } from "@/hooks/useTheme";
+import { useUser } from "@/hooks/useAuth";
 import Link from "next/link";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
@@ -16,9 +17,19 @@ import { Stat } from "@/components/organisms/Stat";
 import { Topbar } from "@/components/organisms/Toolbar";
 import { BlocklyPreview } from "@/components/organisms/BlocklyPreview";
 import { token } from "@/components/tokens";
+import useLanguagePack from "@/hooks/useLanguagePack";
 
 export default function Home() {
   const { theme, toggleTheme } = useTheme();
+  const { user, loading } = useUser();
+  const [lang, , pack] = useLanguagePack();
+  const t = pack.home;
+
+  function toggleLang() {
+    const next = lang === "ko" ? "en" : "ko";
+    localStorage.setItem("language", next);
+    window.location.reload();
+  }
 
   return (
     <div
@@ -34,28 +45,34 @@ export default function Home() {
     >
       {/* ── Nav ── */}
       <Topbar style={{ height: "auto", padding: `18px ${token.space.sp12}`, justifyContent: "space-between" }}>
-        <Inline gap="sp2" style={{ fontSize: token.font.size.fs15, fontWeight: token.font.weight.semibold, letterSpacing: "-0.01em" }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <rect x="3" y="3" width="8" height="8" rx="1.5" fill={token.color.accent} />
-            <rect x="13" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-            <rect x="3" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-            <rect x="13" y="13" width="8" height="8" rx="1.5" fill={token.color.accent} opacity="0.4" />
-          </svg>
-          <span>Simulizer</span>
-        </Inline>
+        <Link href="#" style={{ textDecoration: "none", color: "inherit" }}>
+          <Inline gap="sp2" style={{ fontSize: token.font.size.fs15, fontWeight: token.font.weight.semibold, letterSpacing: "-0.01em" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="8" height="8" rx="1.5" fill={token.color.accent} />
+              <rect x="13" y="3" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="3" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <rect x="13" y="13" width="8" height="8" rx="1.5" fill={token.color.accent} opacity="0.4" />
+            </svg>
+            <span>Simulizer</span>
+          </Inline>
+        </Link>
 
         <Inline gap="sp6">
-          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>문서</Text>
-          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>예제</Text>
-          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>GitHub</Text>
+          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_docs}</Text>
+          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_examples}</Text>
+          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_github}</Text>
           <Divider orientation="vertical" style={{ height: 16 }} />
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={toggleTheme}
-          >
+          <Button variant="ghost" size="xs" onClick={toggleTheme}>
             {theme === "dark" ? <Icon.Sun size={14} /> : <Icon.Moon size={14} />}
           </Button>
+          <Button variant="ghost" size="xs" onClick={toggleLang}>
+            <Icon.Globe size={14} />
+          </Button>
+          {!loading && (
+            <Link href={user ? "/dashboard" : "/login"}>
+              <Button variant="primary" size="md">{user ? t.nav_dashboard : t.nav_login}</Button>
+            </Link>
+          )}
         </Inline>
       </Topbar>
 
@@ -76,7 +93,7 @@ export default function Home() {
         <section style={{ paddingTop: token.space.sp5 }}>
           <Badge tone="default" shape="pill" mono>
             <Dot color={token.color.accent} />
-            WebAssembly · TensorFlow.js · 물리 시뮬레이션
+            {t.hero_badge}
           </Badge>
 
           {/* Title — Text 컴포넌트로 */}
@@ -86,11 +103,11 @@ export default function Home() {
             tone="strong"
             style={{ margin: `${token.space.sp6} 0 0`, fontSize: token.font.size.fs56, fontWeight: token.font.weight.semibold }}
           >
-            코드를 몰라도<br />
+            {t.hero_title_pre}<br />
             <Text as="span" variant="display" gradient style={{ fontSize: "inherit", fontWeight: "inherit" }}>
-              물리를 시뮬레이션
+              {t.hero_title_gradient}
             </Text>
-            하세요.
+            {t.hero_title_post}
           </Text>
 
           <Text
@@ -99,18 +116,17 @@ export default function Home() {
             tone="muted"
             style={{ margin: `${token.space.sp5} 0 0`, maxWidth: 520 }}
           >
-            블록을 끼워 맞추면 브라우저 안에서 WebAssembly로 컴파일되어<br />
-            네이티브에 가까운 속도로 실행됩니다. 설치할 것도, 배워야 할 문법도 없습니다.
+            {t.hero_body}
           </Text>
 
           <Inline gap="sp2" style={{ marginTop: token.space.sp8 }}>
-            <Link href="/workspace">
+            <Link href={user ? "/dashboard" : "/login"}>
               <Button variant="primary" size="lg" trailing={<Icon.Chevron size={12} dir="right" />}>
-                워크스페이스 열기
+                {user ? t.cta_dashboard : t.cta_start}
               </Button>
             </Link>
             <Button variant="secondary" size="lg" leading={<Icon.Book size={13} />}>
-              10분 시작 가이드
+              {t.cta_guide}
             </Button>
           </Inline>
 
@@ -128,9 +144,9 @@ export default function Home() {
             }}
           >
             {[
-              { label: "파이프라인",     value: "3단계",    sub: "블록 → AST → WASM" },
-              { label: "GPU 가속",       value: "WebGPU",   sub: "TensorFlow.js 자동 백엔드" },
-              { label: "로컬 실행",      value: "오프라인", sub: "서버 전송 없음" },
+              { label: t.stat_pipeline_label, value: t.stat_pipeline_value, sub: t.stat_pipeline_sub },
+              { label: t.stat_gpu_label,      value: t.stat_gpu_value,      sub: t.stat_gpu_sub },
+              { label: t.stat_local_label,    value: t.stat_local_value,    sub: t.stat_local_sub },
             ].map(item => (
               <Box key={item.label} style={{ background: token.color.bg, padding: 14 }}>
                 <Stat label={item.label} value={item.value} sub={item.sub} />
@@ -197,18 +213,18 @@ export default function Home() {
           {[
             {
               icon: <Icon.Layers size={16} />,
-              title: "친숙한 블록",
-              body: (<>i32/f64 대신 <strong style={{ color: token.color.fg, fontWeight: token.font.weight.semibold }}>정수·실수·행렬</strong>. 물리학자에게 익숙한 언어로.</>),
+              title: t.feature_blocks_title,
+              body: (<>{t.feature_blocks_body_pre}<strong style={{ color: token.color.fg, fontWeight: token.font.weight.semibold }}>{t.feature_blocks_body_bold}</strong>{t.feature_blocks_body_post}</>),
             },
             {
               icon: <Icon.Zap size={16} />,
-              title: "네이티브 속도",
-              body: (<>브라우저에서 바로 <strong style={{ color: token.color.fg, fontWeight: token.font.weight.semibold }}>WebAssembly</strong>로 컴파일. 루프 수천만 회도 순식간.</>),
+              title: t.feature_speed_title,
+              body: (<>{t.feature_speed_body_pre}<strong style={{ color: token.color.fg, fontWeight: token.font.weight.semibold }}>{t.feature_speed_body_bold}</strong>{t.feature_speed_body_post}</>),
             },
             {
               icon: <Icon.Sparkle size={16} />,
-              title: "AI 동반",
-              body: (<>자연어로 설명하면 블록 프로그램을 <strong style={{ color: token.color.fg, fontWeight: token.font.weight.semibold }}>자동 생성</strong>합니다.</>),
+              title: t.feature_ai_title,
+              body: (<>{t.feature_ai_body_pre}<strong style={{ color: token.color.fg, fontWeight: token.font.weight.semibold }}>{t.feature_ai_body_bold}</strong>{t.feature_ai_body_post}</>),
             },
           ].map(card => (
             <Box key={card.title} tone="subtle" border radius="lg" p="sp6">
@@ -242,8 +258,8 @@ export default function Home() {
         display: "flex",
         justifyContent: "space-between",
       }}>
-        <Text variant="mono" tone="subtle" style={{ fontSize: token.font.size.fs11 }}>© 2026 Simulizer · AGPL-3.0</Text>
-        <Text variant="mono" tone="subtle" style={{ fontSize: token.font.size.fs11 }}>Research mode</Text>
+        <Text variant="mono" tone="subtle" style={{ fontSize: token.font.size.fs11 }}>{t.footer_copy}</Text>
+        <Text variant="mono" tone="subtle" style={{ fontSize: token.font.size.fs11 }}>{t.footer_mode}</Text>
       </footer>
     </div>
   );
