@@ -53,6 +53,8 @@ import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { getMe, getFile, saveFile, renameFile, uploadThumbnail } from "@/lib/authapi";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL;
+
 // Register Blockly locale explicitly to prevent context menu labels from being undefined
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
 
@@ -830,7 +832,7 @@ const BlocklyWasmIDE: React.FC = () => {
         formData.append("file", file);
 
         try {
-            const res = await fetch("http://localhost:8000/texocr", { method: "POST", body: formData, signal: ctrl.signal });
+            const res = await fetch(`${API_BASE}/texocr`, { method: "POST", body: formData, signal: ctrl.signal });
             const reader = res.body!.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
@@ -924,7 +926,7 @@ const BlocklyWasmIDE: React.FC = () => {
         setChatStreaming(true);
         let firstChunk = true;
 
-        fetchEventSource("http://127.0.0.1:8000/chat", {
+        fetchEventSource(`${API_BASE}/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt: chatPrompt.trim(), blockjson: blocklyJson }),
@@ -1439,7 +1441,7 @@ const BlocklyWasmIDE: React.FC = () => {
         if (!ws) return;
         const blocklyJson = JSON.stringify(Blockly.serialization.workspaces.save(ws));
         setTranslating(true);
-        fetch("http://localhost:8000/translate", {
+        fetch(`${API_BASE}/translate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ lang: watLang, code: blocklyJson }),
@@ -1601,7 +1603,7 @@ const BlocklyWasmIDE: React.FC = () => {
         const blocklyJson = JSON.stringify(Blockly.serialization.workspaces.save(ws));
         setCompiling(true);
         try {
-            const res = await fetch("http://localhost:8000/compile", {
+            const res = await fetch(`${API_BASE}/compile`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ code: blocklyJson }),
@@ -1612,7 +1614,7 @@ const BlocklyWasmIDE: React.FC = () => {
                 return;
             }
             const { uuid } = await res.json();
-            const dlRes = await fetch(`http://localhost:8000/compile/download?uuid=${uuid}`);
+            const dlRes = await fetch(`${API_BASE}/compile/download?uuid=${uuid}`);
             if (!dlRes.ok) {
                 const err = await dlRes.json().catch(() => ({ detail: dlRes.statusText }));
                 addLog("error", err.detail ?? "Download failed");

@@ -6,7 +6,7 @@ import { token } from "@/components/tokens";
 import { getMe } from "@/lib/authapi";
 import useLanguagePack from "@/hooks/useLanguagePack";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL;
 
 export default function LoginPage() {
     const router = useRouter();
@@ -139,7 +139,7 @@ export default function LoginPage() {
                 )}
 
                 <a
-                    href={`${API}/auth/google`}
+                    href={`${AUTH_URL}/auth/google`}
                     style={{
                         display: "inline-flex",
                         alignItems: "center",

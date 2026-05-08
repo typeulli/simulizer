@@ -263,7 +263,7 @@ export default function DashboardPage() {
     );
 }
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const AUTH_BASE = process.env.NEXT_PUBLIC_AUTH_URL;
 
 function FileThumbnail({ fileId }: { fileId: string }) {
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -271,7 +271,7 @@ function FileThumbnail({ fileId }: { fileId: string }) {
 
     useEffect(() => {
         let url: string | null = null;
-        fetch(`${BASE}/files/${fileId}/thumbnail`, { credentials: "include" })
+        fetch(`${AUTH_BASE}/files/${fileId}/thumbnail`, { credentials: "include" })
             .then(res => {
                 if (!res.ok) throw new Error();
                 return res.blob();

@@ -1,7 +1,7 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const AUTH_BASE = process.env.NEXT_PUBLIC_AUTH_URL;
 
 function req(path: string, init?: RequestInit) {
-    return fetch(`${BASE}${path}`, { credentials: "include", ...init });
+    return fetch(`${AUTH_BASE}${path}`, { credentials: "include", ...init });
 }
 
 function reqJson(path: string, method: string, body: object, init?: RequestInit) {
