@@ -139,7 +139,7 @@ export default function LoginPage() {
                 )}
 
                 <a
-                    href={`${AUTH_URL}/auth/google`}
+                    href={`${AUTH_URL}/auth/google?return_to=${encodeURIComponent(process.env.NEXT_PUBLIC_FRONTEND_URL ?? "")}`}
                     style={{
                         display: "inline-flex",
                         alignItems: "center",
