@@ -48,7 +48,8 @@ export interface LogEntry {
 /** 홀더가 수신할 수 있는 엔트리 유형 */
 export type HolderEntry =
     | { type: "log"; kind: LogKind; text: string; ts: number }
-    | { type: "mat"; imageUrl: string; rows: number; cols: number; ts: number };
+    | { type: "mat"; imageUrl: string; rows: number; cols: number; ts: number }
+    | { type: "graph"; data: number[]; ts: number; fixedMin?: number; fixedMax?: number };
 
 /** 로그/시각화 엔트리를 수신하는 홀더 — 시리즈 등 다양한 패널이 구현 */
 export interface LogHolder {

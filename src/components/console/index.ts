@@ -4,6 +4,7 @@ export { ProgressBarPanel } from "./panels/ProgressBar";
 export { MatShowPanel } from "./panels/MatShow";
 export { TextLogPanel } from "./panels/TextLog";
 export { SeriesPanel } from "./panels/SeriesPanel";
+export { GraphArrayPanel, buildSvg } from "./panels/GraphArray";
 export type {
     ConsolePanelRenderer,
     ConsolePanelEntry,

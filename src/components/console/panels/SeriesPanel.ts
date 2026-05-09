@@ -1,4 +1,5 @@
 import { ConsolePanelRenderer, HolderEntry, LogKind } from "../types";
+import { buildSvg } from "./GraphArray";
 
 const logStyle: Record<LogKind, { bg: string; color: string; border: string }> = {
     info:    { bg: "var(--bg-canvas)",    color: "var(--fg)",     border: "var(--accent)"         },
@@ -161,6 +162,18 @@ export class SeriesPanel implements ConsolePanelRenderer {
             this.contentEl.style.borderLeft = `3px solid ${s.border}`;
             this.contentEl.style.padding = "8px 12px";
             this.contentEl.textContent = frame.text;
+        } else if (frame.type === "graph") {
+            this.contentEl.style.background = "var(--bg-canvas)";
+            this.contentEl.style.color = "var(--fg-muted)";
+            this.contentEl.style.borderLeft = "3px solid var(--accent)";
+            this.contentEl.style.padding = "8px 12px";
+
+            const meta = document.createElement("div");
+            meta.style.cssText =
+                "font-size:10px;color:var(--fg-subtle);margin-bottom:4px;font-family:var(--font-mono)";
+            meta.textContent = `📈 Graph [${frame.data.length}]`;
+            this.contentEl.appendChild(meta);
+            this.contentEl.appendChild(buildSvg(frame.data, frame.fixedMin, frame.fixedMax));
         } else {
             // mat frame
             this.contentEl.style.background = "var(--bg-canvas)";

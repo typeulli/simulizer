@@ -924,6 +924,11 @@ export namespace simulizer {
         floor:   (v: Expr) => new UnOp(f64, "floor",   v),
         trunc:   (v: Expr) => new UnOp(f64, "trunc",   v),
         nearest: (v: Expr) => new UnOp(f64, "nearest", v),
+        // JS-imported math functions
+        exp: (v: Expr) => new Call("math_exp", [v], f64),
+        ln:  (v: Expr) => new Call("math_ln",  [v], f64),
+        cos: (v: Expr) => new Call("math_cos", [v], f64),
+        sin: (v: Expr) => new Call("math_sin", [v], f64),
         // Comparison → i32  (WAT prefix: f64, but result type is i32)
         eq: (l: Expr, r: Expr) => new BinOp(f64, "eq", l, r, i32),
         ne: (l: Expr, r: Expr) => new BinOp(f64, "ne", l, r, i32),

@@ -42,6 +42,7 @@ export const F64_BLOCKS: BlockSet = {
             ["abs", "abs"], ["−", "neg"], ["√", "sqrt"],
             ["ceil", "ceil"], ["floor", "floor"],
             ["trunc", "trunc"], ["nearest", "nearest"],
+            ["exp", "exp"], ["ln", "ln"], ["cos", "cos"], ["sin", "sin"],
         ])
         .addArgValue("VALUE", "f64")
         .expr((block, ctx) => {

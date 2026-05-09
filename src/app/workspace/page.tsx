@@ -102,17 +102,30 @@ function generateThumbnailBlob(ws: Blockly.WorkspaceSvg): Promise<Blob | null> {
     svgEl.setAttribute("width", String(thumbW));
     svgEl.setAttribute("height", String(thumbH));
 
-    // Copy defs (gradients, filters, etc.) from parent SVG
+    // Copy defs (gradients, filters, etc.) from parent SVG.
+    // Strip any elements referencing external URLs to prevent canvas taint.
+    const externalUrlRe = /url\s*\(\s*['"]?https?:\/\//i;
     const parentSvg = ws.getParentSvg();
     for (const child of Array.from(parentSvg.childNodes)) {
         const el = child as Element;
         if (el.tagName === "defs") {
-            svgEl.appendChild(child.cloneNode(true));
+            const defsClone = child.cloneNode(true) as Element;
+            for (const def of Array.from(defsClone.childNodes)) {
+                const defEl = def as Element;
+                const outer = defEl.outerHTML ?? "";
+                if (externalUrlRe.test(outer)) defsClone.removeChild(def);
+            }
+            svgEl.appendChild(defsClone);
         }
     }
 
-    // Clone canvas, then inline computed styles so fills survive img sandboxing
+    // Clone canvas, then inline computed styles so fills survive img sandboxing.
+    // Remove <foreignObject> elements — browsers unconditionally taint the canvas
+    // when an SVG containing <foreignObject> is drawn onto it.
     const canvasClone = blockCanvas.cloneNode(true) as SVGGElement;
+    for (const fo of Array.from(canvasClone.querySelectorAll("foreignObject"))) {
+        fo.parentNode?.removeChild(fo);
+    }
     inlineSvgStyles(blockCanvas, canvasClone);
     const { a, b, c, d, e, f } = ctm;
     canvasClone.setAttribute("transform", `matrix(${a},${b},${c},${d},${e},${f})`);
@@ -1004,7 +1017,7 @@ const BlocklyWasmIDE: React.FC = () => {
     const fileIdRef                 = useRef<string | null>(null);
     const autoSaveTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const { logAreaRef, addLog, addBar, setBar, clearLog, addSeries, logToHolder, visualToHolder } = useConsolePanel();
+    const { logAreaRef, addLog, addBar, setBar, clearLog, addSeries, logToHolder, visualToHolder, addGraphArray, graphToHolder } = useConsolePanel();
     const pendingRunRef = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
     const pendingBackendSwitchRef = useRef<{ previous: string } | null>(null);
     const tfBackendRef = useRef(tfBackend);
@@ -1015,6 +1028,8 @@ const BlocklyWasmIDE: React.FC = () => {
         addSeries,
         logToHolder,
         visualToHolder,
+        addGraphArray,
+        graphToHolder,
         pack,
     });
 
@@ -1030,9 +1045,11 @@ const BlocklyWasmIDE: React.FC = () => {
             addSeries,
             logToHolder,
             visualToHolder,
+            addGraphArray,
+            graphToHolder,
             pack,
         };
-    }, [addLog, addBar, setBar, addSeries, logToHolder, visualToHolder, pack]);
+    }, [addLog, addBar, setBar, addSeries, logToHolder, visualToHolder, addGraphArray, graphToHolder, pack]);
 
     const handleWorkerMessage = useCallback((e: MessageEvent<WorkerOutMsg>) => {
         const msg = e.data;
@@ -1043,6 +1060,8 @@ const BlocklyWasmIDE: React.FC = () => {
             addSeries: currentAddSeries,
             logToHolder: currentLogToHolder,
             visualToHolder: currentVisualToHolder,
+            addGraphArray: currentAddGraphArray,
+            graphToHolder: currentGraphToHolder,
             pack: currentPack,
         } = workerBindingsRef.current;
 
@@ -1083,6 +1102,11 @@ const BlocklyWasmIDE: React.FC = () => {
         if (msg.type === "visual") {
             const imageUrl = mat_data_to_image_url(new Float32Array(msg.data), msg.rows, msg.cols);
             currentVisualToHolder(msg.holderId, imageUrl, msg.rows, msg.cols);
+            return;
+        }
+
+        if (msg.type === "graph_array") {
+            currentGraphToHolder(msg.holderId, msg.data, msg.fixedMin, msg.fixedMax);
             return;
         }
 
@@ -1514,7 +1538,15 @@ const BlocklyWasmIDE: React.FC = () => {
             new simulizer.ImportDef("tensor", "tensor_set",       "func", "tensor_set",       "(param i32 i32 i32 i32 i32 i32 i32 i32 f64) (result i32)"),
             new simulizer.ImportDef("tensor", "tensor_get",       "func", "tensor_get",       "(param i32 i32 i32 i32 i32 i32 i32 i32) (result f64)"),
             new simulizer.ImportDef("debug",  "show_mat",         "func", "show_mat",         "(param i32) (result i32)"),
+            new simulizer.ImportDef("debug",  "graph_arr_i32",       "func", "graph_arr_i32",       "(param i32 i32)"),
+            new simulizer.ImportDef("debug",  "graph_arr_f64",       "func", "graph_arr_f64",       "(param i32 i32)"),
+            new simulizer.ImportDef("debug",  "graph_arr_range_i32", "func", "graph_arr_range_i32", "(param i32 i32 f64 f64)"),
+            new simulizer.ImportDef("debug",  "graph_arr_range_f64", "func", "graph_arr_range_f64", "(param i32 i32 f64 f64)"),
             new simulizer.ImportDef("tensor", "tensor_perlin",    "func", "tensor_perlin",    "(param i32 i32 i32) (result i32)"),
+            new simulizer.ImportDef("math",   "math_exp",         "func", "math_exp",         "(param f64) (result f64)"),
+            new simulizer.ImportDef("math",   "math_ln",          "func", "math_ln",          "(param f64) (result f64)"),
+            new simulizer.ImportDef("math",   "math_cos",         "func", "math_cos",         "(param f64) (result f64)"),
+            new simulizer.ImportDef("math",   "math_sin",         "func", "math_sin",         "(param f64) (result f64)"),
         ];
         for (const imp of allImports) mod.add_import(imp);
 

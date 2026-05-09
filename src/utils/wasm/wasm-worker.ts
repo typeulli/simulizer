@@ -35,6 +35,7 @@ export type WorkerOutMsg =
     | { type: "bar_set"; barId: number; val: number }
     | { type: "visual"; holderId: number; data: number[]; rows: number; cols: number }
     | { type: "visual_vec"; holderId: number; dx: number[]; dy: number[]; rows: number; cols: number }
+    | { type: "graph_array"; holderId: number; data: number[]; fixedMin?: number; fixedMax?: number }
     | { type: "result"; value: string }
     | { type: "done" }
     | { type: "error"; message: string }
@@ -112,6 +113,12 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
             post({ type: "log", holderId: currentHolderId, kind: "info", text });
 
         const imports: WebAssembly.Imports = {
+            math: {
+                math_exp: (v: number) => Math.exp(v),
+                math_ln:  (v: number) => Math.log(v),
+                math_cos: (v: number) => Math.cos(v),
+                math_sin: (v: number) => Math.sin(v),
+            },
             debug: {
                 log: (val: number) => log(`🔍 log: ${val}`),
                 log_ptr: (ptr: number) => log(`🔍 ptr: 0x${ptr.toString(16)}`),
@@ -135,6 +142,26 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
                 },
                 debug_bar_set: (barId: number, val: number) => {
                     post({ type: "bar_set", barId, val });
+                },
+                graph_arr_i32: (ptr: number, cap: number) => {
+                    if (!wasmMemory) return;
+                    const arr = simulizer.pipe.load_arr_i32(wasmMemory, ptr, cap);
+                    post({ type: "graph_array", holderId: currentHolderId, data: arr ? Array.from(arr) : [] });
+                },
+                graph_arr_f64: (ptr: number, cap: number) => {
+                    if (!wasmMemory) return;
+                    const arr = simulizer.pipe.load_arr_f64(wasmMemory, ptr, cap);
+                    post({ type: "graph_array", holderId: currentHolderId, data: arr ? Array.from(arr) : [] });
+                },
+                graph_arr_range_i32: (ptr: number, cap: number, min: number, max: number) => {
+                    if (!wasmMemory) return;
+                    const arr = simulizer.pipe.load_arr_i32(wasmMemory, ptr, cap);
+                    post({ type: "graph_array", holderId: currentHolderId, data: arr ? Array.from(arr) : [], fixedMin: min, fixedMax: max });
+                },
+                graph_arr_range_f64: (ptr: number, cap: number, min: number, max: number) => {
+                    if (!wasmMemory) return;
+                    const arr = simulizer.pipe.load_arr_f64(wasmMemory, ptr, cap);
+                    post({ type: "graph_array", holderId: currentHolderId, data: arr ? Array.from(arr) : [], fixedMin: min, fixedMax: max });
                 },
                 debug_series: (): number => {
                     const id = holderCounter++;

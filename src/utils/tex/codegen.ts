@@ -24,12 +24,11 @@ function inferNodeType(node: ASTNode, ctx: CompileCtx): simulizer.Type {
         case 'subscript': {
             const name = String(node.value);
             const indices = node.children ?? [];
-            // Single numeric-literal index → array element
-            if (indices.length === 1 && indices[0].type === 'number') {
+            if (indices.length === 1) {
                 const arr = ctx.arrays?.get(name);
                 if (arr) return arr.elem;
             }
-            // Multi-index or variable index → tensor element (always f64)
+            // Multi-index → tensor element (always f64)
             return simulizer.f64;
         }
 
@@ -101,12 +100,19 @@ function buildExpr(
             const name = String(node.value);
             const indices = node.children ?? [];
 
-            // Single constant index → array element read
-            if (indices.length === 1 && indices[0].type === 'number') {
+            // Single index → array element read (constant or expression)
+            if (indices.length === 1) {
                 const arr = ctx.arrays?.get(name);
                 if (arr) {
-                    const idx = parseInt(String(indices[0].value), 10);
-                    const elem = arr.ops.get(arr.ptr, simulizer.i32c(idx));
+                    let idxExpr: simulizer.Expr;
+                    if (indices[0].type === 'number') {
+                        idxExpr = simulizer.i32c(parseInt(String(indices[0].value), 10));
+                    } else {
+                        const built = buildExpr(indices[0], ctx, simulizer.i32);
+                        if (!built) return null;
+                        idxExpr = built;
+                    }
+                    const elem = arr.ops.get(arr.ptr, idxExpr);
                     return ctx.coerce(elem, targetType);
                 }
             }
@@ -202,14 +208,21 @@ function buildAssignment(
         const name = String(lhsNode.value);
         const indices = lhsNode.children ?? [];
 
-        // Single constant index → array element set
-        if (indices.length === 1 && indices[0].type === 'number') {
+        // Single index → array element set (constant or expression)
+        if (indices.length === 1) {
             const arr = ctx.arrays?.get(name);
             if (arr) {
-                const idx = parseInt(String(indices[0].value), 10);
+                let idxExpr: simulizer.Expr;
+                if (indices[0].type === 'number') {
+                    idxExpr = simulizer.i32c(parseInt(String(indices[0].value), 10));
+                } else {
+                    const built = buildExpr(indices[0], ctx, simulizer.i32);
+                    if (!built) return null;
+                    idxExpr = built;
+                }
                 const rhs = buildExpr(rhsNode, ctx, arr.elem);
                 if (!rhs) return null;
-                return arr.ops.set(arr.ptr, simulizer.i32c(idx), ctx.coerce(rhs, arr.elem));
+                return arr.ops.set(arr.ptr, idxExpr, ctx.coerce(rhs, arr.elem));
             }
         }
 

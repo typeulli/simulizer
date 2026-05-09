@@ -3,6 +3,7 @@ import { ProgressBarPanel } from "./panels/ProgressBar";
 import { MatShowPanel } from "./panels/MatShow";
 import { TextLogPanel } from "./panels/TextLog";
 import { SeriesPanel } from "./panels/SeriesPanel";
+import { GraphArrayPanel } from "./panels/GraphArray";
 
 class ConsolePanelRegistry {
     private registry: Map<string, ConsolePanelEntry> = new Map();
@@ -30,6 +31,11 @@ class ConsolePanelRegistry {
         this.register({
             type: "series",
             create: (id: string, config?: any) => new SeriesPanel(id, config),
+        });
+
+        this.register({
+            type: "grapharray",
+            create: (id: string, config?: any) => new GraphArrayPanel(id, config),
         });
     }
 

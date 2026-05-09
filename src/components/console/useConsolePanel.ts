@@ -125,6 +125,19 @@ export function useConsolePanel() {
     );
 
     /**
+      * 배열 그래프 패널 추가
+      */
+    const addGraphArray = useCallback(
+        (data: number[], fixedMin?: number, fixedMax?: number) => {
+            const now = Date.now();
+            const elapsed = lastLogTsRef.current ? now - lastLogTsRef.current : undefined;
+            lastLogTsRef.current = now;
+            return addPanel("grapharray", { data, elapsed, fixedMin, fixedMax });
+        },
+        [addPanel]
+    );
+
+    /**
       * holder_id → 시리즈 패널 등록 (패널 생성 후 holder로 연결)
       */
     const addSeries = useCallback(
@@ -157,6 +170,25 @@ export function useConsolePanel() {
             }
         },
         [addLog]
+    );
+
+    /**
+      * holderId 0 → 기본 GraphArray 패널, 그 외 → 등록된 holder로 라우팅
+      */
+    const graphToHolder = useCallback(
+        (holderId: number, data: number[], fixedMin?: number, fixedMax?: number) => {
+            if (holderId === 0) {
+                addGraphArray(data, fixedMin, fixedMax);
+                return;
+            }
+            const holder = holderMapRef.current.get(holderId);
+            if (holder) {
+                holder.addEntry({ type: "graph", data, ts: Date.now(), fixedMin, fixedMax });
+            } else {
+                addLog("error", `[holder ${holderId} not found] graph[${data.length}]`);
+            }
+        },
+        [addGraphArray, addLog]
     );
 
     /**
@@ -209,8 +241,10 @@ export function useConsolePanel() {
         addBar,
         setBar,
         addMatShow,
+        addGraphArray,
         addSeries,
         logToHolder,
+        graphToHolder,
         visualToHolder,
         clearLog,
     };

@@ -161,7 +161,14 @@ function flattenOperators(node: ASTNode): ASTNode {
     let pos = 0;
 
     function climb(minPrec: number): ASTNode {
+        if (pos >= children.length) return { type: 'number', value: '0' };
         let lhs = children[pos++];
+
+        // Unary minus: if lhs is itself an operator node, treat as negation
+        if (lhs && lhs.type === 'operator' && lhs.value === '-' && !lhs.children && pos < children.length) {
+            const operand = climb(4); // higher than any binary prec
+            lhs = { type: 'operator', value: '-', children: [{ type: 'number', value: '0' }, operand] };
+        }
 
         while (pos < children.length) {
             const opNode = children[pos];

@@ -60,6 +60,86 @@ export const DEBUG_BLOCKS: BlockSet = {
             // pointer → log_ptr (i32로 coerce)
             return new simulizer.Call("log_ptr", [ctx.coerce(val, simulizer.i32)], simulizer.void_);
         }),
+    DEBUG_GRAPH_ARRAY: new BlockBuilder("debug_graph_array", undefined, 0, "배열 그래프 출력", false)
+        .addBody("graph %1")
+        .addArgValue("VALUE", ["i32*", "f64*"])
+        .stmt((block, ctx) => {
+            const valBlock = block.getInputTargetBlock("VALUE");
+            if (!valBlock) return null;
+
+            if (valBlock.type === "local_array_get_i32" || valBlock.type === "local_array_get_f64") {
+                const isI32 = valBlock.type === "local_array_get_i32";
+                const arrName = valBlock.getFieldValue("NAME") as string;
+                const arrInfo = ctx.arrays?.get(arrName);
+                const sizeArg = arrInfo?.sizeLocal
+                    ? arrInfo.sizeLocal
+                    : simulizer.i32c(arrInfo?.def.capacity ?? 0);
+                const val = ctx.blockToExpr(valBlock, ctx);
+                if (!val) return null;
+                const fnName = isI32 ? "graph_arr_i32" : "graph_arr_f64";
+                return new simulizer.Call(fnName, [ctx.coerce(val, simulizer.i32), ctx.coerce(sizeArg, simulizer.i32)], simulizer.void_);
+            }
+
+            if (valBlock.type === "array_literal_i32" || valBlock.type === "array_literal_f64") {
+                const isI32 = valBlock.type === "array_literal_i32";
+                const capacity = Math.max(1, parseInt(valBlock.getFieldValue("SIZE") || "1", 10));
+                const val = ctx.blockToExpr(valBlock, ctx);
+                if (!val) return null;
+                const fnName = isI32 ? "graph_arr_i32" : "graph_arr_f64";
+                return new simulizer.Call(fnName, [ctx.coerce(val, simulizer.i32), simulizer.i32c(capacity)], simulizer.void_);
+            }
+
+            return null;
+        }),
+    DEBUG_GRAPH_ARRAY_RANGE: new BlockBuilder("debug_graph_array_range", undefined, 0, "배열 그래프 출력 (범위 고정)", false)
+        .addBody("graph %1 min:%2 max:%3")
+        .addArgValue("VALUE", ["i32*", "f64*"])
+        .addArgValue("MIN", "f64")
+        .addArgValue("MAX", "f64")
+        .stmt((block, ctx) => {
+            const valBlock = block.getInputTargetBlock("VALUE");
+            const minBlock = block.getInputTargetBlock("MIN");
+            const maxBlock = block.getInputTargetBlock("MAX");
+            if (!valBlock || !minBlock || !maxBlock) return null;
+
+            const minExpr = ctx.blockToExpr(minBlock, ctx);
+            const maxExpr = ctx.blockToExpr(maxBlock, ctx);
+            if (!minExpr || !maxExpr) return null;
+
+            if (valBlock.type === "local_array_get_i32" || valBlock.type === "local_array_get_f64") {
+                const isI32 = valBlock.type === "local_array_get_i32";
+                const arrName = valBlock.getFieldValue("NAME") as string;
+                const arrInfo = ctx.arrays?.get(arrName);
+                const sizeArg = arrInfo?.sizeLocal
+                    ? arrInfo.sizeLocal
+                    : simulizer.i32c(arrInfo?.def.capacity ?? 0);
+                const val = ctx.blockToExpr(valBlock, ctx);
+                if (!val) return null;
+                const fnName = isI32 ? "graph_arr_range_i32" : "graph_arr_range_f64";
+                return new simulizer.Call(fnName, [
+                    ctx.coerce(val, simulizer.i32),
+                    ctx.coerce(sizeArg, simulizer.i32),
+                    ctx.coerce(minExpr, simulizer.f64),
+                    ctx.coerce(maxExpr, simulizer.f64),
+                ], simulizer.void_);
+            }
+
+            if (valBlock.type === "array_literal_i32" || valBlock.type === "array_literal_f64") {
+                const isI32 = valBlock.type === "array_literal_i32";
+                const capacity = Math.max(1, parseInt(valBlock.getFieldValue("SIZE") || "1", 10));
+                const val = ctx.blockToExpr(valBlock, ctx);
+                if (!val) return null;
+                const fnName = isI32 ? "graph_arr_range_i32" : "graph_arr_range_f64";
+                return new simulizer.Call(fnName, [
+                    ctx.coerce(val, simulizer.i32),
+                    simulizer.i32c(capacity),
+                    ctx.coerce(minExpr, simulizer.f64),
+                    ctx.coerce(maxExpr, simulizer.f64),
+                ], simulizer.void_);
+            }
+
+            return null;
+        }),
     DEBUG_SERIES: new BlockBuilder("debug_series", "i32", 0, "시리즈 패널 생성 (holder_id 반환)")
         .addBody("series")
         .expr((_block, _ctx) => {
@@ -108,6 +188,11 @@ export function xmlDebugBlocks(cat: string) {
     <sep gap="16"></sep>
     <label text="Debug"></label>
     <block type="debug_log"><value name="VALUE"><block type="i32_const"></block></value></block>
+    <block type="debug_graph_array"></block>
+    <block type="debug_graph_array_range">
+        <value name="MIN"><block type="f64_const"><field name="VALUE">0</field></block></value>
+        <value name="MAX"><block type="f64_const"><field name="VALUE">1</field></block></value>
+    </block>
     <block type="debug_log"><value name="VALUE"><block type="vec2_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value></block></value></block>
     <block type="debug_log"><value name="VALUE"><block type="vec3_literal"><value name="X"><block type="f64_const"></block></value><value name="Y"><block type="f64_const"></block></value><value name="Z"><block type="f64_const"></block></value></block></value></block>
     <block type="debug_series"></block>
