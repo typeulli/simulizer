@@ -47,6 +47,7 @@ import { xmlVectorBlocks } from "@/utils/blockly/vector";
 import { xmlBoundaryBlocks } from "@/utils/blockly/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
+import { replaceLatexBlocksInWorkspace } from "@/utils/tex/blockgen";
 import { Prism } from "react-syntax-highlighter";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
@@ -1463,7 +1464,9 @@ const BlocklyWasmIDE: React.FC = () => {
         }
         const ws = workspaceRef.current;
         if (!ws) return;
-        const blocklyJson = JSON.stringify(Blockly.serialization.workspaces.save(ws));
+        const rawSave = Blockly.serialization.workspaces.save(ws);
+        const processedSave = replaceLatexBlocksInWorkspace(rawSave);
+        const blocklyJson = JSON.stringify(processedSave);
         setTranslating(true);
         fetch(`${API_BASE}/translate`, {
             method: "POST",
@@ -1632,7 +1635,9 @@ const BlocklyWasmIDE: React.FC = () => {
     const handleCompile = useCallback(async () => {
         const ws = workspaceRef.current;
         if (!ws || compiling) return;
-        const blocklyJson = JSON.stringify(Blockly.serialization.workspaces.save(ws));
+        const rawSave = Blockly.serialization.workspaces.save(ws);
+        const processedSave = replaceLatexBlocksInWorkspace(rawSave);
+        const blocklyJson = JSON.stringify(processedSave);
         setCompiling(true);
         try {
             const res = await fetch(`${API_BASE}/compile`, {

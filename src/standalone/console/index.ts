@@ -8,6 +8,7 @@ export interface ConsoleInstance {
     addMatShow(rows: number, cols: number, imageUrl: string): PanelHandle | null;
     addSeries(holderId: number): void;
     logToHolder(holderId: number, kind: LogKind, text: string): void;
+    graphToHolder(holderId: number, data: number[], fixedMin?: number, fixedMax?: number): void;
     visualToHolder(holderId: number, imageUrl: string, rows: number, cols: number): void;
     clear(): void;
 }
@@ -97,6 +98,19 @@ function createConsoleInstance(area: HTMLElement): ConsoleInstance {
         else addLog("error", `[holder ${holderId} not found] ${text}`);
     }
 
+    function graphToHolder(holderId: number, data: number[], fixedMin?: number, fixedMax?: number): void {
+        if (holderId === 0) {
+            const now = Date.now();
+            const elapsed = lastLogTs ? now - lastLogTs : undefined;
+            lastLogTs = now;
+            addPanel("grapharray", { data, elapsed, fixedMin, fixedMax });
+            return;
+        }
+        const holder = holders.get(holderId);
+        if (holder) holder.addEntry({ type: "graph", data, ts: Date.now(), fixedMin, fixedMax });
+        else addLog("error", `[holder ${holderId} not found] graph[${data.length}]`);
+    }
+
     function visualToHolder(holderId: number, imageUrl: string, rows: number, cols: number): void {
         if (holderId === 0) { addMatShow(rows, cols, imageUrl); return; }
         const holder = holders.get(holderId);
@@ -121,7 +135,7 @@ function createConsoleInstance(area: HTMLElement): ConsoleInstance {
 
     clear();
 
-    return { addLog, addBar, setBar, addMatShow, addSeries, logToHolder, visualToHolder, clear };
+    return { addLog, addBar, setBar, addMatShow, addSeries, logToHolder, graphToHolder, visualToHolder, clear };
 }
 
 export const SimulizerConsole = {
