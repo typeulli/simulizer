@@ -26,7 +26,11 @@ export function useUser() {
     const [loading, setLoading] = useState(cachedUser === null);
 
     useEffect(() => {
-        if (cachedUser) return;
+        if (cachedUser !== null) {
+            setUser(cachedUser);
+            setLoading(false);
+            return;
+        }
         fetchUser().then(u => { setUser(u); setLoading(false); });
     }, []);
 

@@ -1,7 +1,13 @@
 const AUTH_BASE = process.env.NEXT_PUBLIC_AUTH_URL;
 
 function req(path: string, init?: RequestInit) {
-    return fetch(`${AUTH_BASE}${path}`, { credentials: "include", ...init });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    return fetch(`${AUTH_BASE}${path}`, {
+        credentials: "include",
+        signal: controller.signal,
+        ...init,
+    }).finally(() => clearTimeout(timer));
 }
 
 function reqJson(path: string, method: string, body: object, init?: RequestInit) {

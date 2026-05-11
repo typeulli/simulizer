@@ -19,7 +19,8 @@ export default function LoginPage() {
 
     useEffect(() => {
         getMe().then(() => router.replace("/dashboard")).catch(() => {});
-    }, [router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const errorMessage: Record<string, string> = {
         oauth_denied:         t.error_oauth_denied,

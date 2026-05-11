@@ -831,6 +831,7 @@ const BlocklyWasmIDE: React.FC = () => {
     const chatDiffDivRef                        = useRef<HTMLDivElement>(null);
     const chatDiffWsRef                         = useRef<Blockly.WorkspaceSvg | null>(null);
     const runStartedAtRef                      = useRef<number | null>(null);
+    const multiSelectedRef                     = useRef<Set<string>>(new Set());
 
     const handleLatexOcr = useCallback(async (file: File) => {
         ocrAbortRef.current?.abort();
@@ -1015,6 +1016,7 @@ const BlocklyWasmIDE: React.FC = () => {
     const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved" | "error">("saved");
     const wsReadyRef                = useRef(false);
     const pendingContentRef         = useRef<string | null>(null);
+    const fileLoadCompletedRef      = useRef(false);
     const fileIdRef                 = useRef<string | null>(null);
     const autoSaveTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1278,17 +1280,177 @@ const BlocklyWasmIDE: React.FC = () => {
         };
         ws.addChangeListener(handleBlockChange);
 
+        // ── Multi-select: Shift+click (toggle) + Shift/RightButton-drag (rubber-band) ──
+        const clearMultiSelect = () => {
+            for (const id of multiSelectedRef.current) {
+                const blk = ws.getBlockById(id) as Blockly.BlockSvg | null;
+                if (blk) blk.removeSelect();
+            }
+            multiSelectedRef.current.clear();
+        };
+
+        const addToMultiSelect = (block: Blockly.BlockSvg) => {
+            block.addSelect();
+            multiSelectedRef.current.add(block.id);
+        };
+
+        const removeFromMultiSelect = (block: Blockly.BlockSvg) => {
+            block.removeSelect();
+            multiSelectedRef.current.delete(block.id);
+        };
+
+        const blockAtPointer = (e: PointerEvent): Blockly.BlockSvg | null => {
+            const el = (e.target as Element).closest(".blocklyDraggable");
+            if (!el) return null;
+            return (ws.getAllBlocks(false).find(
+                b => (b as Blockly.BlockSvg).getSvgRoot() === el
+            ) as Blockly.BlockSvg | null) ?? null;
+        };
+
+        const wsSvg = ws.getParentSvg();
+
+        const onMultiDown = (e: PointerEvent) => {
+            const targetEl = e.target as Element;
+            if (targetEl.closest(".blocklyFlyout") ||
+                targetEl.closest(".blocklyScrollbar") ||
+                targetEl.closest(".blocklyZoom") ||
+                targetEl.closest(".blocklyTrash")) return;
+
+            const isRightDrag = e.button === 2;
+
+            if (!e.shiftKey && !isRightDrag) {
+                clearMultiSelect();
+                return;
+            }
+
+            const draggable = targetEl.closest(".blocklyDraggable");
+            if (draggable) {
+                // 우클릭이 블록 위에서 시작되면 Blockly 컨텍스트 메뉴를 그대로 둠
+                if (isRightDrag) return;
+                // Shift + 블록 클릭: 토글
+                e.preventDefault();
+                e.stopPropagation();
+                const block = blockAtPointer(e);
+                if (!block) return;
+                if (multiSelectedRef.current.has(block.id)) {
+                    removeFromMultiSelect(block);
+                } else {
+                    addToMultiSelect(block);
+                }
+                return;
+            }
+
+            // 빈 공간에서 Shift 또는 우클릭 드래그: 러버밴드
+            e.preventDefault();
+            e.stopPropagation();
+            wsSvg.setPointerCapture(e.pointerId);
+
+            const svgRect = wsSvg.getBoundingClientRect();
+            const sx = e.clientX - svgRect.left;
+            const sy = e.clientY - svgRect.top;
+
+            const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            band.style.cssText = "fill:rgba(99,102,241,0.08);stroke:rgba(99,102,241,0.7);stroke-width:1px;stroke-dasharray:4 2;pointer-events:none;";
+            band.setAttribute("x", String(sx));
+            band.setAttribute("y", String(sy));
+            band.setAttribute("width", "0");
+            band.setAttribute("height", "0");
+            wsSvg.appendChild(band);
+
+            let dragged = false;
+
+            const onContextMenu = (ce: Event) => {
+                if (dragged) {
+                    ce.preventDefault();
+                    ce.stopPropagation();
+                }
+                wsSvg.removeEventListener("contextmenu", onContextMenu, { capture: true });
+            };
+            if (isRightDrag) {
+                wsSvg.addEventListener("contextmenu", onContextMenu, { capture: true });
+            }
+
+            const onBandMove = (me: PointerEvent) => {
+                const cx = me.clientX - svgRect.left;
+                const cy = me.clientY - svgRect.top;
+                if (!dragged && (Math.abs(cx - sx) > 4 || Math.abs(cy - sy) > 4)) dragged = true;
+                band.setAttribute("x", String(Math.min(cx, sx)));
+                band.setAttribute("y", String(Math.min(cy, sy)));
+                band.setAttribute("width", String(Math.abs(cx - sx)));
+                band.setAttribute("height", String(Math.abs(cy - sy)));
+            };
+
+            const onBandUp = (ue: PointerEvent) => {
+                wsSvg.removeEventListener("pointermove", onBandMove, { capture: true });
+                wsSvg.removeEventListener("pointerup", onBandUp, { capture: true });
+                band.remove();
+
+                const ex = ue.clientX - svgRect.left;
+                const ey = ue.clientY - svgRect.top;
+                if (Math.abs(ex - sx) < 4 && Math.abs(ey - sy) < 4) return;
+
+                const wsA = Blockly.utils.svgMath.screenToWsCoordinates(
+                    ws, new Blockly.utils.Coordinate(e.clientX, e.clientY)
+                );
+                const wsB = Blockly.utils.svgMath.screenToWsCoordinates(
+                    ws, new Blockly.utils.Coordinate(ue.clientX, ue.clientY)
+                );
+                const selL = Math.min(wsA.x, wsB.x), selR = Math.max(wsA.x, wsB.x);
+                const selT = Math.min(wsA.y, wsB.y), selB = Math.max(wsA.y, wsB.y);
+
+                clearMultiSelect();
+                for (const block of ws.getAllBlocks(false)) {
+                    const r = (block as Blockly.BlockSvg).getBoundingRectangleWithoutChildren();
+                    if (r.right > selL && r.left < selR && r.bottom > selT && r.top < selB) {
+                        addToMultiSelect(block as Blockly.BlockSvg);
+                    }
+                }
+            };
+
+            wsSvg.addEventListener("pointermove", onBandMove, { capture: true });
+            wsSvg.addEventListener("pointerup", onBandUp, { capture: true });
+        };
+
+        wsSvg.addEventListener("pointerdown", onMultiDown, { capture: true });
+
+        const onBlockDelete = (event: Blockly.Events.Abstract) => {
+            if (event.type !== "block_delete") return;
+            for (const id of [...multiSelectedRef.current]) {
+                if (!ws.getBlockById(id)) multiSelectedRef.current.delete(id);
+            }
+        };
+        ws.addChangeListener(onBlockDelete);
+
+        const onMultiKeyDown = (e: KeyboardEvent) => {
+            if (multiSelectedRef.current.size === 0) return;
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            const target = e.target as HTMLElement;
+            if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+            e.preventDefault();
+            e.stopPropagation();
+            Blockly.Events.setGroup(true);
+            for (const id of [...multiSelectedRef.current]) {
+                const blk = ws.getBlockById(id) as Blockly.BlockSvg | null;
+                if (blk) blk.dispose(false);
+            }
+            Blockly.Events.setGroup(false);
+            multiSelectedRef.current.clear();
+        };
+        document.addEventListener("keydown", onMultiKeyDown, { capture: true });
+
         wsReadyRef.current = true;
-        if (pendingContentRef.current) {
-            try {
-                const state = JSON.parse(pendingContentRef.current);
-                Blockly.serialization.workspaces.load(state, ws);
-            } catch {
+        if (fileLoadCompletedRef.current) {
+            if (pendingContentRef.current) {
+                try {
+                    const state = JSON.parse(pendingContentRef.current);
+                    Blockly.serialization.workspaces.load(state, ws);
+                } catch {
+                    Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
+                }
+                pendingContentRef.current = null;
+            } else {
                 Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
             }
-            pendingContentRef.current = null;
-        } else {
-            Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
         }
 
         const slimToolboxBars = () => {
@@ -1313,6 +1475,10 @@ const BlocklyWasmIDE: React.FC = () => {
         return () => {
             if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
             ws.removeChangeListener(handleBlockChange);
+            ws.removeChangeListener(onBlockDelete);
+            wsSvg.removeEventListener("pointerdown", onMultiDown, { capture: true });
+            document.removeEventListener("keydown", onMultiKeyDown, { capture: true });
+            multiSelectedRef.current.clear();
             barObserver.disconnect();
             ws.dispose();
         };
@@ -1964,6 +2130,7 @@ const BlocklyWasmIDE: React.FC = () => {
             const isEmpty = f.content.trim() === "{}";
             const content = isEmpty ? null : f.content;
             setBlockData(f.content);
+            fileLoadCompletedRef.current = true;
             if (wsReadyRef.current) {
                 const ws = workspaceRef.current;
                 if (ws) {
