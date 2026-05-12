@@ -51,43 +51,28 @@ export async function GET(
       targetCode = parseLanguageHeader(acceptLanguage);
     }
 
-    // Dynamically import the language file from the lang folder
-    try {
-      const langModule = await import(`@/lang/${targetCode}`);
-      const langData = langModule.default;
-      
-      const etag = `"${createHash("md5").update(JSON.stringify(langData)).digest("hex")}"`;
-      const ifNoneMatch = request.headers.get("if-none-match");
+    const langModules: Record<string, () => Promise<{ default: unknown }>> = {
+      en: () => import("@/lang/en"),
+      ko: () => import("@/lang/ko"),
+    };
 
-      if (ifNoneMatch === etag) {
-        return new NextResponse(null, { status: 304, headers: { ETag: etag } });
-      }
+    const loader = langModules[targetCode] ?? langModules["en"];
+    const langModule = await loader();
+    const langData = langModule.default;
 
-      return NextResponse.json(langData, {
-        headers: {
-          "Content-Type": "application/json",
-          ETag: etag,
-        },
-      });
-    } catch (error) {
-      // Fallback to 'en' if the requested language is not available
-      const langModule = await import("@/lang/en");
-      const langData = langModule.default;
+    const etag = `"${createHash("md5").update(JSON.stringify(langData)).digest("hex")}"`;
+    const ifNoneMatch = request.headers.get("if-none-match");
 
-      const etag = `"${createHash("md5").update(JSON.stringify(langData)).digest("hex")}"`;
-      const ifNoneMatch = request.headers.get("if-none-match");
-
-      if (ifNoneMatch === etag) {
-        return new NextResponse(null, { status: 304, headers: { ETag: etag } });
-      }
-
-      return NextResponse.json(langData, {
-        headers: {
-          "Content-Type": "application/json",
-          ETag: etag,
-        },
-      });
+    if (ifNoneMatch === etag) {
+      return new NextResponse(null, { status: 304, headers: { ETag: etag } });
     }
+
+    return NextResponse.json(langData, {
+      headers: {
+        "Content-Type": "application/json",
+        ETag: etag,
+      },
+    });
   } catch (error) {
     console.error("Language pack error:", error);
     return NextResponse.json(
