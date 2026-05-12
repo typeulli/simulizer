@@ -1,5 +1,5 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Logo } from "@/components/atoms/Logo";
 import { token } from "@/components/tokens";
@@ -8,7 +8,7 @@ import useLanguagePack from "@/hooks/useLanguagePack";
 
 const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL;
 
-export default function LoginPage() {
+function LoginContent() {
     const router = useRouter();
     const [, , pack] = useLanguagePack();
     const t = pack.login;
@@ -178,6 +178,14 @@ export default function LoginPage() {
                 </p>
             </div>
         </div>
+    );
+}
+
+export default function LoginPage() {
+    return (
+        <Suspense>
+            <LoginContent />
+        </Suspense>
     );
 }
 
