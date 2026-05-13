@@ -1357,6 +1357,8 @@ const BlocklyWasmIDE: React.FC = () => {
             }
 
             // 빈 공간에서 Shift 또는 우클릭 드래그: 러버밴드
+            // 우클릭은 OS/Blockly 컨텍스트 메뉴를 pointerdown 시점부터 차단하고,
+            // 이동거리가 없으면 pointerup에서 직접 Blockly 메뉴를 띄운다.
             e.preventDefault();
             e.stopPropagation();
             wsSvg.setPointerCapture(e.pointerId);
@@ -1375,12 +1377,10 @@ const BlocklyWasmIDE: React.FC = () => {
 
             let dragged = false;
 
+            // 우클릭 제스처 동안 네이티브 컨텍스트 메뉴는 항상 차단
             const onContextMenu = (ce: Event) => {
-                if (dragged) {
-                    ce.preventDefault();
-                    ce.stopPropagation();
-                }
-                wsSvg.removeEventListener("contextmenu", onContextMenu, { capture: true });
+                ce.preventDefault();
+                ce.stopPropagation();
             };
             if (isRightDrag) {
                 wsSvg.addEventListener("contextmenu", onContextMenu, { capture: true });
@@ -1401,8 +1401,24 @@ const BlocklyWasmIDE: React.FC = () => {
                 wsSvg.removeEventListener("pointerup", onBandUp, { capture: true });
                 band.remove();
 
+                // pointerup 직후에도 contextmenu가 한 번 더 발사될 수 있어 다음 틱까지 유지
+                if (isRightDrag) {
+                    setTimeout(() => {
+                        wsSvg.removeEventListener("contextmenu", onContextMenu, { capture: true });
+                    }, 0);
+                }
+
                 const ex = ue.clientX - svgRect.left;
                 const ey = ue.clientY - svgRect.top;
+
+                if (!dragged) {
+                    // 단순 우클릭: Blockly 워크스페이스 컨텍스트 메뉴를 직접 표시
+                    if (isRightDrag) {
+                        try { (ws as any).showContextMenu?.(ue); } catch {}
+                    }
+                    return;
+                }
+
                 if (Math.abs(ex - sx) < 4 && Math.abs(ey - sy) < 4) return;
 
                 const wsA = Blockly.utils.svgMath.screenToWsCoordinates(
