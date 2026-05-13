@@ -5,6 +5,7 @@ import { token } from "@/components/tokens";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
 import { Spinner } from "@/components/atoms/Spinner";
+import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,11 +39,11 @@ function StepBar({ current }: { current: Mode }) {
                 flexShrink: 0,
             }}
         >
-            <div style={{ display: "flex", alignItems: "center", gap: token.space.sp2 }}>
-                <Icon.Layers size={16} />
-                <span style={{ fontWeight: token.font.weight.semibold, fontSize: token.font.size.fs14, letterSpacing: "-0.01em" }}>
-                    Object Tracker
-                </span>
+            <TopbarBrand />
+            <span style={{ color: token.color.fgSubtle, fontWeight: 300 }}>/</span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", borderRadius: token.radius.sm, color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>
+                <Icon.Layers size={12} />
+                <span>Object Tracker</span>
             </div>
 
             <div style={{ width: 1, height: 18, background: token.color.border, marginLeft: token.space.sp2, marginRight: token.space.sp3 }} />

@@ -7,13 +7,12 @@ import { Modal, ModalBody } from "@/components/organisms/Modal";
 import { token } from "@/components/tokens";
 import langpack from "@/lang/lang";
 
-type BlockMode = "export" | "import" | "wat";
+type BlockMode = "export" | "import";
 
 interface BlockManagerModalProps {
     open: boolean;
     mode: BlockMode;
     blockData: string;
-    watSource: string;
     fileInputRef: React.RefObject<HTMLInputElement | null>;
     pack: langpack;
     onClose: () => void;
@@ -30,7 +29,6 @@ export function BlockManagerModal({
     open,
     mode,
     blockData,
-    watSource,
     fileInputRef,
     pack,
     onClose,
@@ -51,7 +49,6 @@ export function BlockManagerModal({
                     {([
                         { mode: "export" as const, label: pack.workspace.ui.export_button, icon: <Icon.File size={11} /> },
                         { mode: "import" as const, label: pack.workspace.ui.import_button, icon: <Icon.Layers size={11} /> },
-                        ...(watSource ? [{ mode: "wat" as const, label: pack.workspace.ui.wat_button, icon: <Icon.Terminal size={11} /> }] : []),
                     ]).map(({ mode: nextMode, label, icon }) => (
                         <button
                             key={nextMode}
@@ -97,10 +94,6 @@ export function BlockManagerModal({
                             style={{ flex: 1, margin: 0, padding: 16, fontSize: token.font.size.fs11, color: token.color.fg, lineHeight: 1.7, background: token.color.bgCanvas, border: "none", outline: "none", resize: "none", fontFamily: token.font.family.mono, minHeight: 300 }}
                         />
                     </>
-                )}
-
-                {mode === "wat" && (
-                    <pre style={{ overflow: "auto", flex: 1, margin: 0, padding: 16, fontSize: token.font.size.fs12, color: token.color.fg, lineHeight: 1.7, whiteSpace: "pre", fontFamily: token.font.family.mono, background: token.color.bgCanvas, minHeight: 300 }}>{watSource}</pre>
                 )}
             </ModalBody>
         </Modal>

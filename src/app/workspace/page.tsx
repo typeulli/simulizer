@@ -16,7 +16,7 @@ import {
 import { xmlArrayBlocks, registerDynamicArrayBlocks, compileArrayLiteralBlock } from "@/utils/blockly/array";
 import { xmlBoolBlocks } from "@/utils/blockly/bool";
 import { xmlDebugBlocks } from "@/utils/blockly/debug";
-import { xmlLatexBlocks } from "@/utils/blockly/latex";
+import { xmlUtilBlocks } from "@/utils/blockly/util";
 import { xmlI32Blocks } from "@/utils/blockly/i32";
 import { xmlLocalBlocks } from "@/utils/blockly/locals";
 import { xmlTensorBlocks, registerDynamicTensorBlocks } from "@/utils/blockly/tensor";
@@ -669,7 +669,7 @@ function buildBaseToolboxXml(p: langpack): string {
     ${xmlTensorBlocks(tb.tensor)}
     ${xmlVectorBlocks(tb.vector)}
     ${xmlBoundaryBlocks(tb.boundary, tb.boundary_btn)}
-    ${xmlLatexBlocks("LaTeX")}
+    ${xmlUtilBlocks("LaTeX")}
     <category name="${tb.cast}" colour="${45}">
         <sep gap="16"></sep>
         <label text="Cast"></label>
@@ -816,6 +816,8 @@ const BlocklyWasmIDE: React.FC = () => {
 
     const [showChatPopover, setShowChatPopover] = useState(false);
     const chatPopoverRef                        = useRef<HTMLDivElement>(null);
+    const [showToolsMenu, setShowToolsMenu]     = useState(false);
+    const toolsMenuRef                          = useRef<HTMLDivElement>(null);
     const [canvasTab, setCanvasTab]             = useState<"blocks" | "wat" | "ai">("blocks");
     const [watLang, setWatLang]                 = useState<"wat" | "cpp">("wat");
     const [translatedSource, setTranslatedSource] = useState<string | null>(null);
@@ -1006,7 +1008,7 @@ const BlocklyWasmIDE: React.FC = () => {
 
     const [showBlocks, setShowBlocks] = useState(false);
     const [blockData, setBlockData]   = useState<string>("");
-    const [blockMode, setBlockMode]   = useState<"export" | "import" | "wat">("export");
+    const [blockMode, setBlockMode]   = useState<"export" | "import">("export");
     const fileInputRef                = useRef<HTMLInputElement>(null);
     const [lang, , pack, langReady]   = useLanguagePack();
 
@@ -1202,8 +1204,8 @@ const BlocklyWasmIDE: React.FC = () => {
 
     // Initialize Blockly
     useEffect(() => {
-        registerDynamicTensorBlocks();
-        registerDynamicArrayBlocks();
+        registerDynamicTensorBlocks(pack);
+        registerDynamicArrayBlocks(pack);
         buildCustomBlockDefs(pack).forEach((def) => {
             const d = def as { type: string };
             if (!Blockly.Blocks[d.type]) {
@@ -1279,6 +1281,20 @@ const BlocklyWasmIDE: React.FC = () => {
             }, 2000);
         };
         ws.addChangeListener(handleBlockChange);
+
+        const flyout = ws.getFlyout();
+        if (flyout) {
+            (flyout as any).getFlyoutScale = () => 0.75;
+        }
+        const keepFlyoutScale = (e: Blockly.Events.Abstract) => {
+            if (e.type !== Blockly.Events.VIEWPORT_CHANGE) return;
+            const fl = ws.getFlyout();
+            if (!fl) return;
+            const flyoutWs = fl.getWorkspace() as Blockly.WorkspaceSvg | null;
+            if (flyoutWs && flyoutWs.scale !== 1) flyoutWs.setScale(1);
+            (fl as any).reflow?.();
+        };
+        ws.addChangeListener(keepFlyoutScale);
 
         // ── Multi-select: Shift+click (toggle) + Shift/RightButton-drag (rubber-band) ──
         const clearMultiSelect = () => {
@@ -1507,8 +1523,8 @@ const BlocklyWasmIDE: React.FC = () => {
             };
         });
         // Restore dynamic blocks that were overwritten above
-        registerDynamicTensorBlocks();
-        registerDynamicArrayBlocks();
+        registerDynamicTensorBlocks(pack);
+        registerDynamicArrayBlocks(pack);
         const savedState = Blockly.serialization.workspaces.save(ws);
         ws.clear();
         Blockly.serialization.workspaces.load(savedState, ws);
@@ -1533,6 +1549,18 @@ const BlocklyWasmIDE: React.FC = () => {
         document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
     }, [showChatPopover]);
+
+    // Dismiss tools menu on outside click
+    useEffect(() => {
+        if (!showToolsMenu) return;
+        const handler = (e: MouseEvent) => {
+            if (toolsMenuRef.current && !toolsMenuRef.current.contains(e.target as Node)) {
+                setShowToolsMenu(false);
+            }
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, [showToolsMenu]);
 
     // Clear Blockly selection when clicking outside the workspace pane.
     useEffect(() => {
@@ -1586,8 +1614,8 @@ const BlocklyWasmIDE: React.FC = () => {
         tree.forEach((blk: any, i: number) => { blk.x = 40; blk.y = 40 + i * 400; });
 
         // Register dynamic blocks before loading to ensure block definitions exist
-        registerDynamicTensorBlocks();
-        registerDynamicArrayBlocks();
+        registerDynamicTensorBlocks(pack);
+        registerDynamicArrayBlocks(pack);
 
         try {
             Blockly.serialization.workspaces.load(
@@ -2450,21 +2478,33 @@ const BlocklyWasmIDE: React.FC = () => {
                                 </button>
                             ))}
                         </div>
-                        {/* Right: shortcuts */}
-                        <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:4 }}>
-                            <span style={{ fontSize:token.font.size.fs10, color:token.color.fgSubtle, fontWeight:500, letterSpacing:"0.06em", textTransform:"uppercase", marginRight:4 }}>{pack.workspace.ui.shortcuts_label}</span>
-                            {([
-                                { label: pack.workspace.ui.shortcut_boundary_2d, icon:<Icon.Grid size={11} />,   href:"/boundary/2d" },
-                                { label: pack.workspace.ui.shortcut_boundary_3d, icon:<Icon.Layers size={11} />, href:"/boundary/3d" },
-                            ] as const).map(({ label, icon, href }) => (
-                                <button key={href} onClick={() => router.push(href)}
-                                    style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"4px 9px", border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, background:"none", cursor:"pointer", color:token.color.fgMuted, fontSize:token.font.size.fs11, fontWeight:500, transition:"all 0.1s" }}
-                                    onMouseEnter={e => { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = token.color.fgMuted; }}
-                                >
-                                    {icon}{label}
-                                </button>
-                            ))}
+                        {/* Right: tools dropdown */}
+                        <div style={{ marginLeft:"auto", position:"relative" }} ref={toolsMenuRef}>
+                            <button onClick={() => setShowToolsMenu(o => !o)}
+                                style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"4px 9px", border:`1px solid ${showToolsMenu ? token.color.fg : token.color.border}`, borderRadius:token.radius.sm, background: showToolsMenu ? token.color.bgSubtle : "none", cursor:"pointer", color: showToolsMenu ? token.color.fg : token.color.fgMuted, fontSize:token.font.size.fs11, fontWeight:500, transition:"all 0.1s" }}
+                                onMouseEnter={e => { if (!showToolsMenu) { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; } }}
+                                onMouseLeave={e => { if (!showToolsMenu) { e.currentTarget.style.background = "none"; e.currentTarget.style.color = token.color.fgMuted; } }}
+                            >
+                                <Icon.Settings size={11} />{pack.workspace.ui.tools_label}
+                                <span style={{ fontSize:9, marginLeft:2, opacity:0.7 }}>▾</span>
+                            </button>
+                            {showToolsMenu && (
+                                <div style={{ position:"absolute", top:"calc(100% + 4px)", right:0, minWidth:170, background:token.color.bgRaised, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, boxShadow:"0 4px 12px rgba(0,0,0,0.25)", padding:4, zIndex:20, display:"flex", flexDirection:"column", gap:1 }}>
+                                    {([
+                                        { label: pack.workspace.ui.tool_boundary_2d, icon:<Icon.Grid size={12} />,   href:"/tools/boundary/2d" },
+                                        { label: pack.workspace.ui.tool_boundary_3d, icon:<Icon.Layers size={12} />, href:"/tools/boundary/3d" },
+                                        { label: pack.workspace.ui.tool_track,       icon:<Icon.Play size={12} />,   href:"/tools/track" },
+                                    ] as const).map(({ label, icon, href }) => (
+                                        <button key={href} onClick={() => { setShowToolsMenu(false); router.push(href); }}
+                                            style={{ display:"inline-flex", alignItems:"center", gap:7, padding:"5px 10px", border:"none", borderRadius:token.radius.sm, background:"none", cursor:"pointer", color:token.color.fgMuted, fontSize:token.font.size.fs11, fontWeight:500, textAlign:"left", transition:"all 0.1s" }}
+                                            onMouseEnter={e => { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; }}
+                                            onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = token.color.fgMuted; }}
+                                        >
+                                            {icon}{label}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -2704,7 +2744,6 @@ const BlocklyWasmIDE: React.FC = () => {
                 open={showBlocks}
                 mode={blockMode}
                 blockData={blockData}
-                watSource={watSource}
                 fileInputRef={fileInputRef}
                 pack={pack}
                 onClose={() => setShowBlocks(false)}

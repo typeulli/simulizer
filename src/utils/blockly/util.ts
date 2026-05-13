@@ -2,7 +2,7 @@ import { BlockBuilder, type BlockSet } from "./$base";
 import { latexToExpr, latexToValueExpr } from "../tex/codegen";
 import "./FieldLatex";
 
-export const LATEX_BLOCKS: BlockSet = {
+export const UTIL_BLOCKS: BlockSet = {
     latex_expr: new BlockBuilder("latex_expr", undefined, 200, "LaTeX 수식 → 코드 생성", false)
         .addBody("LaTeX %1")
         .addArg("field_latex", "LATEX", undefined, "x = 3 + 7")
@@ -20,7 +20,7 @@ export const LATEX_BLOCKS: BlockSet = {
         }),
 };
 
-export function xmlLatexBlocks(cat: string, ocrBtnLabel = "📷 Image → LaTeX") {
+export function xmlUtilBlocks(cat: string, ocrBtnLabel = "📷 Image → LaTeX") {
     return `<category name="${cat}" colour="200">
     <sep gap="16"></sep>
     <label text="LaTeX"></label>

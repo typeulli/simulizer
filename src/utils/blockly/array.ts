@@ -231,21 +231,27 @@ function buildArrayLiteralBlock(
     blockType: string,
     elemType: "i32" | "f64",
     colour: string | number,
+    dyn?: import("@/lang/lang").default["block_dynamic"],
 ) {
     Blockly.Blocks[blockType] = {
         init(this: Blockly.Block) {
             const label = elemType === "i32" ? "int" : "float";
+            const sizeLabel = dyn?.array_literal_size_label ?? "크기:";
+            const indexFmt  = dyn?.array_literal_index ?? "[%1]";
+            const tooltip   = elemType === "i32"
+                ? (dyn?.array_literal_tooltip_i32 ?? `${label}* 리터럴 — 값을 채운 뒤 포인터를 반환합니다`)
+                : (dyn?.array_literal_tooltip_f64 ?? `${label}* 리터럴 — 값을 채운 뒤 포인터를 반환합니다`);
             this.appendDummyInput("HEADER")
                 .appendField(`[${label}]`)
-                .appendField("크기:")
+                .appendField(sizeLabel)
                 .appendField(new Blockly.FieldNumber(3, 1, MAX_LITERAL_SIZE, 1), "SIZE");
             this.appendValueInput("VAL_0")
                 .setCheck(elemType)
-                .appendField("[0]");
+                .appendField(indexFmt.replace("%1", "0"));
             this.setInputsInline(true);
             this.setOutput(true, elemType === "i32" ? "i32*" : "f64*");
             this.setColour(colour);
-            this.setTooltip(`${label}* 리터럴 — 값을 채운 뒤 포인터를 반환합니다`);
+            this.setTooltip(tooltip);
             this.setOnChange(() => (this as any).updateShape_());
             (this as any).updateShape_();
         },
@@ -261,11 +267,12 @@ function buildArrayLiteralBlock(
         updateShape_(this: Blockly.Block, targetSize?: number) {
             const size = targetSize ?? Math.max(1, parseInt(this.getFieldValue("SIZE") || "1", 10));
             const existing = this.inputList.filter(i => i.name.startsWith("VAL_")).length;
+            const indexFmt  = dyn?.array_literal_index ?? "[%1]";
             if (size > existing) {
                 for (let i = existing; i < size; i++) {
                     this.appendValueInput(`VAL_${i}`)
                         .setCheck(elemType)
-                        .appendField(`[${i}]`);
+                        .appendField(indexFmt.replace("%1", String(i)));
                 }
             } else {
                 for (let i = existing - 1; i > size - 1; i--) {
@@ -277,12 +284,13 @@ function buildArrayLiteralBlock(
 }
 
 /** array_literal_i32 / array_literal_f64 동적 블록 등록 */
-export function registerDynamicArrayBlocks() {
+export function registerDynamicArrayBlocks(pack?: { block_dynamic: import("@/lang/lang").default["block_dynamic"] }) {
+    const dyn = pack?.block_dynamic;
     if (!Blockly.Blocks["array_literal_i32"]) {
-        buildArrayLiteralBlock("array_literal_i32", "i32", 120);
+        buildArrayLiteralBlock("array_literal_i32", "i32", 120, dyn);
     }
     if (!Blockly.Blocks["array_literal_f64"]) {
-        buildArrayLiteralBlock("array_literal_f64", "f64", 120);
+        buildArrayLiteralBlock("array_literal_f64", "f64", 120, dyn);
     }
 }
 

@@ -11,6 +11,13 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Simulizer",
   description: "Visual physics simulation with block programming",
+  openGraph: {
+    images: ["/meta/opengraph.png"],
+  },
+  twitter: {
+    card: "summary_large_image",
+    images: ["/meta/opengraph.png"],
+  },
 };
 
 export default function RootLayout({

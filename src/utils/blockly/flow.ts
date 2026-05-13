@@ -7,6 +7,17 @@ export const FLOW_BLOCKS: BlockSet = {
         .addArgValue("COND", "bool")
         .addBody("then %1")
         .addArgStmt("THEN")
+        .stmt((block, ctx) => {
+            const cond = ctx.blockToExpr(block.getInputTargetBlock("COND"), ctx);
+            if (!cond) return null;
+            const thenExprs = ctx.stmtChainToExprs(block.getInputTargetBlock("THEN"), ctx);
+            return new simulizer.If(ctx.coerce(cond, simulizer.i32), thenExprs);
+        }),
+    FLOW_IF_ELSE: new BlockBuilder("flow_if_else", undefined, 120, "조건 분기 (else)")
+        .addBody("if %1")
+        .addArgValue("COND", "bool")
+        .addBody("then %1")
+        .addArgStmt("THEN")
         .addBody("else %1")
         .addArgStmt("ELSE")
         .stmt((block, ctx) => {
@@ -125,6 +136,7 @@ export function xmlFlowBlocks(cat: string) {
     <sep gap="16"></sep>
     <label text="Control Flow"></label>
     <block type="flow_if"></block>
+    <block type="flow_if_else"></block>
     <block type="flow_while"></block>
     <block type="flow_for"></block>
     <block type="i32_select"></block>

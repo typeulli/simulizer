@@ -258,7 +258,17 @@ export const TENSOR_BLOCKS: BlockSet = {
         }),
 }
 
-export function registerDynamicTensorBlocks() {
+export function registerDynamicTensorBlocks(pack?: { block_dynamic: import("@/lang/lang").default["block_dynamic"] }) {
+    const d = pack?.block_dynamic;
+    const tensorSetTip   = d?.tensor_set_tooltip ?? "텐서 요소 설정";
+    const tensorGetTip   = d?.tensor_get_tooltip ?? "텐서 요소 읽기";
+    const tensorGetHdr   = d?.tensor_get_header ?? "TENSOR";
+    const tensorGetDims  = d?.tensor_get_dims_label ?? "dims:";
+    const tensorNewHdr   = d?.tensor_new_header ?? "[tensor]";
+    const tensorNewDim   = d?.tensor_new_dim_label ?? "차원:";
+    const tensorNewItem  = (i: number) => (d?.tensor_new_dim_item ?? "dim[%1]").replace("%1", String(i));
+    const tensorNewTip   = d?.tensor_new_tooltip ?? "텐서 생성 — 차원 크기를 지정하면 텐서 id를 반환합니다";
+
     Blockly.Blocks["tensor_set_by_index"] = {
             init(this: Blockly.Block) {
                 this.appendDummyInput()
@@ -274,7 +284,7 @@ export function registerDynamicTensorBlocks() {
                 this.setPreviousStatement(true, null);
                 this.setNextStatement(true, null);
                 this.setColour(160);
-                this.setTooltip("텐서 요소 설정");
+                this.setTooltip(tensorSetTip);
                 const dimField = this.getField("DIM");
                 if (dimField) {
                     dimField.setValidator((val: number) => {
@@ -337,19 +347,19 @@ export function registerDynamicTensorBlocks() {
     Blockly.Blocks["tensor_get_by_index"] = {
             init(this: Blockly.Block) {
                 this.appendDummyInput()
-                    .appendField("TENSOR")
+                    .appendField(tensorGetHdr)
                     .appendField(new Blockly.FieldTextInput("t"), "TENSOR_NAME")
                     .appendField("[");
                 this.appendValueInput("INDEX_0").setCheck("i32");
                 this.appendDummyInput()
                     .appendField("]");
                 this.appendDummyInput()
-                    .appendField("dims:")
+                    .appendField(tensorGetDims)
                     .appendField(new Blockly.FieldNumber(1, 1, MAX_DIM, 1), "DIM");
                 this.setInputsInline(true);
                 this.setOutput(true, "f64");
                 this.setColour(160);
-                this.setTooltip("텐서 요소 읽기");
+                this.setTooltip(tensorGetTip);
                 const dimField = this.getField("DIM");
                 if (dimField) {
                     dimField.setValidator((val: number) => {
@@ -400,16 +410,16 @@ export function registerDynamicTensorBlocks() {
     Blockly.Blocks["tensor_new"] = {
         init(this: Blockly.Block) {
             this.appendDummyInput("HEADER")
-                .appendField("[tensor]")
-                .appendField("차원:")
+                .appendField(tensorNewHdr)
+                .appendField(tensorNewDim)
                 .appendField(new Blockly.FieldNumber(2, 1, MAX_DIM, 1), "DIM");
             this.appendValueInput("DIM_0")
                 .setCheck("i32")
-                .appendField("dim[0]");
+                .appendField(tensorNewItem(0));
             this.setInputsInline(true);
             this.setOutput(true, "i32");
             this.setColour(160);
-            this.setTooltip("텐서 생성 — 차원 크기를 지정하면 텐서 id를 반환합니다");
+            this.setTooltip(tensorNewTip);
             this.setOnChange(() => (this as any).updateShape_());
             (this as any).updateShape_();
         },
@@ -429,7 +439,7 @@ export function registerDynamicTensorBlocks() {
                 for (let i = existing; i < dim; i++) {
                     this.appendValueInput(`DIM_${i}`)
                         .setCheck("i32")
-                        .appendField(`dim[${i}]`);
+                        .appendField(tensorNewItem(i));
                 }
             } else {
                 for (let i = existing - 1; i > dim - 1; i--) {
