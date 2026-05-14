@@ -7,7 +7,7 @@ import { Modal, ModalBody } from "@/components/organisms/Modal";
 import { token } from "@/components/tokens";
 import langpack from "@/lang/lang";
 
-type BlockMode = "export" | "import";
+type BlockMode = "export" | "import" | "share";
 
 interface BlockManagerModalProps {
     open: boolean;
@@ -15,6 +15,7 @@ interface BlockManagerModalProps {
     blockData: string;
     fileInputRef: React.RefObject<HTMLInputElement | null>;
     pack: langpack;
+    sharePanel?: React.ReactNode;
     onClose: () => void;
     onModeChange: (mode: BlockMode) => void;
     onBlockDataChange: (value: string) => void;
@@ -31,6 +32,7 @@ export function BlockManagerModal({
     blockData,
     fileInputRef,
     pack,
+    sharePanel,
     onClose,
     onModeChange,
     onBlockDataChange,
@@ -42,14 +44,19 @@ export function BlockManagerModal({
 }: BlockManagerModalProps) {
     if (!open) return null;
 
+    const tabs: { mode: BlockMode; label: string; icon: React.ReactNode }[] = [
+        { mode: "export", label: pack.workspace.ui.export_button, icon: <Icon.File size={11} /> },
+        { mode: "import", label: pack.workspace.ui.import_button, icon: <Icon.Layers size={11} /> },
+    ];
+    if (sharePanel) {
+        tabs.push({ mode: "share", label: pack.workspace.ui.share_button, icon: <Icon.Globe size={11} /> });
+    }
+
     return (
         <Modal onClose={onClose} width="min(700px,90vw)">
             <div style={{ display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
                 <div style={{ display: "flex", gap: 0, flex: 1 }}>
-                    {([
-                        { mode: "export" as const, label: pack.workspace.ui.export_button, icon: <Icon.File size={11} /> },
-                        { mode: "import" as const, label: pack.workspace.ui.import_button, icon: <Icon.Layers size={11} /> },
-                    ]).map(({ mode: nextMode, label, icon }) => (
+                    {tabs.map(({ mode: nextMode, label, icon }) => (
                         <button
                             key={nextMode}
                             onClick={() => nextMode === "import" ? onOpenImport() : onModeChange(nextMode)}
@@ -94,6 +101,12 @@ export function BlockManagerModal({
                             style={{ flex: 1, margin: 0, padding: 16, fontSize: token.font.size.fs11, color: token.color.fg, lineHeight: 1.7, background: token.color.bgCanvas, border: "none", outline: "none", resize: "none", fontFamily: token.font.family.mono, minHeight: 300 }}
                         />
                     </>
+                )}
+
+                {mode === "share" && sharePanel && (
+                    <div style={{ padding: token.space.sp4, minHeight: 300 }}>
+                        {sharePanel}
+                    </div>
                 )}
             </ModalBody>
         </Modal>

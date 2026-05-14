@@ -37,9 +37,12 @@ export interface RecoveryUserOut extends UserOut {
     days_remaining: number;
 }
 
+export type FileVisibility = "private" | "link";
+
 export interface FileOut {
     idx: number;
     id: string;
+    author_id: number;
     name: string;
     visibility: string;
     created_at: string;
@@ -122,7 +125,14 @@ export async function renameFile(id: string, name: string): Promise<FileOut> {
 
 export async function duplicateFile(id: string): Promise<FileDetail> {
     const res = await req(`/files/${id}/duplicate`, { method: "POST" });
+    if (res.status === 401) throw Object.assign(new Error("Unauthorized"), { status: 401 });
     if (!res.ok) throw new Error("Failed to duplicate file");
+    return res.json();
+}
+
+export async function setFileVisibility(id: string, visibility: FileVisibility): Promise<FileOut> {
+    const res = await reqJson(`/files/${id}/visibility`, "PATCH", { visibility });
+    if (!res.ok) throw new Error("Failed to update visibility");
     return res.json();
 }
 

@@ -52,7 +52,8 @@ import { Prism } from "react-syntax-highlighter";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
-import { getMe, getFile, saveFile, renameFile, uploadThumbnail } from "@/lib/authapi";
+import { getMe, getFile, saveFile, renameFile, uploadThumbnail, duplicateFile, type FileOut } from "@/lib/authapi";
+import { ShareControl } from "@/components/share/ShareControl";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
@@ -1008,12 +1009,16 @@ const BlocklyWasmIDE: React.FC = () => {
 
     const [showBlocks, setShowBlocks] = useState(false);
     const [blockData, setBlockData]   = useState<string>("");
-    const [blockMode, setBlockMode]   = useState<"export" | "import">("export");
+    const [blockMode, setBlockMode]   = useState<"export" | "import" | "share">("export");
     const fileInputRef                = useRef<HTMLInputElement>(null);
     const [lang, , pack, langReady]   = useLanguagePack();
 
     const [fileId, setFileId]       = useState<string | null>(null);
     const [fileName, setFileName]   = useState<string>("");
+    const [fileMeta, setFileMeta]   = useState<FileOut | null>(null);
+    const [isOwner, setIsOwner]     = useState<boolean | null>(null);
+    const isOwnerRef                = useRef<boolean>(false);
+    const [duplicating, setDuplicating] = useState(false);
     const [fileError, setFileError] = useState<"not_found" | "forbidden" | null>(null);
     const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved" | "error">("saved");
     const wsReadyRef                = useRef(false);
@@ -1204,6 +1209,7 @@ const BlocklyWasmIDE: React.FC = () => {
 
     // Initialize Blockly
     useEffect(() => {
+        if (isOwner === null) return;
         registerDynamicTensorBlocks(pack);
         registerDynamicArrayBlocks(pack);
         buildCustomBlockDefs(pack).forEach((def) => {
@@ -1221,12 +1227,13 @@ const BlocklyWasmIDE: React.FC = () => {
         const cssVar = (v: string) => cs.getPropertyValue(v).trim();
 
         const ws = Blockly.inject(blocklyDivRef.current, {
-            toolbox:  buildBaseToolboxXml(pack),
+            toolbox:  isOwner ? buildBaseToolboxXml(pack) : undefined,
             grid:     { spacing: 20, length: 3, colour: cssVar("--grid-dot"), snap: true },
             zoom:     { controls: true, wheel: true, startScale: 0.9 },
-            trashcan: true,
+            trashcan: isOwner,
             theme:    buildSimphyTheme("simphy"),
             renderer: "zelos",
+            readOnly: !isOwner,
         });
 
         workspaceRef.current = ws;
@@ -1263,6 +1270,7 @@ const BlocklyWasmIDE: React.FC = () => {
         const handleBlockChange = (event: Blockly.Events.Abstract) => {
             if (event.isUiEvent) return;
             refreshInfo();
+            if (!isOwnerRef.current) return;
             setSaveStatus("unsaved");
             if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
             autoSaveTimerRef.current = setTimeout(async () => {
@@ -1514,7 +1522,8 @@ const BlocklyWasmIDE: React.FC = () => {
             barObserver.disconnect();
             ws.dispose();
         };
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOwner]);
 
     // Re-apply Blockly theme when data-theme attribute changes (dark/light mode toggle)
     useEffect(() => {
@@ -1544,13 +1553,14 @@ const BlocklyWasmIDE: React.FC = () => {
         const savedState = Blockly.serialization.workspaces.save(ws);
         ws.clear();
         Blockly.serialization.workspaces.load(savedState, ws);
-        ws.updateToolbox(buildToolboxXml(customFuncs, pack));
+        if (ws.getToolbox()) ws.updateToolbox(buildToolboxXml(customFuncs, pack));
     }, [lang, pack]);
 
     // Update toolbox when custom functions change
     useEffect(() => {
         const ws = workspaceRef.current;
         if (!ws) return;
+        if (!ws.getToolbox()) return;
         ws.updateToolbox(buildToolboxXml(customFuncs, pack));
     }, [customFuncs]);
 
@@ -2141,6 +2151,23 @@ const BlocklyWasmIDE: React.FC = () => {
         }
     }, [fileId, fileName, addLog]);
 
+    const handleDuplicateToMine = useCallback(async () => {
+        if (!fileId || duplicating) return;
+        setDuplicating(true);
+        try {
+            const dup = await duplicateFile(fileId);
+            router.push(`/workspace?file=${dup.id}`);
+        } catch (err: any) {
+            if (err?.status === 401) {
+                router.push(`/login?next=${encodeURIComponent(`/workspace?file=${fileId}`)}`);
+            } else {
+                addLog("error", pack.workspace.ui.share_login_to_duplicate);
+            }
+        } finally {
+            setDuplicating(false);
+        }
+    }, [fileId, duplicating, router, addLog, pack]);
+
     const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -2161,13 +2188,16 @@ const BlocklyWasmIDE: React.FC = () => {
         }
         (async () => {
             const me = await getMe().catch(() => null);
-            if (!me) { router.replace("/login"); return; }
             const f = await getFile(id).catch((err) => {
                 const status = (err as { status?: number }).status;
                 setFileError(status === 403 ? "forbidden" : "not_found");
                 return null;
             });
             if (!f) return;
+            const owner = !!(me && me.id === f.author_id);
+            setIsOwner(owner);
+            isOwnerRef.current = owner;
+            setFileMeta(f);
             setFileId(f.id);
             setFileName(f.name);
             setSaveStatus("saved");
@@ -2293,19 +2323,35 @@ const BlocklyWasmIDE: React.FC = () => {
                     <TopbarBrand />
 
                     <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>
-                    <button onClick={handleOpenBlocks} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}>
+                    <button onClick={isOwner ? handleOpenBlocks : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}>
                         <Icon.File size={12} />
                         <input
                             value={fileName}
-                            onChange={e => setFileName(e.target.value)}
-                            onBlur={handleRenameFile}
+                            onChange={e => isOwner && setFileName(e.target.value)}
+                            onBlur={isOwner ? handleRenameFile : undefined}
                             onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
                             onClick={e => e.stopPropagation()}
                             placeholder="untitled"
-                            style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: "text" }}
+                            readOnly={!isOwner}
+                            style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: isOwner ? "text" : "default" }}
                         />
-                        <Icon.Chevron size={11} />
+                        {isOwner && <Icon.Chevron size={11} />}
                     </button>
+                    {isOwner === false && (
+                        <span style={{
+                            marginLeft: 6,
+                            padding: "2px 8px",
+                            background: token.color.bgSubtle,
+                            border: `1px solid ${token.color.border}`,
+                            borderRadius: 999,
+                            fontSize: token.font.size.fs10,
+                            color: token.color.fgMuted,
+                            fontFamily: token.font.family.mono,
+                            whiteSpace: "nowrap",
+                        }}>
+                            {pack.workspace.ui.share_readonly_badge}
+                        </span>
+                    )}
                 </div>
 
                 {/* Center — cmd search */}
@@ -2319,22 +2365,36 @@ const BlocklyWasmIDE: React.FC = () => {
 
                 {/* Actions */}
                 <div style={{ display:"flex", alignItems:"center", gap:8, justifyContent:"flex-end" }}>
-                    {/* Save button */}
-                    {saveStatus === "unsaved" && (
+                    {/* Save button (owner only) */}
+                    {isOwner && saveStatus === "unsaved" && (
                         <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>저장 안됨</span>
                     )}
-                    {saveStatus === "error" && (
+                    {isOwner && saveStatus === "error" && (
                         <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>저장 실패</span>
                     )}
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        leading={saveStatus === "saving" ? <Spinner size="sm" /> : <Icon.Save size={11} />}
-                        onClick={handleSaveToServer}
-                        disabled={saveStatus === "saving" || !fileId}
-                    >
-                        {saveStatus === "saving" ? "저장 중..." : "저장"}
-                    </Button>
+                    {isOwner && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            leading={saveStatus === "saving" ? <Spinner size="sm" /> : <Icon.Save size={11} />}
+                            onClick={handleSaveToServer}
+                            disabled={saveStatus === "saving" || !fileId}
+                        >
+                            {saveStatus === "saving" ? "저장 중..." : "저장"}
+                        </Button>
+                    )}
+                    {/* Duplicate-to-mine (non-owner) */}
+                    {isOwner === false && (
+                        <Button
+                            variant="accent"
+                            size="sm"
+                            onClick={handleDuplicateToMine}
+                            disabled={duplicating || !fileId}
+                            leading={duplicating ? <Spinner size="sm" /> : undefined}
+                        >
+                            {pack.workspace.ui.share_duplicate_button}
+                        </Button>
+                    )}
                     {/* Backend pill */}
                     <div style={{ display:"inline-flex", alignItems:"center", gap:2, padding:"4px 8px", background:token.color.bgSubtle, border:`1px solid ${token.color.border}`, borderRadius:999, fontSize:token.font.size.fs10, color:token.color.fgMuted, fontFamily:token.font.family.mono }}>
                         {(["webgpu", "webgl", "cpu"] as const).map((b, i, arr) => {
@@ -2363,7 +2423,8 @@ const BlocklyWasmIDE: React.FC = () => {
                             );
                         })}
                     </div>
-                    {/* AI button + popover */}
+                    {/* AI button + popover (owner only) */}
+                    {isOwner && (
                     <div style={{ position: "relative" }} ref={chatPopoverRef}>
                         <button
                             onClick={() => setShowChatPopover(v => !v)}
@@ -2392,7 +2453,7 @@ const BlocklyWasmIDE: React.FC = () => {
                             <Icon.Sparkle size={13} /> AI
                         </button>
 
-                        {showChatPopover && (
+                        {isOwner && showChatPopover && (
                             <div style={{
                                 position: "absolute",
                                 top: "calc(100% + 8px)",
@@ -2461,6 +2522,7 @@ const BlocklyWasmIDE: React.FC = () => {
                             </div>
                         )}
                     </div>
+                    )}
                     {/* Run */}
                     <button onClick={isRunning ? handleStop : handleRun}
                         disabled={!isRunning && hasError}
@@ -2762,6 +2824,12 @@ const BlocklyWasmIDE: React.FC = () => {
                 blockData={blockData}
                 fileInputRef={fileInputRef}
                 pack={pack}
+                sharePanel={isOwner && fileMeta ? (
+                    <ShareControl
+                        file={fileMeta}
+                        onChange={updated => setFileMeta(prev => prev ? { ...prev, visibility: updated.visibility } : prev)}
+                    />
+                ) : undefined}
                 onClose={() => setShowBlocks(false)}
                 onModeChange={setBlockMode}
                 onBlockDataChange={setBlockData}

@@ -17,6 +17,8 @@ import {
     duplicateFile,
     type FileOut,
 } from "@/lib/authapi";
+import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
+import { ShareControl } from "@/components/share/ShareControl";
 
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString("ko-KR", {
@@ -59,6 +61,7 @@ export default function DashboardPage() {
     const [menuOpen, setMenuOpen] = useState<string | null>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState("");
+    const [sharingFile, setSharingFile] = useState<FileOut | null>(null);
     const renameInputRef = useRef<HTMLInputElement>(null);
 
     const fetchFiles = useCallback(async () => {
@@ -110,6 +113,11 @@ export default function DashboardPage() {
         setMenuOpen(null);
         setRenamingId(file.id);
         setRenameValue(file.name);
+    }
+
+    function startShare(file: FileOut) {
+        setMenuOpen(null);
+        setSharingFile(file);
     }
 
     async function commitRename(id: string) {
@@ -246,6 +254,7 @@ export default function DashboardPage() {
                                 onMenuClose={() => setMenuOpen(null)}
                                 onRename={() => startRename(file)}
                                 onDuplicate={() => handleDuplicate(file.id)}
+                                onShare={() => startShare(file)}
                                 onDelete={() => handleDelete(file.id)}
                                 onRenameChange={setRenameValue}
                                 onRenameCommit={() => commitRename(file.id)}
@@ -258,6 +267,23 @@ export default function DashboardPage() {
 
             {menuOpen !== null && (
                 <div onClick={() => setMenuOpen(null)} style={{ position: "fixed", inset: 0, zIndex: 9 }} />
+            )}
+
+            {sharingFile && (
+                <Modal width={420} onClose={() => setSharingFile(null)}>
+                    <ModalHeader onClose={() => setSharingFile(null)}>
+                        {pack.workspace.ui.share_dialog_title}
+                    </ModalHeader>
+                    <ModalBody>
+                        <ShareControl
+                            file={sharingFile}
+                            onChange={updated => {
+                                setFiles(prev => prev.map(f => f.id === updated.id ? { ...f, visibility: updated.visibility } : f));
+                                setSharingFile(prev => prev ? { ...prev, visibility: updated.visibility } : prev);
+                            }}
+                        />
+                    </ModalBody>
+                </Modal>
             )}
         </div>
     );
@@ -308,6 +334,7 @@ interface FileCardProps {
     onMenuClose: () => void;
     onRename: () => void;
     onDuplicate: () => void;
+    onShare: () => void;
     onDelete: () => void;
     onRenameChange: (v: string) => void;
     onRenameCommit: () => void;
@@ -317,7 +344,7 @@ interface FileCardProps {
 function FileCard({
     file, isRenaming, renameValue, renameInputRef,
     menuOpen, onOpen, onMenuToggle, onMenuClose,
-    onRename, onDuplicate, onDelete,
+    onRename, onDuplicate, onShare, onDelete,
     onRenameChange, onRenameCommit, onRenameCancel,
 }: FileCardProps) {
     const [, , pack] = useLanguagePack();
@@ -436,6 +463,12 @@ function FileCard({
                                 >
                                     <Icon.Layers size={12} /> {t.menu_duplicate}
                                 </button>
+                                <button style={menuItem} onClick={onShare}
+                                    onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
+                                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                                >
+                                    <Icon.Globe size={12} /> {t.menu_share}
+                                </button>
                                 <div style={{ height: 1, background: token.color.border, margin: "4px 0" }} />
                                 <button
                                     style={{ ...menuItem, color: token.color.danger }}
@@ -450,9 +483,22 @@ function FileCard({
                     </div>
                 </div>
 
-                <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
-                    {t.card_updated.replace("{date}", formatDate(file.updated_at))}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle, flex: 1 }}>
+                        {t.card_updated.replace("{date}", formatDate(file.updated_at))}
+                    </span>
+                    {file.visibility === "link" && (
+                        <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            padding: "1px 6px", borderRadius: 999,
+                            background: token.color.accentSubtle, color: token.color.accent,
+                            fontSize: token.font.size.fs10, fontWeight: 600,
+                        }}>
+                            <Icon.Globe size={9} />
+                            {t.badge_link_shared}
+                        </span>
+                    )}
+                </div>
             </div>
         </div>
     );
