@@ -1234,6 +1234,7 @@ const BlocklyWasmIDE: React.FC = () => {
             theme:    buildSimphyTheme("simphy"),
             renderer: "zelos",
             readOnly: !isOwner,
+            move:     { scrollbars: true, drag: true, wheel: true },
         });
 
         workspaceRef.current = ws;
