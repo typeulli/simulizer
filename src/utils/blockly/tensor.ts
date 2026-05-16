@@ -143,6 +143,22 @@ function buildTensorGetByIndexCall(block: Blockly.Block, ctx: CompileCtx): simul
     );
 }
 
+const MATRIX_COLOUR = 200;
+
+/** Unary matrix op: tensor id in → result (tensor id or scalar) out. */
+function unaryMatrixCall(
+    block: Blockly.Block,
+    ctx: CompileCtx,
+    fn: string,
+    result: simulizer.Type,
+): simulizer.Expr | null {
+    const mBlock = block.getInputTargetBlock("M");
+    if (!mBlock) return null;
+    const mExpr = ctx.blockToExpr(mBlock, ctx);
+    if (!mExpr) return null;
+    return new simulizer.Call(fn, [ctx.coerce(mExpr, simulizer.i32)], result);
+}
+
 export const TENSOR_BLOCKS: BlockSet = {
     TENSOR_RANDOM: new BlockBuilder("tensor_random", "i32", 160,"랜덤 텐서 생성 (id 반환)")
         .addBody("TENSOR_RANDOM dist:%1 p1:%2 p2:%3 shape:%4")
@@ -255,6 +271,75 @@ export const TENSOR_BLOCKS: BlockSet = {
                 [ctx.coerce(tensorIdExpr, simulizer.i32)],
                 simulizer.i32,
             ));
+        }),
+
+    MATRIX_CREATE: new BlockBuilder("matrix_create", "i32", MATRIX_COLOUR, "rows×cols 0 행렬 생성 (텐서 id 반환)")
+        .addBody("matrix rows: %1 cols: %2")
+        .addArgValue("ROWS", "i32")
+        .addArgValue("COLS", "i32")
+        .expr((block, ctx) => {
+            const rowsBlock = block.getInputTargetBlock("ROWS");
+            const colsBlock = block.getInputTargetBlock("COLS");
+            if (!rowsBlock || !colsBlock) return null;
+            const rowsExpr = ctx.blockToExpr(rowsBlock, ctx);
+            const colsExpr = ctx.blockToExpr(colsBlock, ctx);
+            if (!rowsExpr || !colsExpr) return null;
+            return new simulizer.Call(
+                "matrix_create",
+                [
+                    simulizer.i32c(GetVarID(`__tensor_${block.id}`)),
+                    ctx.coerce(rowsExpr, simulizer.i32),
+                    ctx.coerce(colsExpr, simulizer.i32),
+                ],
+                simulizer.i32,
+            );
+        }),
+    MATRIX_MATMUL: new BlockBuilder("matrix_matmul", "i32", MATRIX_COLOUR, "행렬곱 A @ B (텐서 id 반환)")
+        .addBody("%1 @ %2")
+        .addArgValue("LHS", "i32")
+        .addArgValue("RHS", "i32")
+        .expr((block, ctx) => {
+            const lhsBlock = block.getInputTargetBlock("LHS");
+            const rhsBlock = block.getInputTargetBlock("RHS");
+            if (!lhsBlock || !rhsBlock) return null;
+            const lhsExpr = ctx.blockToExpr(lhsBlock, ctx);
+            const rhsExpr = ctx.blockToExpr(rhsBlock, ctx);
+            if (!lhsExpr || !rhsExpr) return null;
+            return new simulizer.Call(
+                "matrix_matmul",
+                [ctx.coerce(lhsExpr, simulizer.i32), ctx.coerce(rhsExpr, simulizer.i32)],
+                simulizer.i32,
+            );
+        }),
+    MATRIX_TRANSPOSE: new BlockBuilder("matrix_transpose", "i32", MATRIX_COLOUR, "전치행렬 Aᵀ (텐서 id 반환)")
+        .addBody("transpose( %1 )")
+        .addArgValue("M", "i32")
+        .expr((block, ctx) => unaryMatrixCall(block, ctx, "matrix_transpose", simulizer.i32)),
+    MATRIX_INVERSE: new BlockBuilder("matrix_inverse", "i32", MATRIX_COLOUR, "역행렬 A⁻¹ (텐서 id 반환)")
+        .addBody("inverse( %1 )")
+        .addArgValue("M", "i32")
+        .expr((block, ctx) => unaryMatrixCall(block, ctx, "matrix_inverse", simulizer.i32)),
+    MATRIX_DET: new BlockBuilder("matrix_det", "f64", MATRIX_COLOUR, "행렬식 det(A) (스칼라 반환)")
+        .addBody("det( %1 )")
+        .addArgValue("M", "i32")
+        .expr((block, ctx) => unaryMatrixCall(block, ctx, "matrix_det", simulizer.f64)),
+    MATRIX_TRACE: new BlockBuilder("matrix_trace", "f64", MATRIX_COLOUR, "대각합 tr(A) (스칼라 반환)")
+        .addBody("tr( %1 )")
+        .addArgValue("M", "i32")
+        .expr((block, ctx) => unaryMatrixCall(block, ctx, "matrix_trace", simulizer.f64)),
+    MATRIX_IDENTITY: new BlockBuilder("matrix_identity", "i32", MATRIX_COLOUR, "n×n 단위행렬 (텐서 id 반환)")
+        .addBody("I( %1 )")
+        .addArgValue("N", "i32")
+        .expr((block, ctx) => {
+            const nBlock = block.getInputTargetBlock("N");
+            if (!nBlock) return null;
+            const nExpr = ctx.blockToExpr(nBlock, ctx);
+            if (!nExpr) return null;
+            return new simulizer.Call(
+                "matrix_identity",
+                [ctx.coerce(nExpr, simulizer.i32)],
+                simulizer.i32,
+            );
         }),
 }
 
@@ -452,6 +537,31 @@ export function registerDynamicTensorBlocks(pack?: { block_dynamic: import("@/la
 
 export function xmlTensorBlocks(cat: string) {
     return `<category name="${cat}" colour="${160}">
+    <sep gap="16"></sep>
+    <label text="Matrix"></label>
+    <block type="matrix_create">
+        <value name="ROWS"><block type="i32_const"><field name="VALUE">3</field></block></value>
+        <value name="COLS"><block type="i32_const"><field name="VALUE">3</field></block></value>
+    </block>
+    <block type="matrix_matmul">
+        <value name="LHS"><block type="tensor_get"></block></value>
+        <value name="RHS"><block type="tensor_get"></block></value>
+    </block>
+    <block type="matrix_transpose">
+        <value name="M"><block type="tensor_get"></block></value>
+    </block>
+    <block type="matrix_inverse">
+        <value name="M"><block type="tensor_get"></block></value>
+    </block>
+    <block type="matrix_det">
+        <value name="M"><block type="tensor_get"></block></value>
+    </block>
+    <block type="matrix_trace">
+        <value name="M"><block type="tensor_get"></block></value>
+    </block>
+    <block type="matrix_identity">
+        <value name="N"><block type="i32_const"><field name="VALUE">3</field></block></value>
+    </block>
     <sep gap="16"></sep>
     <label text="Tensor"></label>
     <block type="tensor_new"></block>

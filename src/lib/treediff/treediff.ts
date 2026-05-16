@@ -7,12 +7,14 @@ import Queue from "@/utils/queue";
 export interface TreeNode {
     content: number;
     children: TreeNode[];
+    meta?: any;
 }
 
 export interface TreeDiffNode {
     content: number;
     children: TreeDiffNode[];
     mode: "insert" | "delete" | "common";
+    meta?: any;
 }
 
 export interface DeleteOp {
@@ -134,7 +136,7 @@ export function generateDiffTree(a: TreeNode, b: TreeNode, diff: DiffResult): Tr
         while (stack.length > 0) {
             const [node, parentIdx] = stack.pop()!;
             const myIdx = aNodes.length;
-            const diffNode: TreeDiffNode = { content: node.content, children: [], mode: "common" };
+            const diffNode: TreeDiffNode = { content: node.content, children: [], mode: "common", meta: node.meta };
             aNodes.push(diffNode);
             if (parentIdx >= 0) aNodes[parentIdx].children.push(diffNode);
             const aChildren = node.children ?? [];
@@ -149,7 +151,7 @@ export function generateDiffTree(a: TreeNode, b: TreeNode, diff: DiffResult): Tr
         while (stack.length > 0) {
             const [node, parentIdx] = stack.pop()!;
             const myIdx = bNodes.length;
-            const diffNode: TreeDiffNode = { content: node.content, children: [], mode: "insert" };
+            const diffNode: TreeDiffNode = { content: node.content, children: [], mode: "insert", meta: node.meta };
             bNodes.push(diffNode);
             if (parentIdx >= 0) bNodes[parentIdx].children.push(diffNode);
             const bChildren = node.children ?? [];
@@ -181,6 +183,29 @@ export function generateDiffTree(a: TreeNode, b: TreeNode, diff: DiffResult): Tr
     for (const op of diff?.ops ?? []) {
         if (op.type !== "insert") continue;
         aNodes[op.parentIdx].children.splice(op.childIdx, 0, bNodes[op.nodeIdx]);
+    }
+
+    // Common nodes currently carry a-side meta. Reassign them to b-side meta by
+    // walking b in pre-order and the diff tree in pre-order (skipping deleted
+    // subtrees), which yields the same sequence as b. Inserted nodes already
+    // carry b-meta from bNodes — overwriting with the same value is harmless.
+    {
+        const bMetas: any[] = [];
+        const bStack: TreeNode[] = [b];
+        while (bStack.length > 0) {
+            const n = bStack.pop()!;
+            bMetas.push(n.meta);
+            const cs = n.children ?? [];
+            for (let i = cs.length - 1; i >= 0; i--) bStack.push(cs[i]);
+        }
+        let i = 0;
+        const dStack: TreeDiffNode[] = [aNodes[0]];
+        while (dStack.length > 0) {
+            const n = dStack.pop()!;
+            if (n.mode === "delete") continue;
+            n.meta = bMetas[i++];
+            for (let j = n.children.length - 1; j >= 0; j--) dStack.push(n.children[j]);
+        }
     }
 
     return aNodes[0];

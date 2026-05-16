@@ -88,7 +88,7 @@ export function BlockManagerModal({
                     <>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderBottom: `1px solid ${token.color.border}`, flexShrink: 0 }}>
                             <Button variant="ghost" size="sm" leading={<Icon.File size={11} />} onClick={() => fileInputRef.current?.click()}>{pack.workspace.ui.open_file_button}</Button>
-                            <input ref={fileInputRef} type="file" accept=".simphy,.json" onChange={onFileInput} style={{ display: "none" }} />
+                            <input ref={fileInputRef} type="file" accept=".simulizer,.json" onChange={onFileInput} style={{ display: "none" }} />
                             <div style={{ marginLeft: "auto" }}>
                                 <Button variant="ai" size="sm" onClick={onApplyImport}>{pack.workspace.ui.apply_button}</Button>
                             </div>

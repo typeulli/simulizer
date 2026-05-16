@@ -11,6 +11,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Simulizer",
   description: "Visual physics simulation with block programming",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_FRONTEND_URL || "https://www.simulizer.net/"),
   openGraph: {
     images: ["/meta/opengraph.png"],
   },

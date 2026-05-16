@@ -170,13 +170,34 @@ export function unpack(blockSet: BlockSet): BlockDef[] {
     return Object.values(blockSet).map(block => block.build());
 }
 
-export function translateBlockSet(blockSet: BlockSet, msgs: Record<string, string[]>): BlockSet {
+export function translateBlockSet(
+    blockSet: BlockSet,
+    msgs: Record<string, string[]>,
+    dropdowns: Record<string, Record<string, Record<string, string>>> = {},
+): BlockSet {
     const result: BlockSet = {};
     for (const [key, builder] of Object.entries(blockSet)) {
         const translation = msgs[builder.type];
-        if (translation) {
+        const ddMap = dropdowns[builder.type];
+        if (translation || ddMap) {
             const nb = Object.assign(Object.create(Object.getPrototypeOf(builder)), builder);
-            nb.body = builder.body.map((b, i) => ({ ...b, message: translation[i] ?? b.message }));
+            nb.body = builder.body.map((b, i) => ({
+                ...b,
+                message: translation?.[i] ?? b.message,
+                args: ddMap
+                    ? b.args.map(arg => {
+                        const labels = arg.type === "field_dropdown" ? ddMap[arg.name] : undefined;
+                        if (labels && arg.options) {
+                            return {
+                                ...arg,
+                                options: arg.options.map(([label, value]) =>
+                                    [labels[value] ?? label, value] as [string, string]),
+                            };
+                        }
+                        return arg;
+                    })
+                    : b.args,
+            }));
             result[key] = nb;
         } else {
             result[key] = builder;
@@ -200,7 +221,7 @@ export function xml(blockSet: BlockSet): string {
                     const arg = args[argIndex++];
                     switch (arg.type) {
                         case "input_value":
-                            messageXml += `<value name="${arg.name}"><block type="simphy_${arg.check}"></block></value>`;
+                            messageXml += `<value name="${arg.name}"><block type="simulizer_${arg.check}"></block></value>`;
                             break;
                         case "field_number":
                             messageXml += `<field name="${arg.name}">${arg.value}</field>`;

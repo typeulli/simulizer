@@ -7,6 +7,7 @@ export interface BlockJSON {
     fields?: Record<string, string | number>;
     inputs?: Record<string, { block?: BlockJSON }>;
     next?: { block: BlockJSON };
+    extraState?: Record<string, unknown>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,20 +81,39 @@ function buildValueBlock(node: ASTNode, targetType: BType): BlockJSON | null {
         case 'subscript': {
             const name = String(node.value);
             const indices = node.children ?? [];
-            if (indices.length !== 1) return null; // multi-index tensors not supported
 
-            const idxBlock = buildValueBlock(indices[0], 'i32');
-            if (!idxBlock) return null;
+            // Single index → array element read
+            if (indices.length === 1) {
+                const idxBlock = buildValueBlock(indices[0], 'i32');
+                if (!idxBlock) return null;
 
-            const arrType = targetType === 'i32' ? 'i32' : 'f64';
+                const arrType = targetType === 'i32' ? 'i32' : 'f64';
+                const getBlock: BlockJSON = {
+                    type: `array_get_${arrType}`,
+                    inputs: {
+                        ARRAY: { block: { type: `local_array_get_${arrType}`, fields: { NAME: name } } },
+                        INDEX: { block: idxBlock },
+                    },
+                };
+                return coerce(getBlock, arrType, targetType);
+            }
+
+            // Multi-index → tensor element read (always f64)
+            if (indices.length < 1) return null;
+            const dim = indices.length;
+            const inputs: Record<string, { block?: BlockJSON }> = {};
+            for (let i = 0; i < dim; i++) {
+                const idxBlock = buildValueBlock(indices[i], 'i32');
+                if (!idxBlock) return null;
+                inputs[`INDEX_${i}`] = { block: idxBlock };
+            }
             const getBlock: BlockJSON = {
-                type: `array_get_${arrType}`,
-                inputs: {
-                    ARRAY: { block: { type: `local_array_get_${arrType}`, fields: { NAME: name } } },
-                    INDEX: { block: idxBlock },
-                },
+                type: 'tensor_get_by_index',
+                extraState: { dim },
+                fields: { TENSOR_NAME: name, DIM: dim },
+                inputs,
             };
-            return coerce(getBlock, arrType, targetType);
+            return coerce(getBlock, 'f64', targetType);
         }
 
         case 'operator': {
@@ -169,27 +189,50 @@ function buildStmtBlock(node: ASTNode): BlockJSON | null {
     const lhsNode = node.children[0];
     const rhsNode = node.children[1];
 
-    // subscript LHS: arr_{k} = rhs  →  array_set_f64/i32
+    // subscript LHS
     if (lhsNode.type === 'subscript') {
         const name = String(lhsNode.value);
         const indices = lhsNode.children ?? [];
-        if (indices.length !== 1) return null;
+        if (indices.length < 1) return null;
 
-        const idxBlock = buildValueBlock(indices[0], 'i32');
-        if (!idxBlock) return null;
+        // Single index: arr_{k} = rhs  →  array_set_f64/i32
+        if (indices.length === 1) {
+            const idxBlock = buildValueBlock(indices[0], 'i32');
+            if (!idxBlock) return null;
 
+            const rhsType = inferNodeType(rhsNode);
+            const rhsBlock = buildValueBlock(rhsNode, rhsType);
+            if (!rhsBlock) return null;
+
+            const arrType = rhsType === 'i32' ? 'i32' : 'f64';
+            return {
+                type: `array_set_${arrType}`,
+                inputs: {
+                    ARRAY: { block: { type: `local_array_get_${arrType}`, fields: { NAME: name } } },
+                    INDEX: { block: idxBlock },
+                    VALUE: { block: coerce(rhsBlock, rhsType, arrType) },
+                },
+            };
+        }
+
+        // Multi-index: T_{i,j} = rhs  →  tensor_set_by_index (value is f64)
+        const dim = indices.length;
+        const inputs: Record<string, { block?: BlockJSON }> = {};
+        for (let i = 0; i < dim; i++) {
+            const idxBlock = buildValueBlock(indices[i], 'i32');
+            if (!idxBlock) return null;
+            inputs[`INDEX_${i}`] = { block: idxBlock };
+        }
         const rhsType = inferNodeType(rhsNode);
         const rhsBlock = buildValueBlock(rhsNode, rhsType);
         if (!rhsBlock) return null;
+        inputs.VALUE = { block: coerce(rhsBlock, rhsType, 'f64') };
 
-        const arrType = rhsType === 'i32' ? 'i32' : 'f64';
         return {
-            type: `array_set_${arrType}`,
-            inputs: {
-                ARRAY: { block: { type: `local_array_get_${arrType}`, fields: { NAME: name } } },
-                INDEX: { block: idxBlock },
-                VALUE: { block: coerce(rhsBlock, rhsType, arrType) },
-            },
+            type: 'tensor_set_by_index',
+            extraState: { dim },
+            fields: { TENSOR_NAME: name, DIM: dim },
+            inputs,
         };
     }
 

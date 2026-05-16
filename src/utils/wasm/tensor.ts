@@ -107,6 +107,142 @@ export function js_tensor_matmul(lhsVarId: number, rhsVarId: number): number {
     return tempId;
 }
 
+// ── Matrix (2D tensor) operations ──────────────────────────────
+
+function _readMatrix(id: number): { m: number[][]; rows: number; cols: number } | null {
+    flushBuffer(id);
+    const t = tfSpace[id];
+    if (!t) { console.warn(`matrix op: tensor not found: id=${id}`); return null; }
+    if (t.shape.length !== 2) { console.warn(`matrix op: expected 2D tensor, got ${t.shape.length}D`); return null; }
+    const [rows, cols] = t.shape as [number, number];
+    const flat = t.dataSync() as Float32Array;
+    const m: number[][] = [];
+    for (let r = 0; r < rows; r++) {
+        const row: number[] = [];
+        for (let c = 0; c < cols; c++) row.push(flat[r * cols + c]);
+        m.push(row);
+    }
+    return { m, rows, cols };
+}
+
+function _storeMatrix(m: number[][]): number {
+    const rows = m.length;
+    const cols = rows ? m[0].length : 0;
+    const flat = new Float32Array(rows * cols);
+    for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++) flat[r * cols + c] = m[r][c];
+    const id = tempTensorCounter++;
+    tfSpace[id] = tf.tensor2d(flat, [rows, cols]);
+    return id;
+}
+
+export function js_matrix_create(varid: number, rows: number, cols: number): number {
+    const r = Math.max(1, Math.floor(rows));
+    const c = Math.max(1, Math.floor(cols));
+    if (tfSpace[varid]) tfSpace[varid].dispose();
+    tfSpace[varid] = tf.zeros([r, c], "float32");
+    console.log(`js_matrix_create: varid=${varid}, shape=(${r},${c})`);
+    return varid;
+}
+
+export function js_matrix_matmul(lhsVarId: number, rhsVarId: number): number {
+    flushBuffer(lhsVarId);
+    flushBuffer(rhsVarId);
+    const lhs = tfSpace[lhsVarId];
+    const rhs = tfSpace[rhsVarId];
+    if (!lhs || !rhs || lhs.shape.length !== 2 || rhs.shape.length !== 2) {
+        console.warn(`matrix_matmul failed: lhs=${lhsVarId}, rhs=${rhsVarId}`);
+        return 0;
+    }
+    const tempId = tempTensorCounter++;
+    tfSpace[tempId] = tf.matMul(lhs as tf.Tensor2D, rhs as tf.Tensor2D);
+    console.log(`js_matrix_matmul: lhs=${lhsVarId}, rhs=${rhsVarId}, tempId=${tempId}`);
+    return tempId;
+}
+
+export function js_matrix_transpose(varId: number): number {
+    flushBuffer(varId);
+    const t = tfSpace[varId];
+    if (!t || t.shape.length !== 2) {
+        console.warn(`matrix_transpose failed: varId=${varId}`);
+        return 0;
+    }
+    const tempId = tempTensorCounter++;
+    tfSpace[tempId] = tf.transpose(t);
+    console.log(`js_matrix_transpose: varId=${varId}, tempId=${tempId}`);
+    return tempId;
+}
+
+export function js_matrix_det(varId: number): number {
+    const r = _readMatrix(varId);
+    if (!r) return 0;
+    if (r.rows !== r.cols) { console.warn(`matrix_det: not square (${r.rows}x${r.cols})`); return 0; }
+    const n = r.rows;
+    const m = r.m.map(row => row.slice());
+    let det = 1;
+    for (let i = 0; i < n; i++) {
+        let p = i;
+        for (let k = i + 1; k < n; k++) if (Math.abs(m[k][i]) > Math.abs(m[p][i])) p = k;
+        if (Math.abs(m[p][i]) < 1e-12) return 0;
+        if (p !== i) { [m[i], m[p]] = [m[p], m[i]]; det = -det; }
+        det *= m[i][i];
+        for (let k = i + 1; k < n; k++) {
+            const f = m[k][i] / m[i][i];
+            for (let j = i; j < n; j++) m[k][j] -= f * m[i][j];
+        }
+    }
+    console.log(`js_matrix_det: varId=${varId}, det=${det}`);
+    return det;
+}
+
+export function js_matrix_trace(varId: number): number {
+    const r = _readMatrix(varId);
+    if (!r) return 0;
+    const n = Math.min(r.rows, r.cols);
+    let t = 0;
+    for (let i = 0; i < n; i++) t += r.m[i][i];
+    console.log(`js_matrix_trace: varId=${varId}, trace=${t}`);
+    return t;
+}
+
+export function js_matrix_inverse(varId: number): number {
+    const r = _readMatrix(varId);
+    if (!r) return 0;
+    if (r.rows !== r.cols) { console.warn(`matrix_inverse: not square (${r.rows}x${r.cols})`); return 0; }
+    const n = r.rows;
+    // [A | I] → Gauss-Jordan with partial pivoting
+    const A = r.m.map((row, i) => {
+        const id = new Array(n).fill(0);
+        id[i] = 1;
+        return [...row, ...id];
+    });
+    for (let i = 0; i < n; i++) {
+        let p = i;
+        for (let k = i + 1; k < n; k++) if (Math.abs(A[k][i]) > Math.abs(A[p][i])) p = k;
+        if (Math.abs(A[p][i]) < 1e-12) { console.warn(`matrix_inverse: singular`); return 0; }
+        [A[i], A[p]] = [A[p], A[i]];
+        const piv = A[i][i];
+        for (let j = 0; j < 2 * n; j++) A[i][j] /= piv;
+        for (let k = 0; k < n; k++) {
+            if (k === i) continue;
+            const f = A[k][i];
+            for (let j = 0; j < 2 * n; j++) A[k][j] -= f * A[i][j];
+        }
+    }
+    const inv = A.map(row => row.slice(n));
+    const id = _storeMatrix(inv);
+    console.log(`js_matrix_inverse: varId=${varId}, tempId=${id}`);
+    return id;
+}
+
+export function js_matrix_identity(n: number): number {
+    const size = Math.max(1, Math.floor(n));
+    const tempId = tempTensorCounter++;
+    tfSpace[tempId] = tf.eye(size);
+    console.log(`js_matrix_identity: n=${size}, tempId=${tempId}`);
+    return tempId;
+}
+
 export function js_tensor_neg(varId: number): number {
     flushBuffer(varId);
     const tensor = tfSpace[varId];

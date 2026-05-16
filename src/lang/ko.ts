@@ -162,7 +162,7 @@ const ko: langpack = {
     // ── Workspace ─────────────────────────────────────────────────────────────
     workspace: {
         compile: {
-            block_to_ast: "📦 블록 → simphy AST 변환 중..."
+            block_to_ast: "📦 블록 → simulizer AST 변환 중..."
         },
         blocks: {
             not:                       "! $0",
@@ -332,6 +332,14 @@ const ko: langpack = {
         tensor_get_by_index:  ["텐서[인덱스] (동적)"],
         tensor_perlin:        ["PERLIN_NOISE 행:%1 열:%2"],
         tensor_show_mat:      ["행렬 표시 %1"],
+        // matrix
+        matrix_create:        ["matrix rows: %1 cols: %2"],
+        matrix_matmul:        ["%1 @ %2"],
+        matrix_transpose:     ["transpose( %1 )"],
+        matrix_inverse:       ["inverse( %1 )"],
+        matrix_det:           ["det( %1 )"],
+        matrix_trace:         ["tr( %1 )"],
+        matrix_identity:      ["I( %1 )"],
         // vector
         vec2_literal:         ["vec2( %1 , %2 )"],
         vec2_get:             ["vec2 %1"],
@@ -404,6 +412,11 @@ const ko: langpack = {
         wasm_return_i32:      ["반환 정수 %1"],
         wasm_return_f64:      ["반환 실수 %1"],
         wasm_func_main:       ["함수 main → %1", "본문 %1"],
+    },
+
+    block_dropdowns: {
+        bool_const: { VALUE: { "1": "참", "0": "거짓" } },
+        bool_binop: { OP: { and: "그리고", or: "또는", xor: "XOR" } },
     },
 
     block_dynamic: {

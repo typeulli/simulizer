@@ -331,6 +331,14 @@ type langpack = {
         tensor_get_by_index: string[],
         tensor_perlin: string[],
         tensor_show_mat: string[],
+        // matrix
+        matrix_create: string[],
+        matrix_matmul: string[],
+        matrix_transpose: string[],
+        matrix_inverse: string[],
+        matrix_det: string[],
+        matrix_trace: string[],
+        matrix_identity: string[],
         // vector
         vec2_literal: string[],
         vec2_get: string[],
@@ -403,6 +411,12 @@ type langpack = {
         wasm_return_i32: string[],
         wasm_return_f64: string[],
         wasm_func_main: string[],
+    },
+
+    // ── Dropdown option label translations (keyed by block type → arg → value) ─
+    block_dropdowns: {
+        bool_const: { VALUE: { "1": string, "0": string } },
+        bool_binop: { OP: { and: string, or: string, xor: string } },
     },
 
     // ── Dynamically registered block labels (not BlockBuilder-based) ─────────

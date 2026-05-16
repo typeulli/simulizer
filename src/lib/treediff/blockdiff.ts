@@ -40,6 +40,21 @@ function serialize_inputs(data: any): any {
     return o;
 }
 
+export type BlockMeta = {
+    id: string;
+    inputs?: Record<string, BlockMeta>;
+};
+
+function extract_meta(data: any): BlockMeta {
+    const m: BlockMeta = { id: data.id };
+    const children: Record<string, BlockMeta> = {};
+    for (const k in (data.inputs ?? {})) {
+        children[k] = extract_meta(data.inputs[k].block);
+    }
+    if (Object.keys(children).length > 0) m.inputs = children;
+    return m;
+}
+
 
 export function normalize(block: any, ctx: NormalizeContext) {
     const type2inputs = ctx.type2inputs;
@@ -68,7 +83,17 @@ export function normalize(block: any, ctx: NormalizeContext) {
         }
 
         const content = ctx.serialize(o);
-        const node: TreeNode = { content, children: [] };
+        const meta: BlockMeta = { id: blk.id };
+        if (inputs) {
+            const childMeta: Record<string, BlockMeta> = {};
+            for (const __key of type2inputs.get(type)!) {
+                if (inputs[__key]?.block && !stmtSet.has(inputs[__key].block.type)) {
+                    childMeta[__key] = extract_meta(inputs[__key].block);
+                }
+            }
+            if (Object.keys(childMeta).length > 0) meta.inputs = childMeta;
+        }
+        const node: TreeNode = { content, children: [], meta };
         parent.children.push(node);
 
         if (inputs) {
@@ -92,18 +117,20 @@ type UnnormalizeResult = {
 
 export function unnormalize(root: TreeDiffNode, ctx: NormalizeContext): UnnormalizeResult {
     const modeMap: Record<string, "insert" | "delete" | "common"> = {};
+    let fallbackCounter = 0;
+    const nextFallbackId = () => `__diff_${fallbackCounter++}`;
 
     // Reconstruct expression block from serialize_inputs() output.
     // Format: { key: blockType, fields?: {...}, inputs?: { inputName: <recursive> } }
-    function rebuildExpr(s: any, mode: "insert" | "delete" | "common"): any | undefined {
+    function rebuildExpr(s: any, m: BlockMeta | undefined, mode: "insert" | "delete" | "common"): any | undefined {
         if (!s?.key) return undefined;
-        const id = crypto.randomUUID();
+        const id = m?.id ?? nextFallbackId();
         modeMap[id] = mode;
         const block: any = { type: s.key, id };
         if (s.fields) block.fields = s.fields;
         const childInputs: Record<string, { block: any }> = {};
         for (const [k, child] of Object.entries(s.inputs ?? {})) {
-            const childBlock = rebuildExpr(child, mode);
+            const childBlock = rebuildExpr(child, m?.inputs?.[k], mode);
             if (childBlock) childInputs[k] = { block: childBlock };
         }
         if (Object.keys(childInputs).length > 0) block.inputs = childInputs;
@@ -126,7 +153,8 @@ export function unnormalize(root: TreeDiffNode, ctx: NormalizeContext): Unnormal
             inputs: Record<string, any>;
         };
 
-        const id = crypto.randomUUID();
+        const meta: BlockMeta | undefined = node.meta;
+        const id = meta?.id ?? nextFallbackId();
         modeMap[id] = node.mode;
 
         const block: any = { type: data.type, id };
@@ -136,7 +164,7 @@ export function unnormalize(root: TreeDiffNode, ctx: NormalizeContext): Unnormal
 
         // Expression inputs — reconstructed from serialized non-stmt data
         for (const [k, serialized] of Object.entries(data.inputs)) {
-            const child = rebuildExpr(serialized, node.mode);
+            const child = rebuildExpr(serialized, meta?.inputs?.[k], node.mode);
             if (child) inputs[k] = { block: child };
         }
 

@@ -208,7 +208,7 @@ function sanitizeBlocksJson(blockJson: any, ws: Blockly.WorkspaceSvg): any {
     return result;
 }
 
-function buildSimphyTheme(name: string) {
+function buildSimulizerTheme(name: string) {
     const cs = getComputedStyle(document.documentElement);
     const cssVar = (v: string) => cs.getPropertyValue(v).trim();
     return Blockly.Theme.defineTheme(name, {
@@ -252,8 +252,9 @@ function cssColorToHex(value: string): string {
 // Custom Block Definitions
 function buildCustomBlockDefs(p: langpack): BlockDef[] {
     const msgs = p.block_messages ?? {};
+    const dropdowns = p.block_dropdowns ?? {};
     return [
-        ...unpack(translateBlockSet(CUSTOM_BLOCKS, msgs)),
+        ...unpack(translateBlockSet(CUSTOM_BLOCKS, msgs, dropdowns)),
         {
             type: "i32_not",
             message0: "! %1",
@@ -289,9 +290,9 @@ function buildCustomBlockDefs(p: langpack): BlockDef[] {
     ];
 }
 
-// Compiler [Blockly → simphy AST]
+// Compiler [Blockly → simulizer AST]
 
-type SimphyExpr = simulizer.Expr;
+type SimulizerExpr = simulizer.Expr;
 
 interface CustomFuncSpec {
     id: string;
@@ -417,7 +418,7 @@ function buildCustomFunc(
 }
 
 /** Insert automatic conversion on type mismatch */
-function coerce(expr: SimphyExpr, target: simulizer.Type): SimphyExpr {
+function coerce(expr: SimulizerExpr, target: simulizer.Type): SimulizerExpr {
     const src = expr.inferType();
     if (src.equals(target)) return expr;
     if (src.equals(simulizer.i32) && target.equals(simulizer.f64))
@@ -460,8 +461,8 @@ function declareLocal(
     return local;
 }
 
-/** Expression block → SimphyExpr */
-function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimphyExpr | null {
+/** Expression block → SimulizerExpr */
+function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimulizerExpr | null {
     if (!block) return null;
     
     for (let def of Object.values(CUSTOM_BLOCKS)) {
@@ -510,7 +511,7 @@ function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimphyExpr |
                     const args = spec.params.map((p, i) => {
                         const e = blockToExpr(block.getInputTargetBlock(`ARG${i}`), ctx);
                         return e ? coerce(e, p.type === "i32" ? simulizer.i32 : simulizer.f64) : null;
-                    }).filter((a): a is SimphyExpr => a !== null);
+                    }).filter((a): a is SimulizerExpr => a !== null);
                     return new simulizer.Call(spec.name, args, retTypeMap[spec.retType]);
                 }
             }
@@ -519,8 +520,8 @@ function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimphyExpr |
     }
 }
 
-/** Single statement block → SimphyExpr | null */
-function stmtBlockToExpr(block: Blockly.Block, ctx: CompileCtx): SimphyExpr | null {
+/** Single statement block → SimulizerExpr | null */
+function stmtBlockToExpr(block: Blockly.Block, ctx: CompileCtx): SimulizerExpr | null {
 
     for (let def of Object.values(CUSTOM_BLOCKS)) {
         if (block.type === def.type && def.buildMode === "stmt") {
@@ -550,7 +551,7 @@ function stmtBlockToExpr(block: Blockly.Block, ctx: CompileCtx): SimphyExpr | nu
                     const args = spec.params.map((p, i) => {
                         const e = blockToExpr(block.getInputTargetBlock(`ARG${i}`), ctx);
                         return e ? coerce(e, p.type === "i32" ? simulizer.i32 : simulizer.f64) : null;
-                    }).filter((a): a is SimphyExpr => a !== null);
+                    }).filter((a): a is SimulizerExpr => a !== null);
                     return new simulizer.Call(spec.name, args, simulizer.void_);
                 }
             }
@@ -561,8 +562,8 @@ function stmtBlockToExpr(block: Blockly.Block, ctx: CompileCtx): SimphyExpr | nu
 }
 
 /** Entire statement chain → Expr[] */
-function stmtChainToExprs(block: Blockly.Block | null, ctx: CompileCtx): SimphyExpr[] {
-    const exprs: SimphyExpr[] = [];
+function stmtChainToExprs(block: Blockly.Block | null, ctx: CompileCtx): SimulizerExpr[] {
+    const exprs: SimulizerExpr[] = [];
     let cur: Blockly.Block | null = block;
     while (cur) {
         const e = stmtBlockToExpr(cur, ctx);
@@ -572,7 +573,7 @@ function stmtChainToExprs(block: Blockly.Block | null, ctx: CompileCtx): SimphyE
     return exprs;
 }
 
-function allPathsReturn(exprs: SimphyExpr[]): boolean {
+function allPathsReturn(exprs: SimulizerExpr[]): boolean {
     if (exprs.length === 0) return false;
     const last = exprs[exprs.length - 1];
     if (last instanceof simulizer.Return) return true;
@@ -1231,7 +1232,7 @@ const BlocklyWasmIDE: React.FC = () => {
             grid:     { spacing: 20, length: 3, colour: cssVar("--grid-dot"), snap: true },
             zoom:     { controls: true, wheel: true, startScale: 0.9 },
             trashcan: isOwner,
-            theme:    buildSimphyTheme("simphy"),
+            theme:    buildSimulizerTheme("simphy"),
             renderer: "zelos",
             readOnly: !isOwner,
             move:     { scrollbars: true, drag: true, wheel: true },
@@ -1529,8 +1530,8 @@ const BlocklyWasmIDE: React.FC = () => {
     // Re-apply Blockly theme when data-theme attribute changes (dark/light mode toggle)
     useEffect(() => {
         const observer = new MutationObserver(() => {
-            workspaceRef.current?.setTheme(buildSimphyTheme("simphy"));
-            chatDiffWsRef.current?.setTheme(buildSimphyTheme("simphy_diff"));
+            workspaceRef.current?.setTheme(buildSimulizerTheme("simulizer"));
+            chatDiffWsRef.current?.setTheme(buildSimulizerTheme("simulizer_diff"));
         });
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
         return () => observer.disconnect();
@@ -1633,7 +1634,7 @@ const BlocklyWasmIDE: React.FC = () => {
         const diffWs = Blockly.inject(chatDiffDivRef.current, {
             zoom:     { controls: true, wheel: true, startScale: 0.7 },
             renderer: "zelos",
-            theme:    buildSimphyTheme("simphy_diff"),
+            theme:    buildSimulizerTheme("simphy_diff"),
         });
         chatDiffWsRef.current = diffWs;
 
@@ -1767,6 +1768,13 @@ const BlocklyWasmIDE: React.FC = () => {
             new simulizer.ImportDef("debug",  "graph_arr_range_i32", "func", "graph_arr_range_i32", "(param i32 i32 f64 f64)"),
             new simulizer.ImportDef("debug",  "graph_arr_range_f64", "func", "graph_arr_range_f64", "(param i32 i32 f64 f64)"),
             new simulizer.ImportDef("tensor", "tensor_perlin",    "func", "tensor_perlin",    "(param i32 i32 i32) (result i32)"),
+            new simulizer.ImportDef("matrix", "matrix_create",    "func", "matrix_create",    "(param i32 i32 i32) (result i32)"),
+            new simulizer.ImportDef("matrix", "matrix_matmul",    "func", "matrix_matmul",    "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("matrix", "matrix_transpose", "func", "matrix_transpose", "(param i32) (result i32)"),
+            new simulizer.ImportDef("matrix", "matrix_inverse",   "func", "matrix_inverse",   "(param i32) (result i32)"),
+            new simulizer.ImportDef("matrix", "matrix_det",       "func", "matrix_det",       "(param i32) (result f64)"),
+            new simulizer.ImportDef("matrix", "matrix_trace",     "func", "matrix_trace",     "(param i32) (result f64)"),
+            new simulizer.ImportDef("matrix", "matrix_identity",  "func", "matrix_identity",  "(param i32) (result i32)"),
             new simulizer.ImportDef("math",   "math_exp",         "func", "math_exp",         "(param f64) (result f64)"),
             new simulizer.ImportDef("math",   "math_ln",          "func", "math_ln",          "(param f64) (result f64)"),
             new simulizer.ImportDef("math",   "math_cos",         "func", "math_cos",         "(param f64) (result f64)"),
@@ -2739,7 +2747,7 @@ const BlocklyWasmIDE: React.FC = () => {
                                 </div>
                             </div>
                             {/* Log */}
-                            <div className="simphy-log" style={{ flex:1, overflowY:"auto", padding:"8px 0" }} ref={logAreaRef}>
+                            <div className="simulizer-log" style={{ flex:1, overflowY:"auto", padding:"8px 0" }} ref={logAreaRef}>
                                 <div data-placeholder style={{ padding:"3px 14px", color:token.color.fgSubtle, fontFamily:token.font.family.mono, fontSize:token.font.size.fs11 }}>
                                     {pack.workspace.ui.log_placeholder}
                                 </div>

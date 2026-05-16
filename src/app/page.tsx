@@ -58,7 +58,9 @@ export default function Home() {
         </Link>
 
         <Inline gap="sp6">
-          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_docs}</Text>
+          <Link href="/docs" style={{ textDecoration: "none" }}>
+            <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_docs}</Text>
+          </Link>
           <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_examples}</Text>
           <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_github}</Text>
           <Divider orientation="vertical" style={{ height: 16 }} />

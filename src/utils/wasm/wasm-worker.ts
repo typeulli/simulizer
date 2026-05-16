@@ -17,6 +17,13 @@ import {
     js_tensor_get_field_data,
     js_tensor_perlin,
     js_tensor_reset,
+    js_matrix_create,
+    js_matrix_matmul,
+    js_matrix_transpose,
+    js_matrix_inverse,
+    js_matrix_det,
+    js_matrix_trace,
+    js_matrix_identity,
 } from "./tensor";
 import { simulizer } from "./engine";
 
@@ -205,6 +212,15 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
                     js_tensor_get(tensorId, n, i0, i1, i2, i3, i4, i5),
                 tensor_perlin: (varid: number, rows: number, cols: number) =>
                     js_tensor_perlin(varid, rows, cols),
+            },
+            matrix: {
+                matrix_create:    (varid: number, rows: number, cols: number) => js_matrix_create(varid, rows, cols),
+                matrix_matmul:    (lhsVarId: number, rhsVarId: number) => js_matrix_matmul(lhsVarId, rhsVarId),
+                matrix_transpose: (varId: number) => js_matrix_transpose(varId),
+                matrix_inverse:   (varId: number) => js_matrix_inverse(varId),
+                matrix_det:       (varId: number) => js_matrix_det(varId),
+                matrix_trace:     (varId: number) => js_matrix_trace(varId),
+                matrix_identity:  (n: number) => js_matrix_identity(n),
             },
         };
 

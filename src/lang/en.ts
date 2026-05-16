@@ -162,7 +162,7 @@ const en: langpack = {
     // ── Workspace ─────────────────────────────────────────────────────────────
     workspace: {
         compile: {
-            block_to_ast: "📦 Block → simphy AST conversion in progress..."
+            block_to_ast: "📦 Block → simulizer AST conversion in progress..."
         },
         blocks: {
             not:                       "! $0",
@@ -332,6 +332,14 @@ const en: langpack = {
         tensor_get_by_index:  ["tensor[index] (dynamic)"],
         tensor_perlin:        ["PERLIN_NOISE rows:%1 cols:%2"],
         tensor_show_mat:      ["show_mat %1"],
+        // matrix
+        matrix_create:        ["matrix rows: %1 cols: %2"],
+        matrix_matmul:        ["%1 @ %2"],
+        matrix_transpose:     ["transpose( %1 )"],
+        matrix_inverse:       ["inverse( %1 )"],
+        matrix_det:           ["det( %1 )"],
+        matrix_trace:         ["tr( %1 )"],
+        matrix_identity:      ["I( %1 )"],
         // vector
         vec2_literal:         ["vec2( %1 , %2 )"],
         vec2_get:             ["vec2 %1"],
@@ -404,6 +412,11 @@ const en: langpack = {
         wasm_return_i32:      ["return int %1"],
         wasm_return_f64:      ["return float %1"],
         wasm_func_main:       ["function main → %1", "body %1"],
+    },
+
+    block_dropdowns: {
+        bool_const: { VALUE: { "1": "true", "0": "false" } },
+        bool_binop: { OP: { and: "&&", or: "||", xor: "XOR" } },
     },
 
     block_dynamic: {
