@@ -70,7 +70,7 @@ export const F64_BLOCKS: BlockSet = {
         })
 }
 
-export function xmlF64Blocks(cat: string) {
+export function xmlF64Blocks(cat: string): string {
     return `<category name="${cat}" colour="${160}">
     <sep gap="16"></sep>
     <label text="Float"></label>

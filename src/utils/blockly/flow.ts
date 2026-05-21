@@ -1,3 +1,4 @@
+import * as Blockly from "blockly/core";
 import { simulizer } from "../wasm/engine";
 import { BlockBuilder, type BlockSet } from "./$base";
 
@@ -90,6 +91,17 @@ export const FLOW_BLOCKS: BlockSet = {
             return new simulizer.Block(breakLabel, [init, loop]);
         }),
                     
+    FLOW_FOLD_REGION: new BlockBuilder("flow_fold_region", undefined, 120, "코드 영역 (접기 가능)")
+        .addBody("region %1")
+        .addArg("field_input", "NAME", undefined, "region")
+        .addBody("%1")
+        .addArgStmt("BODY")
+        .stmt((block, ctx) => {
+            const rawName = (block.getFieldValue("NAME") as string) || "region";
+            const safeName = rawName.replace(/[^a-zA-Z0-9_]/g, "_") || "region";
+            const bodyExprs = ctx.stmtChainToExprs(block.getInputTargetBlock("BODY"), ctx);
+            return new simulizer.Block(`region_${safeName}`, bodyExprs);
+        }),
     FLOW_BREAK: new BlockBuilder("flow_break", undefined, 120, "반복문 탈출 (break)")
         .addBody("break")
         .stmt((_, ctx) => {
@@ -139,7 +151,69 @@ export function xmlFlowBlocks(cat: string) {
     <block type="flow_if_else"></block>
     <block type="flow_while"></block>
     <block type="flow_for"></block>
+    <block type="flow_fold_region"></block>
     <block type="i32_select"></block>
     <block type="f64_select"></block>
 </category>`;
+}
+
+/**
+ * flow_fold_region — 헤더(NAME)는 항상 보이고, 내부 BODY input은 ▼/▶ 토글로 접고 펼 수 있음.
+ * BlockBuilder 의 기본 JSON 정의가 등록되기 전에 호출하여 커스텀 init 으로 덮어쓴다.
+ */
+export function registerFoldRegionBlock() {
+    const encode = (svg: string) =>
+        "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    const downArrow = encode(
+        `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M3 6l5 5 5-5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>`,
+    );
+    const rightArrow = encode(
+        `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6 3l5 5-5 5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>`,
+    );
+
+    Blockly.Blocks["flow_fold_region"] = {
+        init(this: Blockly.Block) {
+            (this as unknown as { _folded: boolean })._folded = false;
+
+            const onToggle = () => {
+                const self = this as unknown as { _folded: boolean; _applyFold: () => void };
+                self._folded = !self._folded;
+                self._applyFold();
+            };
+
+            const toggleField = new Blockly.FieldImage(
+                downArrow, 14, 14, "fold", onToggle,
+            );
+
+            this.appendDummyInput("HEADER")
+                .appendField(toggleField, "TOGGLE")
+                .appendField("region")
+                .appendField(new Blockly.FieldTextInput("region"), "NAME");
+            this.appendStatementInput("BODY");
+
+            this.setPreviousStatement(true);
+            this.setNextStatement(true);
+            this.setColour(120);
+            this.setTooltip("code region — fold/unfold the body");
+            this.setInputsInline(false);
+        },
+        saveExtraState(this: Blockly.Block) {
+            return { folded: (this as unknown as { _folded?: boolean })._folded ?? false };
+        },
+        loadExtraState(this: Blockly.Block, state: { folded?: boolean }) {
+            const self = this as unknown as { _folded: boolean; _applyFold: () => void };
+            self._folded = !!state.folded;
+            self._applyFold();
+        },
+        _applyFold(this: Blockly.Block) {
+            const folded = !!(this as unknown as { _folded?: boolean })._folded;
+            const body = this.getInput("BODY");
+            if (body) body.setVisible(!folded);
+            const toggle = this.getField("TOGGLE") as Blockly.FieldImage | null;
+            if (toggle) toggle.setValue(folded ? rightArrow : downArrow);
+            if ((this as unknown as { rendered?: boolean }).rendered) {
+                (this as Blockly.BlockSvg).render();
+            }
+        },
+    };
 }

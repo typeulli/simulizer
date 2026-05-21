@@ -248,7 +248,7 @@ export function xmlBoundaryBlocks(cat: string, btnLabel: string) {
     return `<category name="${cat}" colour="${200}">
     <sep gap="16"></sep>
     <label text="Boundary Condition"></label>
-    <button text="${btnLabel}" callbackKey="OPEN_BD2_MGR"></button>
+    <button text="${btnLabel}" callbackKey="OPEN_BD_MGR"></button>
     <label text="2D"></label>
     <sep gap="2"></sep>
     <label text="─────────────────"></label>

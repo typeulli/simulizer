@@ -242,6 +242,13 @@ type langpack = {
             share_readonly_badge: string,
             share_duplicate_button: string,
             share_login_to_duplicate: string,
+            const_mgr_title: string,
+            const_select_hint: string,
+            const_tab_math: string,
+            const_tab_fundamental: string,
+            const_tab_experimental: string,
+            const_search_placeholder: string,
+            const_no_results: string,
         },
         toolbox: {
             int: string,
@@ -258,6 +265,7 @@ type langpack = {
             func: string,
             func_btn: string,
             boundary_btn: string,
+            float_const_btn: string,
         },
         alerts: {
             func_name_required: string,

@@ -18,7 +18,7 @@ import { xmlBoolBlocks } from "@/utils/blockly/bool";
 import { xmlDebugBlocks } from "@/utils/blockly/debug";
 import { xmlUtilBlocks } from "@/utils/blockly/util";
 import { xmlI32Blocks } from "@/utils/blockly/i32";
-import { xmlLocalBlocks } from "@/utils/blockly/locals";
+import { xmlLocalBlocks, type BuiltinConst } from "@/utils/blockly/locals";
 import { xmlTensorBlocks, registerDynamicTensorBlocks } from "@/utils/blockly/tensor";
 import { mat_data_to_image_url, vec_field_to_image_url } from "@/utils/wasm/tensor";
 import { CUSTOM_BLOCKS } from "@/utils/blockly/$blocks";
@@ -34,6 +34,7 @@ import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { token } from "@/components/tokens";
 import { BlockManagerModal } from "@/components/workspace-modals/BlockManagerModal";
 import { BoundaryManagerModal } from "@/components/workspace-modals/BoundaryManagerModal";
+import { ConstManagerModal } from "@/components/workspace-modals/ConstManagerModal";
 import { ErrorModal } from "@/components/workspace-modals/ErrorModal";
 import { FunctionManagerModal } from "@/components/workspace-modals/FunctionManagerModal";
 import { LatexOcrModal } from "@/components/workspace-modals/LatexOcrModal";
@@ -42,7 +43,7 @@ import { useConsolePanel } from "@/components/console";
 import useLanguagePack from "@/hooks/useLanguagePack";
 import langpack from "@/lang/lang";
 import { xmlF64Blocks } from "@/utils/blockly/f64";
-import { xmlFlowBlocks } from "@/utils/blockly/flow";
+import { xmlFlowBlocks, registerFoldRegionBlock } from "@/utils/blockly/flow";
 import { xmlVectorBlocks } from "@/utils/blockly/vector";
 import { xmlBoundaryBlocks } from "@/utils/blockly/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
@@ -665,7 +666,7 @@ function buildBaseToolboxXml(p: langpack): string {
     ${xmlBoolBlocks(tb.bool)}
     ${xmlI32Blocks(tb.int)}
     ${xmlF64Blocks(tb.float)}
-    ${xmlLocalBlocks(tb.var)}
+    ${xmlLocalBlocks(tb.var, tb.float_const_btn)}
     ${xmlFlowBlocks(tb.flow)}
     ${xmlArrayBlocks(tb.array)}
     ${xmlTensorBlocks(tb.tensor)}
@@ -806,6 +807,8 @@ const BlocklyWasmIDE: React.FC = () => {
     const [showBdMgr, setShowBdMgr]   = useState(false);
     const [bdMgrTab,  setBdMgrTab]    = useState<"2d" | "3d">("2d");
 
+    const [showConstMgr, setShowConstMgr] = useState(false);
+
     const [showLatexOcr, setShowLatexOcr] = useState(false);
     const [ocrLatex, setOcrLatex]         = useState("");
     const [ocrStreaming, setOcrStreaming] = useState(false);
@@ -825,6 +828,7 @@ const BlocklyWasmIDE: React.FC = () => {
     const [translatedSource, setTranslatedSource] = useState<string | null>(null);
     const [translating, setTranslating]         = useState(false);
     const [compiling, setCompiling]             = useState(false);
+    const [compileProgress, setCompileProgress] = useState<{ status: "progress" | "done" | "error"; step: number; total: number; message: string } | null>(null);
     const [chatPrompt, setChatPrompt]           = useState("");
     const [chatOutput, setChatOutput]           = useState("");
     const [chatResult, setChatResult]           = useState<object | null>(null);
@@ -924,6 +928,29 @@ const BlocklyWasmIDE: React.FC = () => {
 
         if (lastBlock) ws.centerOnBlock((lastBlock as Blockly.Block).id);
         setShowLatexOcr(false);
+    }, []);
+
+    const handleAddConsts = useCallback((consts: BuiltinConst[]) => {
+        const ws = workspaceRef.current;
+        if (!ws || consts.length === 0) return;
+
+        const buildBlock = (i: number): string => {
+            const c = consts[i];
+            const next = i + 1 < consts.length ? `<next>${buildBlock(i + 1)}</next>` : "";
+            return `<block type="local_decl_f64"><field name="NAME">${c.name}</field><value name="INIT"><block type="f64_const"><field name="VALUE">${c.value}</field></block></value>${next}</block>`;
+        };
+
+        const metrics = ws.getMetrics();
+        const x = Math.round(metrics.viewLeft + metrics.viewWidth / 2 - 80);
+        const y = Math.round(metrics.viewTop + metrics.viewHeight / 2 - 20);
+
+        const rootBlockXml = buildBlock(0).replace(
+            `<block type="local_decl_f64">`,
+            `<block type="local_decl_f64" x="${x}" y="${y}">`,
+        );
+        const xml = `<xml xmlns="https://developers.google.com/blockly/xml">${rootBlockXml}</xml>`;
+        Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(xml), ws);
+        setShowConstMgr(false);
     }, []);
 
     const handleChat = useCallback(() => {
@@ -1213,6 +1240,7 @@ const BlocklyWasmIDE: React.FC = () => {
         if (isOwner === null) return;
         registerDynamicTensorBlocks(pack);
         registerDynamicArrayBlocks(pack);
+        registerFoldRegionBlock();
         buildCustomBlockDefs(pack).forEach((def) => {
             const d = def as { type: string };
             if (!Blockly.Blocks[d.type]) {
@@ -1240,8 +1268,8 @@ const BlocklyWasmIDE: React.FC = () => {
 
         workspaceRef.current = ws;
         ws.registerButtonCallback("OPEN_FUNC_MGR",   () => setShowFuncMgr(true));
-        ws.registerButtonCallback("OPEN_BD2_MGR",    () => { setBdMgrTab("2d"); setShowBdMgr(true); });
-        ws.registerButtonCallback("OPEN_BD3_MGR",    () => { setBdMgrTab("3d"); setShowBdMgr(true); });
+        ws.registerButtonCallback("OPEN_BD_MGR",     () => { setBdMgrTab("2d"); setShowBdMgr(true); });
+        ws.registerButtonCallback("OPEN_CONST_MGR",  () => setShowConstMgr(true));
         ws.registerButtonCallback("OPEN_LATEX_OCR",  () => { setOcrLatex(""); setOcrImageUrl(null); setShowLatexOcr(true); });
         
         const refreshInfo = () => {
@@ -1868,22 +1896,82 @@ const BlocklyWasmIDE: React.FC = () => {
         const processedSave = replaceLatexBlocksInWorkspace(rawSave);
         const blocklyJson = JSON.stringify(processedSave);
         setCompiling(true);
+        setCompileProgress({ status: "progress", step: 0, total: 0, message: "요청 전송 중..." });
         try {
             const res = await fetch(`${API_BASE}/compile`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
                 body: JSON.stringify({ code: blocklyJson }),
             });
-            if (!res.ok) {
+            if (!res.ok || !res.body) {
                 const err = await res.json().catch(() => ({ detail: res.statusText }));
-                addLog("error", err.detail ?? "Compile failed");
+                setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: err.detail ?? "Compile failed" }));
                 return;
             }
-            const { uuid } = await res.json();
-            const dlRes = await fetch(`${API_BASE}/compile/download?uuid=${uuid}`);
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let uuid: string | null = null;
+            let doneUuid: string | null = null;
+            let errored = false;
+            let streamEnded = false;
+
+            const handleEvent = (eventName: string, dataStr: string) => {
+                if (!dataStr) return;
+                let payload: { uuid?: string; step?: number; total?: number; message?: string; detail?: string };
+                try { payload = JSON.parse(dataStr); } catch { return; }
+                if (eventName === "error") {
+                    errored = true;
+                    setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: payload.detail ?? "Compile failed" }));
+                    return;
+                }
+                if (eventName === "done") {
+                    doneUuid = payload.uuid ?? uuid;
+                    setCompileProgress(prev => ({ status: "progress", step: prev?.total ?? prev?.step ?? 0, total: prev?.total ?? 0, message: "다운로드 준비 중..." }));
+                    return;
+                }
+                // default "message" event: progress — total/step driven entirely by server
+                if (payload.uuid && !uuid) uuid = payload.uuid;
+                if (payload.message) {
+                    setCompileProgress(prev => ({
+                        status: "progress",
+                        step: payload.step ?? prev?.step ?? 0,
+                        total: payload.total ?? prev?.total ?? 0,
+                        message: payload.message!,
+                    }));
+                }
+            };
+
+            while (!streamEnded) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                let sepIdx: number;
+                while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+                    const rawBlock = buffer.slice(0, sepIdx);
+                    buffer = buffer.slice(sepIdx + 2);
+                    let eventName = "message";
+                    const dataLines: string[] = [];
+                    for (const line of rawBlock.split("\n")) {
+                        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+                        else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+                    }
+                    handleEvent(eventName, dataLines.join("\n"));
+                    if (errored || doneUuid) { streamEnded = true; break; }
+                }
+            }
+
+            if (errored) return;
+            if (!doneUuid) {
+                setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: "Compile stream ended without completion" }));
+                return;
+            }
+
+            const dlRes = await fetch(`${API_BASE}/compile/download/${doneUuid}`);
             if (!dlRes.ok) {
                 const err = await dlRes.json().catch(() => ({ detail: dlRes.statusText }));
-                addLog("error", err.detail ?? "Download failed");
+                setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: err.detail ?? "Download failed" }));
                 return;
             }
             const blob = await dlRes.blob();
@@ -1893,12 +1981,13 @@ const BlocklyWasmIDE: React.FC = () => {
             a.download = "output.exe";
             a.click();
             URL.revokeObjectURL(url);
+            setCompileProgress(prev => ({ status: "done", step: prev?.total ?? prev?.step ?? 0, total: prev?.total ?? 0, message: "다운로드 완료" }));
         } catch (e) {
-            addLog("error", e instanceof Error ? e.message : String(e));
+            setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: e instanceof Error ? e.message : String(e) }));
         } finally {
             setCompiling(false);
         }
-    }, [watSource, compiling, addLog]);
+    }, [watSource, compiling]);
 
     const handleReset = useCallback(() => {
         const ws = workspaceRef.current;
@@ -2629,6 +2718,35 @@ const BlocklyWasmIDE: React.FC = () => {
                                     </button>
                                 )}
                             </div>
+                            {watLang === "cpp" && compileProgress && (
+                                <div style={{ position:"absolute", bottom:16, right:24, zIndex:15, width:300, padding:"10px 12px", background:token.color.bgRaised, border:`1px solid ${compileProgress.status === "error" ? "#e5484d" : compileProgress.status === "done" ? "#46a758" : token.color.border}`, borderRadius:token.radius.sm, boxShadow:"0 6px 18px rgba(0,0,0,0.35)", display:"flex", flexDirection:"column", gap:8 }}>
+                                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                                        <span style={{ flex:1, fontSize:token.font.size.fs11, color: compileProgress.status === "error" ? "#e5484d" : token.color.fg, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace: compileProgress.status === "error" ? "normal" : "nowrap", wordBreak:"break-word", maxHeight: compileProgress.status === "error" ? 120 : undefined, overflowY: compileProgress.status === "error" ? "auto" : undefined }}>
+                                            {compileProgress.status === "done" && "✓ "}
+                                            {compileProgress.status === "error" && "✕ "}
+                                            {compileProgress.message}
+                                        </span>
+                                        <button
+                                            onClick={() => setCompileProgress(null)}
+                                            disabled={compileProgress.status === "progress"}
+                                            style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", padding:2, border:"none", background:"none", color:token.color.fgMuted, cursor: compileProgress.status === "progress" ? "default" : "pointer", opacity: compileProgress.status === "progress" ? 0.3 : 1 }}
+                                            aria-label="Dismiss"
+                                        >
+                                            <Icon.X size={11} />
+                                        </button>
+                                    </div>
+                                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                                        <div style={{ flex:1, height:4, background:token.color.bgSubtle, borderRadius:2, overflow:"hidden" }}>
+                                            <div style={{ width: `${Math.max(0, Math.min(100, (compileProgress.step / Math.max(1, compileProgress.total)) * 100))}%`, height:"100%", background: compileProgress.status === "error" ? "#e5484d" : compileProgress.status === "done" ? "#46a758" : token.color.fg, transition:"width 0.2s ease" }} />
+                                        </div>
+                                        {compileProgress.total > 0 && (
+                                            <span style={{ fontSize:token.font.size.fs11, color:token.color.fgSubtle, fontVariantNumeric:"tabular-nums" }}>
+                                                {compileProgress.step}/{compileProgress.total}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                             {translating
                                 ? <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>Translating…</div>
                                 : watLang === "wat"
@@ -2876,6 +2994,13 @@ const BlocklyWasmIDE: React.FC = () => {
                 onAddParam={() => setNewFuncParams(prev => [...prev, { name: `p${prev.length}`, type: "i32" }])}
                 onAddFunc={handleAddFunc}
                 onRemoveFunc={handleRemoveFunc}
+            />
+
+            <ConstManagerModal
+                open={showConstMgr}
+                onClose={() => setShowConstMgr(false)}
+                onAdd={handleAddConsts}
+                pack={pack}
             />
 
             <BoundaryManagerModal
