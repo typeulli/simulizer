@@ -1,0 +1,328 @@
+{
+  "blocks": {
+    "languageVersion": 0,
+    "blocks": [
+      {
+        "type": "wasm_func_main",
+        "id": "main",
+        "x": 20,
+        "y": 20,
+        "fields": {
+          "RET_TYPE": "i32"
+        },
+        "inputs": {
+          "BODY": {
+            "block": {
+              "type": "local_decl_i32",
+              "id": "di1",
+              "fields": {
+                "NAME": "years"
+              },
+              "inputs": {
+                "INIT": {
+                  "block": {
+                    "type": "i32_const",
+                    "id": "i0",
+                    "fields": {
+                      "VALUE": 30
+                    }
+                  }
+                }
+              },
+              "next": {
+                "block": {
+                  "type": "local_decl_f64",
+                  "id": "df3",
+                  "fields": {
+                    "NAME": "rate"
+                  },
+                  "inputs": {
+                    "INIT": {
+                      "block": {
+                        "type": "f64_const",
+                        "id": "f2",
+                        "fields": {
+                          "VALUE": 0.05
+                        }
+                      }
+                    }
+                  },
+                  "next": {
+                    "block": {
+                      "type": "local_array_decl_f64",
+                      "id": "ad7",
+                      "fields": {
+                        "NAME": "balance"
+                      },
+                      "inputs": {
+                        "SIZE": {
+                          "block": {
+                            "type": "i32_binop",
+                            "id": "bi6",
+                            "fields": {
+                              "OP": "add"
+                            },
+                            "inputs": {
+                              "LHS": {
+                                "block": {
+                                  "type": "local_get_i32",
+                                  "id": "gi4",
+                                  "fields": {
+                                    "NAME": "years"
+                                  }
+                                }
+                              },
+                              "RHS": {
+                                "block": {
+                                  "type": "i32_const",
+                                  "id": "i5",
+                                  "fields": {
+                                    "VALUE": 1
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "next": {
+                        "block": {
+                          "type": "array_set_f64",
+                          "id": "as11",
+                          "inputs": {
+                            "ARRAY": {
+                              "block": {
+                                "type": "local_array_get_f64",
+                                "id": "gaf8",
+                                "fields": {
+                                  "NAME": "balance"
+                                }
+                              }
+                            },
+                            "INDEX": {
+                              "block": {
+                                "type": "i32_const",
+                                "id": "i9",
+                                "fields": {
+                                  "VALUE": 0
+                                }
+                              }
+                            },
+                            "VALUE": {
+                              "block": {
+                                "type": "f64_const",
+                                "id": "f10",
+                                "fields": {
+                                  "VALUE": 1000000.0
+                                }
+                              }
+                            }
+                          },
+                          "next": {
+                            "block": {
+                              "type": "flow_for",
+                              "id": "for28",
+                              "fields": {
+                                "VAR": "i"
+                              },
+                              "inputs": {
+                                "START": {
+                                  "block": {
+                                    "type": "i32_const",
+                                    "id": "i12",
+                                    "fields": {
+                                      "VALUE": 1
+                                    }
+                                  }
+                                },
+                                "END": {
+                                  "block": {
+                                    "type": "i32_binop",
+                                    "id": "bi15",
+                                    "fields": {
+                                      "OP": "add"
+                                    },
+                                    "inputs": {
+                                      "LHS": {
+                                        "block": {
+                                          "type": "local_get_i32",
+                                          "id": "gi13",
+                                          "fields": {
+                                            "NAME": "years"
+                                          }
+                                        }
+                                      },
+                                      "RHS": {
+                                        "block": {
+                                          "type": "i32_const",
+                                          "id": "i14",
+                                          "fields": {
+                                            "VALUE": 1
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "BODY": {
+                                  "block": {
+                                    "type": "array_set_f64",
+                                    "id": "as27",
+                                    "inputs": {
+                                      "ARRAY": {
+                                        "block": {
+                                          "type": "local_array_get_f64",
+                                          "id": "gaf16",
+                                          "fields": {
+                                            "NAME": "balance"
+                                          }
+                                        }
+                                      },
+                                      "INDEX": {
+                                        "block": {
+                                          "type": "local_get_i32",
+                                          "id": "gi17",
+                                          "fields": {
+                                            "NAME": "i"
+                                          }
+                                        }
+                                      },
+                                      "VALUE": {
+                                        "block": {
+                                          "type": "f64_binop",
+                                          "id": "bf26",
+                                          "fields": {
+                                            "OP": "mul"
+                                          },
+                                          "inputs": {
+                                            "LHS": {
+                                              "block": {
+                                                "type": "array_get_f64",
+                                                "id": "ag22",
+                                                "inputs": {
+                                                  "ARRAY": {
+                                                    "block": {
+                                                      "type": "local_array_get_f64",
+                                                      "id": "gaf18",
+                                                      "fields": {
+                                                        "NAME": "balance"
+                                                      }
+                                                    }
+                                                  },
+                                                  "INDEX": {
+                                                    "block": {
+                                                      "type": "i32_binop",
+                                                      "id": "bi21",
+                                                      "fields": {
+                                                        "OP": "sub"
+                                                      },
+                                                      "inputs": {
+                                                        "LHS": {
+                                                          "block": {
+                                                            "type": "local_get_i32",
+                                                            "id": "gi19",
+                                                            "fields": {
+                                                              "NAME": "i"
+                                                            }
+                                                          }
+                                                        },
+                                                        "RHS": {
+                                                          "block": {
+                                                            "type": "i32_const",
+                                                            "id": "i20",
+                                                            "fields": {
+                                                              "VALUE": 1
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            "RHS": {
+                                              "block": {
+                                                "type": "f64_binop",
+                                                "id": "bf25",
+                                                "fields": {
+                                                  "OP": "add"
+                                                },
+                                                "inputs": {
+                                                  "LHS": {
+                                                    "block": {
+                                                      "type": "f64_const",
+                                                      "id": "f23",
+                                                      "fields": {
+                                                        "VALUE": 1.0
+                                                      }
+                                                    }
+                                                  },
+                                                  "RHS": {
+                                                    "block": {
+                                                      "type": "local_get_f64",
+                                                      "id": "gf24",
+                                                      "fields": {
+                                                        "NAME": "rate"
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              "next": {
+                                "block": {
+                                  "type": "debug_graph_array",
+                                  "id": "gr30",
+                                  "inputs": {
+                                    "VALUE": {
+                                      "block": {
+                                        "type": "local_array_get_f64",
+                                        "id": "gaf29",
+                                        "fields": {
+                                          "NAME": "balance"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "next": {
+                                    "block": {
+                                      "type": "wasm_return_i32",
+                                      "id": "ret31",
+                                      "inputs": {
+                                        "VALUE": {
+                                          "block": {
+                                            "type": "i32_const",
+                                            "id": "i32",
+                                            "fields": {
+                                              "VALUE": 0
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -127,9 +127,11 @@ export default function Home() {
                 {user ? t.cta_dashboard : t.cta_start}
               </Button>
             </Link>
-            <Button variant="secondary" size="lg" leading={<Icon.Book size={13} />}>
-              {t.cta_guide}
-            </Button>
+            <Link href="/docs">
+              <Button variant="secondary" size="lg" leading={<Icon.Book size={13} />}>
+                {t.cta_guide}
+              </Button>
+            </Link>
           </Inline>
 
           {/* Trust stats — Stat 컴포넌트로 */}

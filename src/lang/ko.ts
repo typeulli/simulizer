@@ -69,6 +69,9 @@ const ko: langpack = {
         footer_copy:               "© 2026 Simulizer · AGPL-3.0",
         footer_mode:               "Research mode",
     },
+    docs: {
+        open_in_workspace:         "워크스페이스에서 열기",
+    },
     login: {
         left_title_1:              "블록으로 만드는",
         left_title_2:              "물리 시뮬레이션",

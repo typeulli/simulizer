@@ -2279,8 +2279,47 @@ const BlocklyWasmIDE: React.FC = () => {
 
     useEffect(() => {
         const fileParam = searchParams.get("file");
+        const exampleParam = searchParams.get("example");
         const id = fileParam ?? null;
         if (!id) {
+            // System-level docs example (S1+O1): load a repo-bundled JSON
+            // into a non-persistent workspace. No fileId is set, so save /
+            // rename / duplicate stay disabled — edits live in this tab only.
+            if (exampleParam) {
+                (async () => {
+                    const res = await fetch(
+                        `/api/docs-examples/${encodeURIComponent(exampleParam)}`,
+                    ).catch(() => null);
+                    if (!res || !res.ok) {
+                        setFileError("not_found");
+                        return;
+                    }
+                    const content = await res.text();
+                    setIsOwner(true);
+                    isOwnerRef.current = true;
+                    setFileName(`Example: ${exampleParam}`);
+                    setSaveStatus("saved");
+                    setBlockData(content);
+                    fileLoadCompletedRef.current = true;
+                    if (wsReadyRef.current) {
+                        const ws = workspaceRef.current;
+                        if (ws) {
+                            ws.clear();
+                            try {
+                                Blockly.serialization.workspaces.load(JSON.parse(content), ws);
+                            } catch {
+                                Blockly.Xml.domToWorkspace(
+                                    Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML),
+                                    ws,
+                                );
+                            }
+                        }
+                    } else {
+                        pendingContentRef.current = content;
+                    }
+                })();
+                return;
+            }
             router.replace("/dashboard");
             return;
         }

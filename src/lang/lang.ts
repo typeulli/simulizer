@@ -68,6 +68,9 @@ type langpack = {
         footer_copy: string,
         footer_mode: string,
     },
+    docs: {
+        open_in_workspace: string,
+    },
     login: {
         left_title_1: string,
         left_title_2: string,

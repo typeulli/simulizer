@@ -69,6 +69,9 @@ const en: langpack = {
         footer_copy:               "© 2026 Simulizer · AGPL-3.0",
         footer_mode:               "Research mode",
     },
+    docs: {
+        open_in_workspace:         "Open in workspace",
+    },
     login: {
         left_title_1:              "Physics simulation",
         left_title_2:              "built with blocks",

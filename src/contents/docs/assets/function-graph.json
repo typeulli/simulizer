@@ -1,0 +1,272 @@
+{
+  "blocks": {
+    "languageVersion": 0,
+    "blocks": [
+      {
+        "type": "wasm_func_main",
+        "id": "main",
+        "x": 20,
+        "y": 20,
+        "fields": {
+          "RET_TYPE": "i32"
+        },
+        "inputs": {
+          "BODY": {
+            "block": {
+              "type": "local_decl_i32",
+              "id": "di1",
+              "fields": {
+                "NAME": "n"
+              },
+              "inputs": {
+                "INIT": {
+                  "block": {
+                    "type": "i32_const",
+                    "id": "i0",
+                    "fields": {
+                      "VALUE": 200
+                    }
+                  }
+                }
+              },
+              "next": {
+                "block": {
+                  "type": "local_array_decl_f64",
+                  "id": "ad3",
+                  "fields": {
+                    "NAME": "y"
+                  },
+                  "inputs": {
+                    "SIZE": {
+                      "block": {
+                        "type": "local_get_i32",
+                        "id": "gi2",
+                        "fields": {
+                          "NAME": "n"
+                        }
+                      }
+                    }
+                  },
+                  "next": {
+                    "block": {
+                      "type": "flow_for",
+                      "id": "for22",
+                      "fields": {
+                        "VAR": "i"
+                      },
+                      "inputs": {
+                        "START": {
+                          "block": {
+                            "type": "i32_const",
+                            "id": "i4",
+                            "fields": {
+                              "VALUE": 0
+                            }
+                          }
+                        },
+                        "END": {
+                          "block": {
+                            "type": "local_get_i32",
+                            "id": "gi5",
+                            "fields": {
+                              "NAME": "n"
+                            }
+                          }
+                        },
+                        "BODY": {
+                          "block": {
+                            "type": "local_decl_f64",
+                            "id": "df15",
+                            "fields": {
+                              "NAME": "x"
+                            },
+                            "inputs": {
+                              "INIT": {
+                                "block": {
+                                  "type": "f64_binop",
+                                  "id": "bf14",
+                                  "fields": {
+                                    "OP": "add"
+                                  },
+                                  "inputs": {
+                                    "LHS": {
+                                      "block": {
+                                        "type": "f64_const",
+                                        "id": "f6",
+                                        "fields": {
+                                          "VALUE": -2.0
+                                        }
+                                      }
+                                    },
+                                    "RHS": {
+                                      "block": {
+                                        "type": "f64_binop",
+                                        "id": "bf13",
+                                        "fields": {
+                                          "OP": "mul"
+                                        },
+                                        "inputs": {
+                                          "LHS": {
+                                            "block": {
+                                              "type": "f64_from_i32",
+                                              "id": "conv8",
+                                              "inputs": {
+                                                "VALUE": {
+                                                  "block": {
+                                                    "type": "local_get_i32",
+                                                    "id": "gi7",
+                                                    "fields": {
+                                                      "NAME": "i"
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          },
+                                          "RHS": {
+                                            "block": {
+                                              "type": "f64_binop",
+                                              "id": "bf12",
+                                              "fields": {
+                                                "OP": "div"
+                                              },
+                                              "inputs": {
+                                                "LHS": {
+                                                  "block": {
+                                                    "type": "f64_const",
+                                                    "id": "f9",
+                                                    "fields": {
+                                                      "VALUE": 4.0
+                                                    }
+                                                  }
+                                                },
+                                                "RHS": {
+                                                  "block": {
+                                                    "type": "f64_from_i32",
+                                                    "id": "conv11",
+                                                    "inputs": {
+                                                      "VALUE": {
+                                                        "block": {
+                                                          "type": "local_get_i32",
+                                                          "id": "gi10",
+                                                          "fields": {
+                                                            "NAME": "n"
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "next": {
+                              "block": {
+                                "type": "array_set_f64",
+                                "id": "as21",
+                                "inputs": {
+                                  "ARRAY": {
+                                    "block": {
+                                      "type": "local_array_get_f64",
+                                      "id": "gaf16",
+                                      "fields": {
+                                        "NAME": "y"
+                                      }
+                                    }
+                                  },
+                                  "INDEX": {
+                                    "block": {
+                                      "type": "local_get_i32",
+                                      "id": "gi17",
+                                      "fields": {
+                                        "NAME": "i"
+                                      }
+                                    }
+                                  },
+                                  "VALUE": {
+                                    "block": {
+                                      "type": "f64_binop",
+                                      "id": "bf20",
+                                      "fields": {
+                                        "OP": "mul"
+                                      },
+                                      "inputs": {
+                                        "LHS": {
+                                          "block": {
+                                            "type": "local_get_f64",
+                                            "id": "gf18",
+                                            "fields": {
+                                              "NAME": "x"
+                                            }
+                                          }
+                                        },
+                                        "RHS": {
+                                          "block": {
+                                            "type": "local_get_f64",
+                                            "id": "gf19",
+                                            "fields": {
+                                              "NAME": "x"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "next": {
+                        "block": {
+                          "type": "debug_graph_array",
+                          "id": "gr24",
+                          "inputs": {
+                            "VALUE": {
+                              "block": {
+                                "type": "local_array_get_f64",
+                                "id": "gaf23",
+                                "fields": {
+                                  "NAME": "y"
+                                }
+                              }
+                            }
+                          },
+                          "next": {
+                            "block": {
+                              "type": "wasm_return_i32",
+                              "id": "ret25",
+                              "inputs": {
+                                "VALUE": {
+                                  "block": {
+                                    "type": "i32_const",
+                                    "id": "i26",
+                                    "fields": {
+                                      "VALUE": 0
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
