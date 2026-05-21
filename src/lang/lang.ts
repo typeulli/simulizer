@@ -81,9 +81,7 @@ type langpack = {
         account_deleted_msg: string,
         error_oauth_denied: string,
         error_oauth_failed: string,
-        error_unauthorized_domain: string,
         google_button: string,
-        footer_note: string,
     },
     dashboard: {
         header_title: string,

@@ -25,7 +25,6 @@ function LoginContent() {
     const errorMessage: Record<string, string> = {
         oauth_denied:         t.error_oauth_denied,
         oauth_failed:         t.error_oauth_failed,
-        unauthorized_domain:  t.error_unauthorized_domain,
     };
 
     return (
@@ -172,10 +171,6 @@ function LoginContent() {
                     <GoogleIcon />
                     {t.google_button}
                 </a>
-
-                <p style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle, margin: 0, textAlign: "center", maxWidth: 280, lineHeight: 1.6 }}>
-                    {t.footer_note}
-                </p>
             </div>
         </div>
     );
