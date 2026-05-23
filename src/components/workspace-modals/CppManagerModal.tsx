@@ -7,35 +7,37 @@ import { Modal, ModalBody } from "@/components/organisms/Modal";
 import { token } from "@/components/tokens";
 import langpack from "@/lang/lang";
 
-type BlockMode = "export" | "share";
+type CppMode = "code" | "share";
 
-interface BlockManagerModalProps {
+interface CppManagerModalProps {
     open: boolean;
-    mode: BlockMode;
-    blockData: string;
+    mode: CppMode;
+    code: string;
+    fileName: string;
     pack: langpack;
     sharePanel?: React.ReactNode;
     onClose: () => void;
-    onModeChange: (mode: BlockMode) => void;
+    onModeChange: (mode: CppMode) => void;
     onCopyToClipboard: (text: string) => void;
-    onResetWorkspace: () => void;
+    onDownload: () => void;
 }
 
-export function BlockManagerModal({
+export function CppManagerModal({
     open,
     mode,
-    blockData,
+    code,
+    fileName,
     pack,
     sharePanel,
     onClose,
     onModeChange,
     onCopyToClipboard,
-    onResetWorkspace,
-}: BlockManagerModalProps) {
+    onDownload,
+}: CppManagerModalProps) {
     if (!open) return null;
 
-    const tabs: { mode: BlockMode; label: string; icon: React.ReactNode }[] = [
-        { mode: "export", label: pack.workspace.ui.export_button, icon: <Icon.File size={11} /> },
+    const tabs: { mode: CppMode; label: string; icon: React.ReactNode }[] = [
+        { mode: "code", label: pack.workspace.ui.export_button, icon: <Icon.File size={11} /> },
     ];
     if (sharePanel) {
         tabs.push({ mode: "share", label: pack.workspace.ui.share_button, icon: <Icon.Globe size={11} /> });
@@ -61,15 +63,19 @@ export function BlockManagerModal({
             </div>
 
             <ModalBody style={{ padding: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
-                {mode === "export" && (
+                {mode === "code" && (
                     <>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderBottom: `1px solid ${token.color.border}`, flexShrink: 0 }}>
-                            <Button variant="ghost" size="sm" leading={<Icon.Check size={11} />} onClick={() => onCopyToClipboard(blockData)}>{pack.workspace.ui.copy_button}</Button>
+                            <Button variant="ghost" size="sm" leading={<Icon.Check size={11} />} onClick={() => onCopyToClipboard(code)}>
+                                {pack.workspace.ui.copy_button}
+                            </Button>
                             <div style={{ marginLeft: "auto" }}>
-                                <Button variant="danger" size="sm" onClick={onResetWorkspace}>{pack.workspace.ui.reset_button}</Button>
+                                <Button variant="ghost" size="sm" leading={<Icon.Download size={11} />} onClick={onDownload}>
+                                    {fileName}.cpp
+                                </Button>
                             </div>
                         </div>
-                        <pre style={{ overflow: "auto", flex: 1, margin: 0, padding: "16px", fontSize: token.font.size.fs11, color: token.color.fgMuted, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: token.font.family.mono, background: token.color.bgCanvas, minHeight: 300 }}>{blockData}</pre>
+                        <pre style={{ overflow: "auto", flex: 1, margin: 0, padding: "16px", fontSize: token.font.size.fs11, color: token.color.fgMuted, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: token.font.family.mono, background: token.color.bgCanvas, minHeight: 300 }}>{code}</pre>
                     </>
                 )}
 

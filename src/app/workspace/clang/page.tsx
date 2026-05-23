@@ -1,6 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
@@ -8,6 +9,20 @@ import { useConsolePanel } from "@/components/console";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import type { ClangWorkerInMsg } from "@/utils/wasm/clang-worker";
 import { vec_field_to_image_url, mat_data_to_image_url } from "@/utils/wasm/tensor";
+
+import { Button } from "@/components/atoms/Button";
+import { Icon } from "@/components/atoms/Icons";
+import { Logo } from "@/components/atoms/Logo";
+import { Spinner } from "@/components/atoms/Spinner";
+import { TopbarBrand } from "@/components/organisms/TopbarBrand";
+import { token } from "@/components/tokens";
+import { duplicateFile, getFile, getMe, renameFile, saveFile, type FileOut } from "@/lib/authapi";
+import { CppManagerModal } from "@/components/workspace-modals/CppManagerModal";
+import { ShareControl } from "@/components/share/ShareControl";
+import useLanguagePack from "@/hooks/useLanguagePack";
+
+type SaveStatus = "idle" | "saved" | "unsaved" | "saving" | "error";
+type CppMode = "code" | "share";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -22,7 +37,7 @@ const LSP_WS_URL = (() => {
 const CodeEditor = dynamic(() => import("./CodeEditor"), {
     ssr: false,
     loading: () => (
-        <div style={{ flex: 1, padding: 12, color: "var(--fg-muted, #888)" }}>
+        <div style={{ flex: 1, padding: 16, color: token.color.fgMuted, fontFamily: token.font.family.mono, fontSize: token.font.size.fs12 }}>
             에디터 로드 중…
         </div>
     ),
@@ -49,13 +64,169 @@ int worker() {
 `;
 
 const ClangIDE: React.FC = () => {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const [, , pack] = useLanguagePack();
+
     const [code, setCode] = useState(INITIAL_CODE);
+    const [editorKey, setEditorKey] = useState(0);
+    const [fileId, setFileId] = useState<string | null>(null);
+    const [fileName, setFileName] = useState<string>("main.cpp");
+    const [fileMeta, setFileMeta] = useState<FileOut | null>(null);
+    const [isOwner, setIsOwner] = useState<boolean | null>(null);
+    const [fileError, setFileError] = useState<"not_found" | "forbidden" | null>(null);
+    const [duplicating, setDuplicating] = useState(false);
+    const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+
+    const [managerOpen, setManagerOpen] = useState(false);
+    const [managerMode, setManagerMode] = useState<CppMode>("code");
+
+    const fileIdRef = useRef<string | null>(null);
+    const isOwnerRef = useRef<boolean>(false);
+    useEffect(() => { isOwnerRef.current = !!isOwner; }, [isOwner]);
+    const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const [runState, setRunState] = useState<RunState>("loading");
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [resultValue, setResultValue] = useState<string | null>(null);
     const [tfBackend, setTfBackend] = useState<string>("initializing");
     const [buildState, setBuildState] = useState<BuildState>("idle");
     const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null);
+
+    // Load file from ?file= query
+    useEffect(() => {
+        const id = searchParams.get("file");
+        if (!id) {
+            router.replace("/dashboard");
+            return;
+        }
+        (async () => {
+            const me = await getMe().catch(() => null);
+            const f = await getFile(id).catch((err) => {
+                const status = (err as { status?: number }).status;
+                setFileError(status === 403 ? "forbidden" : "not_found");
+                return null;
+            });
+            if (!f) return;
+            if (f.type !== "clangfile") {
+                router.replace(`/workspace?file=${f.id}`);
+                return;
+            }
+            const owner = !!(me && me.id === f.author_id);
+            setIsOwner(owner);
+            setFileMeta(f);
+            setFileId(f.id);
+            fileIdRef.current = f.id;
+            setFileName(f.name);
+            // "{}" is the FileCreate default produced when dashboard creates a
+            // new file without sending content. Treat it as never-seeded and
+            // populate with the template, then persist immediately so the
+            // preview/refresh shows real content (Monaco doesn't fire
+            // onTextChanged on mount, so autosave wouldn't run otherwise).
+            // Plain "" is the user's deliberate empty state — preserve it.
+            const needsSeed = f.content === "{}";
+            const content = needsSeed ? INITIAL_CODE : f.content;
+            setCode(content);
+            setEditorKey(k => k + 1);
+            setSaveStatus("saved");
+            if (needsSeed && owner) {
+                saveFile(f.id, INITIAL_CODE).catch(() => { /* surfaced on next edit */ });
+            }
+        })();
+    }, [searchParams, router]);
+
+    // Autosave on code change (debounced). Non-owners (link-share viewers) skip
+    // the save call entirely — they have no write permission and the editor is
+    // read-only, but Monaco can still fire onTextChanged during programmatic
+    // updates so we gate at the handler level too.
+    const handleCodeChange = useCallback((next: string) => {
+        setCode(next);
+        if (!fileIdRef.current || !isOwnerRef.current) return;
+        setSaveStatus("unsaved");
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = setTimeout(async () => {
+            const id = fileIdRef.current;
+            if (!id) return;
+            setSaveStatus("saving");
+            try {
+                await saveFile(id, next);
+                setSaveStatus("saved");
+            } catch {
+                setSaveStatus("error");
+            }
+        }, 2000);
+    }, []);
+
+    useEffect(() => () => {
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    }, []);
+
+    const handleRenameFile = useCallback(async () => {
+        if (!fileId) return;
+        const trimmed = fileName.trim();
+        if (!trimmed) {
+            if (fileMeta) setFileName(fileMeta.name);
+            return;
+        }
+        if (fileMeta && trimmed === fileMeta.name) return;
+        try {
+            const updated = await renameFile(fileId, trimmed);
+            setFileName(updated.name);
+            setFileMeta(prev => prev ? { ...prev, name: updated.name } : prev);
+        } catch (err: any) {
+            if (err?.status === 409) setErrorMsg("같은 이름의 파일이 이미 있어요.");
+            if (fileMeta) setFileName(fileMeta.name);
+        }
+    }, [fileId, fileName, fileMeta]);
+
+    const handleOpenManager = useCallback(() => {
+        setManagerMode("code");
+        setManagerOpen(true);
+    }, []);
+
+    const handleSaveToServer = useCallback(async () => {
+        if (!fileId || !isOwnerRef.current) return;
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        setSaveStatus("saving");
+        try {
+            await saveFile(fileId, code);
+            setSaveStatus("saved");
+        } catch {
+            setSaveStatus("error");
+        }
+    }, [fileId, code]);
+
+    const handleDuplicateToMine = useCallback(async () => {
+        if (!fileId || duplicating) return;
+        setDuplicating(true);
+        try {
+            const dup = await duplicateFile(fileId);
+            router.push(`/workspace/clang?file=${dup.id}`);
+        } catch (err: any) {
+            if (err?.status === 401) {
+                router.push(`/login?next=${encodeURIComponent(`/workspace/clang?file=${fileId}`)}`);
+            } else {
+                setErrorMsg(pack.workspace.ui.share_login_to_duplicate);
+            }
+        } finally {
+            setDuplicating(false);
+        }
+    }, [fileId, duplicating, router, pack]);
+
+    const handleDownloadCpp = useCallback(() => {
+        const blob = new Blob([code], { type: "text/x-c++src;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        // Strip any existing C/C++ extension so we don't end up with foo.cpp.cpp
+        const base = (fileName || "untitled").replace(/\.(cpp|cc|cxx|c\+\+|h|hpp|hxx)$/i, "");
+        a.download = `${base || "untitled"}.cpp`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Revoke on the next tick so the browser has begun fetching the blob: URL.
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+    }, [code, fileName]);
 
     const workerRef = useRef<Worker | null>(null);
     const {
@@ -237,116 +408,371 @@ const ClangIDE: React.FC = () => {
         runState === "loading"   ? "런타임 로드 중…" :
         runState === "compiling" ? "컴파일 중…" :
         runState === "running"   ? "실행 중…" :
-        "▶ Run";
+        "Run";
     const buildLabel =
         buildState === "building"    ? "빌드 중…" :
         buildState === "downloading" ? "다운로드 중…" :
-        "⚙ Build (.exe)";
+        "Build .exe";
 
-    return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg, #0d0d1a)", color: "var(--fg, #e0e0e0)" }}>
-            <header
-                style={{
-                    display: "flex", alignItems: "center", gap: 16,
-                    padding: "8px 16px",
-                    borderBottom: "1px solid var(--border, #333)",
-                    background: "var(--bg-subtle, #1a1a2a)",
-                }}
-            >
-                <strong>Simulizer · C++</strong>
-                <button
-                    onClick={handleRun}
-                    disabled={runDisabled}
-                    style={{
-                        padding: "6px 16px",
-                        fontWeight: 600,
-                        cursor: runDisabled ? "not-allowed" : "pointer",
-                        opacity: runDisabled ? 0.5 : 1,
-                        background: "var(--accent, #4a9eff)",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: 4,
-                    }}
-                >
-                    {runLabel}
-                </button>
-                <button
-                    onClick={handleBuild}
-                    disabled={buildDisabled}
-                    style={{
-                        padding: "6px 16px",
-                        fontWeight: 600,
-                        cursor: buildDisabled ? "not-allowed" : "pointer",
-                        opacity: buildDisabled ? 0.5 : 1,
-                        background: "var(--accent-alt, #5a6a8a)",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: 4,
-                    }}
-                >
-                    {buildLabel}
-                </button>
-                {buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done") && (
-                    <span style={{ fontSize: 12, color: "var(--fg-muted, #888)" }}>
-                        {buildProgress.total > 0
-                            ? `${buildProgress.step}/${buildProgress.total} · ${buildProgress.message}`
-                            : buildProgress.message}
-                    </span>
-                )}
-                <span style={{ fontSize: 12, color: "var(--fg-muted, #888)" }}>
-                    backend: {tfBackend}
-                </span>
-                {resultValue !== null && (
-                    <span style={{ marginLeft: "auto", fontSize: 12 }}>
-                        결과: <code>{resultValue}</code>
-                    </span>
-                )}
-            </header>
+    const runStatusLabel =
+        runState === "loading"   ? "런타임 로드 중"   :
+        runState === "compiling" ? "컴파일 중"        :
+        runState === "running"   ? "실행 중"          :
+        runState === "done"      ? "완료"             :
+        runState === "error"     ? "오류"             :
+        "대기 중";
 
-            <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-                <div style={{ flex: 1, minWidth: 0, background: "var(--bg-canvas, #14141e)" }}>
-                    <CodeEditor
-                        initialCode={INITIAL_CODE}
-                        lspWsUrl={LSP_WS_URL}
-                        onTextChanged={setCode}
-                    />
-                </div>
-                <div
-                    ref={logAreaRef}
-                    style={{
-                        width: "40%",
-                        minWidth: 320,
-                        padding: 8,
-                        overflowY: "auto",
-                        background: "var(--bg-subtle, #1a1a2a)",
-                        borderLeft: "1px solid var(--border, #333)",
-                    }}
-                >
-                    <div data-placeholder style={{ color: "var(--fg-muted, #888)", fontSize: 12 }}>
-                        ▶ 실행 버튼을 눌러 시작하세요
+    const runStatusColor =
+        runState === "error"     ? token.color.danger  :
+        runState === "done"      ? token.color.success :
+        runState === "loading" || runState === "compiling" || runState === "running"
+                                 ? token.color.accent  :
+        token.color.fgSubtle;
+
+    const runSpinning = runState === "loading" || runState === "compiling" || runState === "running";
+    const buildSpinning = buildState === "building" || buildState === "downloading";
+
+    if (fileError) {
+        const ft = pack.file_error;
+        const isForbidden = fileError === "forbidden";
+        return (
+            <div style={{
+                minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+                background: token.color.bg, fontFamily: token.font.family.sans, color: token.color.fg,
+                padding: "32px 16px",
+            }}>
+                <div style={{ width: "100%", maxWidth: 400, display: "flex", flexDirection: "column", alignItems: "center", gap: token.space.sp6, textAlign: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Logo size={22} />
+                        <span style={{ fontSize: token.font.size.fs16, fontWeight: 700, letterSpacing: "-0.02em" }}>Simulizer</span>
                     </div>
+                    <div style={{ fontSize: 48, lineHeight: 1, color: token.color.fgSubtle }}>
+                        {isForbidden ? "🔒" : "📄"}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
+                        <div style={{ fontSize: token.font.size.fs20, fontWeight: 700, color: token.color.fgStrong, letterSpacing: token.font.tracking.tight }}>
+                            {isForbidden ? ft.forbidden_title : ft.not_found_title}
+                        </div>
+                        <div style={{ fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.6 }}>
+                            {isForbidden ? ft.forbidden_desc : ft.not_found_desc}
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => router.replace("/dashboard")}
+                        style={{ padding: "8px 20px", borderRadius: token.radius.md, background: token.color.accent, color: token.color.fgOnAccent, fontWeight: 600, fontSize: token.font.size.fs13, border: "none", cursor: "pointer" }}
+                    >
+                        {ft.go_dashboard}
+                    </button>
                 </div>
             </div>
+        );
+    }
 
+    return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
+            {/* ── Top bar ── */}
+            <header style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
+                {/* Brand + filename */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap" }}>
+                    <TopbarBrand />
+                    <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>
+                    <button
+                        onClick={isOwner ? handleOpenManager : undefined}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}
+                    >
+                        <Icon.File size={12} />
+                        <input
+                            value={fileName}
+                            onChange={e => isOwner && setFileName(e.target.value)}
+                            onBlur={isOwner ? handleRenameFile : undefined}
+                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                            onClick={e => e.stopPropagation()}
+                            placeholder="untitled"
+                            readOnly={!isOwner}
+                            style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: isOwner ? "text" : "default" }}
+                        />
+                        {isOwner && <Icon.Chevron size={11} />}
+                    </button>
+                    {fileId && (
+                        <span style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, fontFamily: token.font.family.mono, marginLeft: 4 }}>
+                            {saveStatus === "saving" ? "저장 중…"
+                                : saveStatus === "unsaved" ? "저장 안 됨"
+                                : saveStatus === "saved" ? "저장됨"
+                                : saveStatus === "error" ? "저장 실패"
+                                : ""}
+                        </span>
+                    )}
+                    <span style={{
+                        marginLeft: 4,
+                        padding: "2px 8px",
+                        background: token.color.bgSubtle,
+                        border: `1px solid ${token.color.border}`,
+                        borderRadius: 999,
+                        fontSize: token.font.size.fs10,
+                        color: token.color.fgMuted,
+                        fontFamily: token.font.family.mono,
+                        whiteSpace: "nowrap",
+                    }}>
+                        C++
+                    </span>
+                    {isOwner === false && (
+                        <span style={{
+                            marginLeft: 6,
+                            padding: "2px 8px",
+                            background: token.color.bgSubtle,
+                            border: `1px solid ${token.color.border}`,
+                            borderRadius: 999,
+                            fontSize: token.font.size.fs10,
+                            color: token.color.fgMuted,
+                            fontFamily: token.font.family.mono,
+                            whiteSpace: "nowrap",
+                        }}>
+                            {pack.workspace.ui.share_readonly_badge}
+                        </span>
+                    )}
+                </div>
+
+                {/* Center — build progress / idle */}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                    {buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done") ? (
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, color: token.color.fgMuted, fontSize: token.font.size.fs12, minWidth: 340, fontFamily: token.font.family.mono }}>
+                            {buildSpinning ? <Spinner size="sm" /> : <Icon.Check size={12} />}
+                            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {buildProgress.total > 0
+                                    ? `${buildProgress.step}/${buildProgress.total} · ${buildProgress.message}`
+                                    : buildProgress.message}
+                            </span>
+                        </div>
+                    ) : (
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, color: token.color.fgSubtle, fontSize: token.font.size.fs12, minWidth: 340, fontFamily: token.font.family.mono, justifyContent: "center" }}>
+                            <Icon.Cpu size={12} />
+                            <span>emscripten · clang++ · WebAssembly</span>
+                        </div>
+                    )}
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                    {isOwner && saveStatus === "unsaved" && (
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>저장 안됨</span>
+                    )}
+                    {isOwner && saveStatus === "error" && (
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>저장 실패</span>
+                    )}
+                    {isOwner && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            leading={saveStatus === "saving" ? <Spinner size="sm" /> : <Icon.Save size={11} />}
+                            onClick={handleSaveToServer}
+                            disabled={saveStatus === "saving" || !fileId}
+                        >
+                            {saveStatus === "saving" ? "저장 중..." : "저장"}
+                        </Button>
+                    )}
+                    {isOwner === false && (
+                        <Button
+                            variant="accent"
+                            size="sm"
+                            onClick={handleDuplicateToMine}
+                            disabled={duplicating || !fileId}
+                            leading={duplicating ? <Spinner size="sm" /> : undefined}
+                        >
+                            {pack.workspace.ui.share_duplicate_button}
+                        </Button>
+                    )}
+                    {/* Backend pill */}
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: 999, fontSize: token.font.size.fs10, color: token.color.fgMuted, fontFamily: token.font.family.mono }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: tfBackend === "initializing" ? token.color.warning : token.color.success, display: "inline-block" }} />
+                        <span>backend: {tfBackend}</span>
+                    </div>
+
+                    {/* Build */}
+                    <Button
+                        variant="secondary"
+                        size="sm"
+                        leading={buildSpinning ? <Spinner size="sm" /> : <Icon.Download size={11} />}
+                        onClick={handleBuild}
+                        disabled={buildDisabled}
+                    >
+                        {buildLabel}
+                    </Button>
+
+                    {/* Run */}
+                    <button
+                        onClick={handleRun}
+                        disabled={runDisabled}
+                        style={{
+                            display: "inline-flex", alignItems: "center", gap: 7,
+                            padding: "6px 12px",
+                            borderRadius: token.radius.sm,
+                            background: token.color.gradient.run,
+                            color: "#fff",
+                            fontSize: token.font.size.fs12,
+                            fontWeight: 600,
+                            border: "none",
+                            cursor: runDisabled ? "not-allowed" : "pointer",
+                            opacity: runDisabled ? 0.55 : 1,
+                            boxShadow: "0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)",
+                            transition: "opacity 0.15s",
+                        }}
+                    >
+                        {runSpinning ? <Spinner size="sm" /> : <Icon.Play size={11} fill />}
+                        <span>{runLabel}</span>
+                    </button>
+                </div>
+            </header>
+
+            {/* ── Main 2-column layout ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", flex: 1, minHeight: 0 }}>
+
+                {/* Editor area */}
+                <main style={{ display: "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
+                    {/* Editor toolbar */}
+                    <div style={{ display: "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: token.radius.sm, background: token.color.bgSubtle, color: token.color.fg, fontSize: token.font.size.fs11, fontWeight: 600 }}>
+                            <Icon.File size={11} /> {fileName}
+                        </div>
+                        <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}>
+                            <Icon.Globe size={11} /> LSP: cpp
+                        </div>
+                    </div>
+
+                    {/* Editor */}
+                    <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+                        <CodeEditor
+                            key={editorKey}
+                            initialCode={code}
+                            lspWsUrl={LSP_WS_URL}
+                            onTextChanged={handleCodeChange}
+                            readOnly={isOwner === false}
+                        />
+                    </div>
+                </main>
+
+                {/* Right panel: console */}
+                <aside style={{ display: "flex", flexDirection: "column", borderLeft: `1px solid ${token.color.border}`, background: token.color.bg, overflow: "hidden" }}>
+                    {/* Tab header */}
+                    <div style={{ display: "flex", padding: "8px 8px 0", gap: 2, borderBottom: `1px solid ${token.color.border}` }}>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, color: token.color.fg, fontWeight: 500, borderBottom: `2px solid ${token.color.accent}`, marginBottom: -1 }}>
+                            <Icon.Terminal size={11} /> Console
+                        </div>
+                    </div>
+
+                    {/* Result card */}
+                    <div style={{ padding: 14, borderBottom: `1px solid ${token.color.borderSubtle}` }}>
+                        <div style={{ padding: 14, background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md }}>
+                            <div style={{ fontSize: token.font.size.fs10, textTransform: "uppercase", letterSpacing: "0.06em", color: token.color.fgSubtle, fontWeight: 600 }}>Result</div>
+                            <div style={{
+                                fontFamily: token.font.family.mono,
+                                fontSize: resultValue !== null ? token.font.size.fs32 : token.font.size.fs24,
+                                fontWeight: 500,
+                                letterSpacing: "-0.02em",
+                                color: resultValue !== null ? token.color.fgStrong : token.color.fgSubtle,
+                                lineHeight: 1.1,
+                                marginTop: 4,
+                                wordBreak: "break-all",
+                            }}>
+                                {resultValue ?? "—"}
+                            </div>
+                            <div style={{ marginTop: 6, fontSize: token.font.size.fs11, color: runStatusColor, fontFamily: token.font.family.mono, display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: runStatusColor, display: "inline-block" }} />
+                                {runStatusLabel}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Log */}
+                    <div
+                        className="simulizer-log"
+                        ref={logAreaRef}
+                        style={{ flex: 1, overflowY: "auto", padding: "8px 0", minHeight: 0 }}
+                    >
+                        <div data-placeholder style={{ padding: "3px 14px", color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>
+                            Run 버튼을 눌러 컴파일하고 실행하세요.
+                        </div>
+                    </div>
+
+                    {/* Footer */}
+                    <div style={{ padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, fontFamily: token.font.family.mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle, display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: tfBackend === "initializing" ? token.color.warning : token.color.success, display: "inline-block" }} />
+                        {tfBackend === "initializing" ? "백엔드 초기화 중…" : `${tfBackend} · ready`}
+                    </div>
+                </aside>
+            </div>
+
+            {/* Error banner */}
             {errorMsg && (
-                <div
-                    style={{
-                        padding: 12,
-                        background: "#3a1a1a",
-                        color: "#ffaaaa",
+                <div style={{
+                    padding: "10px 14px",
+                    background: token.color.dangerSoft,
+                    borderTop: `1px solid ${token.color.dangerBorder}`,
+                    color: token.color.danger,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    maxHeight: 240,
+                    overflow: "auto",
+                    flexShrink: 0,
+                }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: token.font.size.fs11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        <Icon.X size={11} />
+                        <span>Error</span>
+                        <button
+                            onClick={() => setErrorMsg(null)}
+                            style={{
+                                marginLeft: "auto",
+                                padding: "2px 8px",
+                                border: `1px solid ${token.color.dangerBorder}`,
+                                borderRadius: token.radius.xs,
+                                background: "transparent",
+                                color: token.color.danger,
+                                fontSize: token.font.size.fs10,
+                                cursor: "pointer",
+                                fontFamily: token.font.family.mono,
+                            }}
+                        >
+                            닫기
+                        </button>
+                    </div>
+                    <pre style={{
+                        margin: 0,
                         whiteSpace: "pre-wrap",
-                        fontFamily: "Consolas, monospace",
-                        fontSize: 12,
-                        maxHeight: 240,
-                        overflow: "auto",
-                        borderTop: "1px solid #5a2a2a",
-                    }}
-                >
-                    {errorMsg}
+                        fontFamily: token.font.family.mono,
+                        fontSize: token.font.size.fs11,
+                        lineHeight: 1.55,
+                        color: token.color.fg,
+                    }}>
+                        {errorMsg}
+                    </pre>
                 </div>
             )}
+
+            <CppManagerModal
+                open={managerOpen}
+                mode={managerMode}
+                code={code}
+                fileName={fileName}
+                pack={pack}
+                sharePanel={isOwner && fileMeta ? (
+                    <ShareControl
+                        file={fileMeta}
+                        onChange={updated => setFileMeta(prev => prev ? { ...prev, visibility: updated.visibility } : prev)}
+                    />
+                ) : undefined}
+                onClose={() => setManagerOpen(false)}
+                onModeChange={setManagerMode}
+                onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
+                onDownload={handleDownloadCpp}
+            />
         </div>
     );
 };
 
-export default ClangIDE;
+export default function ClangPage() {
+    return (
+        <React.Suspense>
+            <ClangIDE />
+        </React.Suspense>
+    );
+}

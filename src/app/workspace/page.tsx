@@ -53,10 +53,16 @@ import { Prism } from "react-syntax-highlighter";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
-import { getMe, getFile, saveFile, renameFile, uploadThumbnail, duplicateFile, type FileOut } from "@/lib/authapi";
+import { getMe, getFile, saveFile, renameFile, uploadThumbnail, duplicateFile, createFile, type FileOut } from "@/lib/authapi";
 import { ShareControl } from "@/components/share/ShareControl";
+import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/organisms/Modal";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
+
+// Auto-generated block thumbnails render at this size (2:1) so the dashboard
+// card's preview box (same aspect) fills with objectFit:cover and nothing crops.
+const THUMBNAIL_WIDTH = 480;
+const THUMBNAIL_HEIGHT = 240;
 
 // Register Blockly locale explicitly to prevent context menu labels from being undefined
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
@@ -91,19 +97,45 @@ function generateThumbnailBlob(ws: Blockly.WorkspaceSvg): Promise<Blob | null> {
     const ctm = blockCanvas.getCTM();
     if (!ctm) return Promise.resolve(null);
 
-    const pad = 20;
+    // Fixed output size matching the dashboard preview aspect (2:1).
+    // Blocks are uniformly scaled and centered with padding so nothing crops.
+    const thumbW = THUMBNAIL_WIDTH;
+    const thumbH = THUMBNAIL_HEIGHT;
+    const pad = 24;
+
     const svgLeft = bbox.left * ctm.a + ctm.e;
     const svgTop  = bbox.top  * ctm.d + ctm.f;
     const svgW    = bw * ctm.a;
     const svgH    = bh * ctm.d;
-    const thumbW  = Math.round(svgW + pad * 2);
-    const thumbH  = Math.round(svgH + pad * 2);
+
+    const scale = Math.min((thumbW - pad * 2) / svgW, (thumbH - pad * 2) / svgH);
+    const drawnW = svgW * scale;
+    const drawnH = svgH * scale;
+    const offsetX = (thumbW - drawnW) / 2;
+    const offsetY = (thumbH - drawnH) / 2;
+
+    // ViewBox is in source coordinates; sizing it appropriately so the content
+    // (positioned at svgLeft, svgTop with width svgW, svgH) maps to the
+    // [offsetX, offsetY, drawnW, drawnH] region of a thumbW × thumbH canvas.
+    const viewLeft = svgLeft - offsetX / scale;
+    const viewTop  = svgTop  - offsetY / scale;
+    const viewW    = thumbW / scale;
+    const viewH    = thumbH / scale;
 
     const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svgEl.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    svgEl.setAttribute("viewBox", `${svgLeft - pad} ${svgTop - pad} ${thumbW} ${thumbH}`);
+    svgEl.setAttribute("viewBox", `${viewLeft} ${viewTop} ${viewW} ${viewH}`);
     svgEl.setAttribute("width", String(thumbW));
     svgEl.setAttribute("height", String(thumbH));
+
+    // Solid background so the letterboxed area isn't transparent.
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("x", String(viewLeft));
+    bg.setAttribute("y", String(viewTop));
+    bg.setAttribute("width", String(viewW));
+    bg.setAttribute("height", String(viewH));
+    bg.setAttribute("fill", "#f6f7f9");
+    svgEl.appendChild(bg);
 
     // Copy defs (gradients, filters, etc.) from parent SVG.
     // Strip any elements referencing external URLs to prevent canvas taint.
@@ -819,6 +851,20 @@ const BlocklyWasmIDE: React.FC = () => {
     const [errorModal, setErrorModal] = useState<string | null>(null);
     const showErrorModal = useCallback((msg: string) => setErrorModal(msg), []);
 
+    const [exportCppOpen, setExportCppOpen] = useState(false);
+    const [exporting, setExporting] = useState(false);
+    const [exportToast, setExportToast] = useState<{ message: string; href?: string } | null>(null);
+    const exportToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => {
+        if (exportToastTimerRef.current) clearTimeout(exportToastTimerRef.current);
+    }, []);
+
+    const showExportToast = useCallback((message: string, href?: string) => {
+        setExportToast({ message, href });
+        if (exportToastTimerRef.current) clearTimeout(exportToastTimerRef.current);
+        exportToastTimerRef.current = setTimeout(() => setExportToast(null), 6000);
+    }, []);
+
     const [showChatPopover, setShowChatPopover] = useState(false);
     const chatPopoverRef                        = useRef<HTMLDivElement>(null);
     const [showToolsMenu, setShowToolsMenu]     = useState(false);
@@ -1037,8 +1083,7 @@ const BlocklyWasmIDE: React.FC = () => {
 
     const [showBlocks, setShowBlocks] = useState(false);
     const [blockData, setBlockData]   = useState<string>("");
-    const [blockMode, setBlockMode]   = useState<"export" | "import" | "share">("export");
-    const fileInputRef                = useRef<HTMLInputElement>(null);
+    const [blockMode, setBlockMode]   = useState<"export" | "share">("export");
     const [lang, , pack, langReady]   = useLanguagePack();
 
     const [fileId, setFileId]       = useState<string | null>(null);
@@ -1054,6 +1099,52 @@ const BlocklyWasmIDE: React.FC = () => {
     const fileLoadCompletedRef      = useRef(false);
     const fileIdRef                 = useRef<string | null>(null);
     const autoSaveTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const handleConfirmExportToCpp = useCallback(async () => {
+        const ws = workspaceRef.current;
+        if (!ws || exporting) return;
+        setExporting(true);
+        try {
+            const rawSave = Blockly.serialization.workspaces.save(ws);
+            const processedSave = replaceLatexBlocksInWorkspace(rawSave);
+            const blocklyJson = JSON.stringify(processedSave);
+
+            const res = await fetch(`${API_BASE}/compile`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lang: "cpp", code: blocklyJson }),
+            });
+            if (!res.ok) throw new Error(`compile failed: ${res.status}`);
+            const data = await res.json();
+            const cppSource: string = data.result ?? "";
+            if (!cppSource) throw new Error("empty compile result");
+
+            const baseName = fileName ? `${fileName} (C++)` : "untitled (C++)";
+            let candidate = baseName;
+            let counter = 2;
+            let created: { id: string } | null = null;
+            for (;;) {
+                try {
+                    created = await createFile(candidate, "clangfile", cppSource);
+                    break;
+                } catch (err: any) {
+                    if (err?.status === 409) {
+                        candidate = `${baseName} ${counter++}`;
+                        if (counter > 50) throw err;
+                        continue;
+                    }
+                    throw err;
+                }
+            }
+            setExportCppOpen(false);
+            const href = `/workspace/clang?file=${created!.id}`;
+            showExportToast(`'${candidate}' 파일이 만들어졌어요.`, href);
+        } catch (err) {
+            showExportToast(`내보내기 실패: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setExporting(false);
+        }
+    }, [exporting, fileName, showExportToast]);
 
     const { logAreaRef, addLog, addBar, setBar, clearLog, addSeries, logToHolder, visualToHolder, addGraphArray, graphToHolder } = useConsolePanel();
     const pendingRunRef = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
@@ -2157,52 +2248,6 @@ const BlocklyWasmIDE: React.FC = () => {
         setShowBlocks(true);
     }, []);
 
-    const handleOpenImport = useCallback(() => {
-        setBlockData("");
-        setBlockMode("import");
-        setShowBlocks(true);
-    }, []);
-
-    const applyJson = useCallback((json: string) => {
-        const ws = workspaceRef.current;
-        if (!ws) return;
-        let state: object;
-        try {
-            state = JSON.parse(json);
-        } catch (err) {
-            const msg = `JSON parsing error: ${err instanceof Error ? err.message : String(err)}`;
-            addLog("error", msg);
-            showErrorModal(msg);
-            return;
-        }
-        const prevState = JSON.stringify(Blockly.serialization.workspaces.save(ws));
-        ws.clear();
-        try {
-            Blockly.serialization.workspaces.load(state, ws);
-        } catch (err) {
-            const msg = `Block loading error: ${err instanceof Error ? err.message : String(err)}`;
-            addLog("error", msg);
-            showErrorModal(msg);
-            // Restore previous state on failure
-            try { Blockly.serialization.workspaces.load(JSON.parse(prevState), ws); } catch { /* Ignore restore failure */ }
-            return;
-        }
-        const saved = Blockly.serialization.workspaces.save(ws);
-        const newState = JSON.stringify(saved);
-        if (newState === prevState) {
-            addLog("info", "불러오기 완료 (변경 없음)");
-        } else {
-            addLog("success", "Blocks loaded successfully.");
-        }
-        setBlockData(newState);
-        setBlockMode("export");
-        setShowBlocks(false);
-    }, [addLog, showErrorModal]);
-
-    const handleLoadBlocks = useCallback(() => {
-        applyJson(blockData);
-    }, [blockData, applyJson]);
-
     const handleSaveToServer = useCallback(async () => {
         if (!fileId) return;
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -2248,17 +2293,6 @@ const BlocklyWasmIDE: React.FC = () => {
             setDuplicating(false);
         }
     }, [fileId, duplicating, router, addLog, pack]);
-
-    const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            setBlockData(ev.target?.result as string);
-        };
-        reader.readAsText(file);
-        e.target.value = "";
-    }, []);
 
     useEffect(() => {
         const fileParam = searchParams.get("file");
@@ -2314,6 +2348,10 @@ const BlocklyWasmIDE: React.FC = () => {
                 return null;
             });
             if (!f) return;
+            if (f.type === "clangfile") {
+                router.replace(`/workspace/clang?file=${f.id}`);
+                return;
+            }
             const owner = !!(me && me.id === f.author_id);
             setIsOwner(owner);
             isOwnerRef.current = owner;
@@ -2701,6 +2739,19 @@ const BlocklyWasmIDE: React.FC = () => {
                                             {icon}{label}
                                         </button>
                                     ))}
+                                    {isOwner && fileId && (
+                                        <>
+                                            <div style={{ height:1, background:token.color.border, margin:"4px 0" }} />
+                                            <button
+                                                onClick={() => { setShowToolsMenu(false); setExportCppOpen(true); }}
+                                                style={{ display:"inline-flex", alignItems:"center", gap:7, padding:"5px 10px", border:"none", borderRadius:token.radius.sm, background:"none", cursor:"pointer", color:token.color.fgMuted, fontSize:token.font.size.fs11, fontWeight:500, textAlign:"left", transition:"all 0.1s" }}
+                                                onMouseEnter={e => { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; }}
+                                                onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = token.color.fgMuted; }}
+                                            >
+                                                <Icon.Download size={12} />C++ 파일로 내보내기
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -2973,7 +3024,6 @@ const BlocklyWasmIDE: React.FC = () => {
                 open={showBlocks}
                 mode={blockMode}
                 blockData={blockData}
-                fileInputRef={fileInputRef}
                 pack={pack}
                 sharePanel={isOwner && fileMeta ? (
                     <ShareControl
@@ -2983,12 +3033,8 @@ const BlocklyWasmIDE: React.FC = () => {
                 ) : undefined}
                 onClose={() => setShowBlocks(false)}
                 onModeChange={setBlockMode}
-                onBlockDataChange={setBlockData}
-                onOpenImport={handleOpenImport}
                 onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
                 onResetWorkspace={() => { handleReset(); setShowBlocks(false); }}
-                onApplyImport={handleLoadBlocks}
-                onFileInput={handleFileInput}
             />
 
             <LatexOcrModal
@@ -3052,6 +3098,66 @@ const BlocklyWasmIDE: React.FC = () => {
                 onCopy={(message) => navigator.clipboard.writeText(message)}
             />
 
+            {exportCppOpen && (
+                <Modal width={460} onClose={() => !exporting && setExportCppOpen(false)}>
+                    <ModalHeader onClose={() => !exporting && setExportCppOpen(false)}>
+                        C++ 파일로 내보내기
+                    </ModalHeader>
+                    <ModalBody>
+                        <p style={{ margin: 0, fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.55 }}>
+                            현재 블록 코드를 C++로 변환해 <b>새 파일</b>{`('${fileName || "untitled"} (C++)')`}을 만듭니다.
+                        </p>
+                        <ul style={{ margin: `${token.space.sp3} 0 0 ${token.space.sp4}`, padding: 0, fontSize: token.font.size.fs12, color: token.color.fgSubtle, lineHeight: 1.7 }}>
+                            <li>원본 블록 파일은 그대로 유지됩니다.</li>
+                            <li>생성된 C++ 파일을 수정해도 원본 블록에는 반영되지 않습니다.</li>
+                            <li>C++ 파일을 다시 블록으로 되돌리는 기능은 없습니다.</li>
+                        </ul>
+                    </ModalBody>
+                    <ModalFooter>
+                        <Button variant="ghost" size="sm" onClick={() => setExportCppOpen(false)} disabled={exporting}>
+                            취소
+                        </Button>
+                        <Button
+                            variant="accent"
+                            size="sm"
+                            leading={exporting ? <Spinner size="sm" /> : <Icon.Download size={11} />}
+                            onClick={handleConfirmExportToCpp}
+                            disabled={exporting}
+                        >
+                            {exporting ? "변환 중…" : "C++ 파일로 내보내기"}
+                        </Button>
+                    </ModalFooter>
+                </Modal>
+            )}
+
+            {exportToast && (
+                <div style={{
+                    position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+                    zIndex: 100, display: "inline-flex", alignItems: "center", gap: 12,
+                    padding: "10px 14px",
+                    background: token.color.bgRaised, border: `1px solid ${token.color.border}`,
+                    borderRadius: token.radius.md, boxShadow: "0 6px 18px rgba(0,0,0,0.25)",
+                    color: token.color.fg, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono,
+                }}>
+                    <span>{exportToast.message}</span>
+                    {exportToast.href && (
+                        <a
+                            href={exportToast.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: token.color.accent, textDecoration: "none", fontWeight: 600 }}
+                        >
+                            열기
+                        </a>
+                    )}
+                    <button
+                        onClick={() => setExportToast(null)}
+                        style={{ marginLeft: 4, background: "none", border: "none", color: token.color.fgSubtle, cursor: "pointer", display: "inline-flex", padding: 0 }}
+                    >
+                        <Icon.X size={11} />
+                    </button>
+                </div>
+            )}
 
         </div>
     );

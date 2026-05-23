@@ -15,9 +15,109 @@ import {
     deleteFile,
     renameFile,
     duplicateFile,
+    getFile,
+    uploadThumbnail,
+    deleteThumbnail,
     type FileOut,
+    type FileType,
 } from "@/lib/authapi";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
+import { Prism } from "react-syntax-highlighter";
+
+function pathForType(file: { id: string; type: FileType }): string {
+    const base = file.type === "clangfile" ? "/workspace/clang" : "/workspace";
+    return `${base}?file=${file.id}`;
+}
+
+type NewFileAction = FileType | "import";
+
+interface NewFileMenuOption {
+    action: NewFileAction;
+    icon: React.ReactNode;
+    title: string;
+    desc: string;
+}
+
+interface NewFileMenuProps {
+    open: boolean;
+    creating: boolean;
+    onSelect: (action: NewFileAction) => void;
+    align?: "right" | "center";
+    options: NewFileMenuOption[];
+}
+
+function NewFileMenu({ open, creating, onSelect, align = "right", options }: NewFileMenuProps) {
+    if (!open) return null;
+    const alignStyle = align === "center"
+        ? { left: "50%", transform: "translateX(-50%)" } as const
+        : { right: 0 } as const;
+    return (
+        <div
+            onClick={e => e.stopPropagation()}
+            style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                ...alignStyle,
+                minWidth: 260,
+                background: token.color.bgRaised,
+                border: `1px solid ${token.color.border}`,
+                borderRadius: token.radius.md,
+                boxShadow: token.shadow.lg,
+                padding: 4,
+                zIndex: 20,
+                display: "flex",
+                flexDirection: "column",
+                gap: 1,
+            }}
+        >
+            {options.map((opt, i) => {
+                const showDivider = opt.action === "import" && i > 0;
+                return (
+                    <React.Fragment key={opt.action}>
+                        {showDivider && <div style={{ height: 1, background: token.color.border, margin: "4px 0" }} />}
+                        <button
+                            onClick={() => onSelect(opt.action)}
+                            disabled={creating}
+                            style={{
+                                display: "flex", alignItems: "flex-start", gap: 10,
+                                padding: "8px 10px",
+                                border: "none", background: "none",
+                                borderRadius: token.radius.sm,
+                                cursor: creating ? "default" : "pointer",
+                                color: token.color.fg, textAlign: "left",
+                                transition: "background 0.1s",
+                            }}
+                            onMouseEnter={e => { if (!creating) e.currentTarget.style.background = token.color.bgSubtle; }}
+                            onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                        >
+                            <span style={{ color: token.color.fgMuted, flexShrink: 0, marginTop: 2 }}>{opt.icon}</span>
+                            <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                                <span style={{ fontSize: token.font.size.fs12, fontWeight: 600 }}>{opt.title}</span>
+                                <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle, lineHeight: 1.4 }}>{opt.desc}</span>
+                            </span>
+                        </button>
+                    </React.Fragment>
+                );
+            })}
+        </div>
+    );
+}
+
+const BLOCK_EXTS = new Set([".simulizer", ".json"]);
+const CLANG_EXTS = new Set([".cpp", ".cc", ".cxx", ".c++", ".h", ".hpp", ".hxx"]);
+
+function splitExt(filename: string): { base: string; ext: string } {
+    const lastDot = filename.lastIndexOf(".");
+    // No dot at all → no extension.
+    if (lastDot < 0) return { base: filename, ext: "" };
+    // Leading dot ('.cpp', '.gitignore') is the only dot — treat the whole
+    // string as the extension so the user's intent classifies correctly,
+    // leaving the base empty (callers fall back to "untitled").
+    if (lastDot === 0) return { base: "", ext: filename.toLowerCase() };
+    return { base: filename.slice(0, lastDot), ext: filename.slice(lastDot).toLowerCase() };
+}
 import { ShareControl } from "@/components/share/ShareControl";
 
 function formatDate(iso: string) {
@@ -62,7 +162,34 @@ export default function DashboardPage() {
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState("");
     const [sharingFile, setSharingFile] = useState<FileOut | null>(null);
+    const [pickerAnchor, setPickerAnchor] = useState<"header" | "empty" | null>(null);
+    const [thumbVersions, setThumbVersions] = useState<Record<string, number>>({});
+    const [thumbnailModalFile, setThumbnailModalFile] = useState<FileOut | null>(null);
+    const [previewBoxSize, setPreviewBoxSize] = useState<{ w: number; h: number }>({ w: 480, h: 240 });
     const renameInputRef = useRef<HTMLInputElement>(null);
+    const importInputRef = useRef<HTMLInputElement>(null);
+    const previewBoxRef = useRef<HTMLDivElement | null>(null);
+    const previewResizeObsRef = useRef<ResizeObserver | null>(null);
+
+    const measurePreviewBox = useCallback((el: HTMLDivElement | null) => {
+        previewResizeObsRef.current?.disconnect();
+        previewResizeObsRef.current = null;
+        previewBoxRef.current = el;
+        if (!el) return;
+        const update = () => {
+            const r = el.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            setPreviewBoxSize({ w: Math.round(r.width * dpr), h: Math.round(r.height * dpr) });
+        };
+        update();
+        if (typeof ResizeObserver !== "undefined") {
+            const obs = new ResizeObserver(update);
+            obs.observe(el);
+            previewResizeObsRef.current = obs;
+        }
+    }, []);
+
+    useEffect(() => () => { previewResizeObsRef.current?.disconnect(); }, []);
 
     const fetchFiles = useCallback(async () => {
         try {
@@ -81,7 +208,7 @@ export default function DashboardPage() {
         if (renamingId !== null) renameInputRef.current?.focus();
     }, [renamingId]);
 
-    async function handleNewFile() {
+    async function handleCreateFile(type: FileType) {
         setCreating(true);
         try {
             const existing = new Set(files.map(f => f.name));
@@ -90,8 +217,66 @@ export default function DashboardPage() {
             while (existing.has(name)) {
                 name = `untitled ${counter++}`;
             }
-            const file = await createFile(name);
-            router.push(`/workspace?file=${file.id}`);
+            const file = await createFile(name, type);
+            setPickerAnchor(null);
+            router.push(pathForType(file));
+        } finally {
+            setCreating(false);
+        }
+    }
+
+    function handleMenuSelect(action: NewFileAction) {
+        if (action === "import") {
+            setPickerAnchor(null);
+            importInputRef.current?.click();
+            return;
+        }
+        handleCreateFile(action);
+    }
+
+    async function handleImportFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+        const { base, ext } = splitExt(file.name);
+        let type: FileType;
+        if (BLOCK_EXTS.has(ext)) type = "blockfile";
+        else if (CLANG_EXTS.has(ext)) type = "clangfile";
+        else { alert(t.import_unsupported_ext); return; }
+        // Reject oversized files BEFORE reading — otherwise file.text() loads
+        // potentially gigabytes into a JS string and can OOM the tab. Server
+        // also enforces MAX_CONTENT_BYTES = 5 MB, but only post-upload.
+        if (file.size > 5 * 1024 * 1024) {
+            alert(t.import_failed);
+            return;
+        }
+
+        setCreating(true);
+        try {
+            const content = await file.text();
+            const existing = new Set(files.map(f => f.name));
+            let candidate = base || "untitled";
+            let counter = 2;
+            while (existing.has(candidate)) {
+                candidate = `${base || "untitled"} ${counter++}`;
+            }
+            let created;
+            for (;;) {
+                try {
+                    created = await createFile(candidate, type, content);
+                    break;
+                } catch (err: any) {
+                    if (err?.status === 409) {
+                        candidate = `${base || "untitled"} ${counter++}`;
+                        if (counter > 50) throw err;
+                        continue;
+                    }
+                    throw err;
+                }
+            }
+            router.push(pathForType(created));
+        } catch {
+            alert(t.import_failed);
         } finally {
             setCreating(false);
         }
@@ -109,10 +294,76 @@ export default function DashboardPage() {
         setFiles(prev => [dup, ...prev]);
     }
 
+    async function handleDuplicateAsCpp(file: FileOut) {
+        setMenuOpen(null);
+        try {
+            const src = await getFile(file.id);
+            const res = await fetch(`${API_URL}/compile`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lang: "cpp", code: src.content }),
+            });
+            if (!res.ok) throw new Error(`compile failed: ${res.status}`);
+            const data = await res.json();
+            const cppSource: string = data.result ?? "";
+            if (!cppSource) throw new Error("empty compile result");
+
+            const baseName = `${file.name} (C++)`;
+            const existing = new Set(files.map(f => f.name));
+            let candidate = baseName;
+            let counter = 2;
+            while (existing.has(candidate)) {
+                candidate = `${baseName} ${counter++}`;
+            }
+            let created;
+            for (;;) {
+                try {
+                    created = await createFile(candidate, "clangfile", cppSource);
+                    break;
+                } catch (err: any) {
+                    if (err?.status === 409) {
+                        candidate = `${baseName} ${counter++}`;
+                        if (counter > 50) throw err;
+                        continue;
+                    }
+                    throw err;
+                }
+            }
+            setFiles(prev => [created!, ...prev]);
+        } catch {
+            alert(t.duplicate_cpp_failed);
+        }
+    }
+
     function startRename(file: FileOut) {
         setMenuOpen(null);
         setRenamingId(file.id);
         setRenameValue(file.name);
+    }
+
+    function startSetThumbnail(file: FileOut) {
+        setMenuOpen(null);
+        setThumbnailModalFile(file);
+    }
+
+    async function handleThumbnailUpload(file: File): Promise<void> {
+        const target = thumbnailModalFile;
+        if (!target) return;
+        if (!file.type.startsWith("image/")) throw new Error(t.thumbnail_not_image);
+        if (file.size > 2 * 1024 * 1024) throw new Error(t.thumbnail_too_large);
+        await uploadThumbnail(target.id, file, { manual: true });
+        setFiles(prev => prev.map(f => f.id === target.id ? { ...f, thumbnail_custom: true } : f));
+        setThumbVersions(prev => ({ ...prev, [target.id]: (prev[target.id] ?? 0) + 1 }));
+        setThumbnailModalFile(null);
+    }
+
+    async function handleThumbnailReset(): Promise<void> {
+        const target = thumbnailModalFile;
+        if (!target) return;
+        await deleteThumbnail(target.id);
+        setFiles(prev => prev.map(f => f.id === target.id ? { ...f, thumbnail_custom: false } : f));
+        setThumbVersions(prev => ({ ...prev, [target.id]: (prev[target.id] ?? 0) + 1 }));
+        setThumbnailModalFile(null);
     }
 
     function startShare(file: FileOut) {
@@ -206,15 +457,29 @@ export default function DashboardPage() {
                             {user?.email}
                         </p>
                     </div>
-                    <Button
-                        variant="accent"
-                        size="md"
-                        leading={creating ? <Spinner size="sm" /> : <Icon.Plus size={13} />}
-                        onClick={handleNewFile}
-                        disabled={creating}
-                    >
-                        {t.new_file_button}
-                    </Button>
+                    <div style={{ position: "relative", zIndex: pickerAnchor === "header" ? 20 : undefined }}>
+                        <Button
+                            variant="accent"
+                            size="md"
+                            leading={creating ? <Spinner size="sm" /> : <Icon.Plus size={13} />}
+                            trailing={<Icon.Chevron size={14} />}
+                            onClick={() => setPickerAnchor(prev => prev === "header" ? null : "header")}
+                            disabled={creating}
+                        >
+                            {t.new_file_button}
+                        </Button>
+                        <NewFileMenu
+                            open={pickerAnchor === "header"}
+                            creating={creating}
+                            onSelect={handleMenuSelect}
+                            align="right"
+                            options={[
+                                { action: "blockfile", icon: <Icon.Layers size={14} />, title: t.new_file_type_block_title, desc: t.new_file_type_block_desc },
+                                { action: "clangfile", icon: <Icon.File size={14} />,   title: t.new_file_type_clang_title, desc: t.new_file_type_clang_desc },
+                                { action: "import",    icon: <Icon.Download size={14} />, title: t.new_file_type_import_title, desc: t.new_file_type_import_desc },
+                            ]}
+                        />
+                    </div>
                 </div>
 
                 {filesLoading ? (
@@ -231,9 +496,29 @@ export default function DashboardPage() {
                             <p style={{ margin: 0, fontSize: token.font.size.fs15, fontWeight: 500, color: token.color.fgMuted }}>{t.empty_title}</p>
                             <p style={{ margin: "4px 0 0", fontSize: token.font.size.fs13 }}>{t.empty_desc}</p>
                         </div>
-                        <Button variant="accent" size="sm" leading={<Icon.Plus size={12} />} onClick={handleNewFile} disabled={creating}>
-                            {t.empty_new_file_button}
-                        </Button>
+                        <div style={{ position: "relative", zIndex: pickerAnchor === "empty" ? 20 : undefined }}>
+                            <Button
+                                variant="accent"
+                                size="sm"
+                                leading={<Icon.Plus size={12} />}
+                                trailing={<Icon.Chevron size={14} />}
+                                onClick={() => setPickerAnchor(prev => prev === "empty" ? null : "empty")}
+                                disabled={creating}
+                            >
+                                {t.empty_new_file_button}
+                            </Button>
+                            <NewFileMenu
+                                open={pickerAnchor === "empty"}
+                                creating={creating}
+                                onSelect={handleMenuSelect}
+                                align="center"
+                                options={[
+                                    { action: "blockfile", icon: <Icon.Layers size={14} />, title: t.new_file_type_block_title, desc: t.new_file_type_block_desc },
+                                    { action: "clangfile", icon: <Icon.File size={14} />,   title: t.new_file_type_clang_title, desc: t.new_file_type_clang_desc },
+                                    { action: "import",    icon: <Icon.Download size={14} />, title: t.new_file_type_import_title, desc: t.new_file_type_import_desc },
+                                ]}
+                            />
+                        </div>
                     </div>
                 ) : (
                     <div style={{
@@ -241,21 +526,25 @@ export default function DashboardPage() {
                         gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
                         gap: token.space.sp4,
                     }}>
-                        {files.map(file => (
+                        {files.map((file, i) => (
                             <FileCard
                                 key={file.id}
                                 file={file}
+                                previewRef={i === 0 ? measurePreviewBox : undefined}
                                 isRenaming={renamingId === file.id}
                                 renameValue={renameValue}
                                 renameInputRef={renamingId === file.id ? renameInputRef : undefined}
                                 menuOpen={menuOpen === file.id}
-                                onOpen={() => router.push(`/workspace?file=${file.id}`)}
+                                onOpen={() => router.push(pathForType(file))}
                                 onMenuToggle={() => setMenuOpen(prev => prev === file.id ? null : file.id)}
                                 onMenuClose={() => setMenuOpen(null)}
                                 onRename={() => startRename(file)}
                                 onDuplicate={() => handleDuplicate(file.id)}
+                                onDuplicateAsCpp={file.type === "blockfile" ? () => handleDuplicateAsCpp(file) : undefined}
                                 onShare={() => startShare(file)}
+                                onSetThumbnail={() => startSetThumbnail(file)}
                                 onDelete={() => handleDelete(file.id)}
+                                thumbnailVersion={thumbVersions[file.id] ?? 0}
                                 onRenameChange={setRenameValue}
                                 onRenameCommit={() => commitRename(file.id)}
                                 onRenameCancel={() => setRenamingId(null)}
@@ -267,6 +556,30 @@ export default function DashboardPage() {
 
             {menuOpen !== null && (
                 <div onClick={() => setMenuOpen(null)} style={{ position: "fixed", inset: 0, zIndex: 9 }} />
+            )}
+
+            {pickerAnchor !== null && !creating && (
+                <div onClick={() => setPickerAnchor(null)} style={{ position: "fixed", inset: 0, zIndex: 19 }} />
+            )}
+
+            <input
+                ref={importInputRef}
+                type="file"
+                accept=".simulizer,.json,.cpp,.cc,.cxx,.c++,.h,.hpp,.hxx"
+                onChange={handleImportFileInput}
+                style={{ display: "none" }}
+            />
+
+            {thumbnailModalFile && (
+                <ThumbnailUploadModal
+                    fileName={thumbnailModalFile.name}
+                    recommendedSize={previewBoxSize}
+                    canReset={thumbnailModalFile.thumbnail_custom}
+                    onUpload={handleThumbnailUpload}
+                    onReset={handleThumbnailReset}
+                    onClose={() => setThumbnailModalFile(null)}
+                    pack={t}
+                />
             )}
 
             {sharingFile && (
@@ -291,36 +604,100 @@ export default function DashboardPage() {
 
 const AUTH_BASE = process.env.NEXT_PUBLIC_AUTH_URL;
 
-function FileThumbnail({ fileId }: { fileId: string }) {
+function FileThumbnail({ fileId, version = 0 }: { fileId: string; version?: number }) {
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
     const [failed, setFailed] = useState(false);
 
     useEffect(() => {
-        let url: string | null = null;
-        fetch(`${AUTH_BASE}/files/${fileId}/thumbnail`, { credentials: "include" })
+        let cancelled = false;
+        let createdUrl: string | null = null;
+        setBlobUrl(null);
+        setFailed(false);
+        const suffix = version > 0 ? `?v=${version}` : "";
+        fetch(`${AUTH_BASE}/files/${fileId}/thumbnail${suffix}`, { credentials: "include" })
             .then(res => {
                 if (!res.ok) throw new Error();
                 return res.blob();
             })
             .then(blob => {
-                url = URL.createObjectURL(blob);
-                setBlobUrl(url);
+                if (cancelled) return;
+                createdUrl = URL.createObjectURL(blob);
+                setBlobUrl(createdUrl);
             })
-            .catch(() => setFailed(true));
-        return () => { if (url) URL.revokeObjectURL(url); };
-    }, [fileId]);
+            .catch(() => { if (!cancelled) setFailed(true); });
+        return () => {
+            cancelled = true;
+            // If the fetch resolved before cleanup, createdUrl is set and we
+            // must revoke it. If it resolves after cleanup, the cancelled
+            // flag prevents URL.createObjectURL from running at all.
+            if (createdUrl) URL.revokeObjectURL(createdUrl);
+        };
+    }, [fileId, version]);
 
     if (blobUrl) {
         return (
             <img
                 src={blobUrl}
                 alt=""
-                style={{ width: "100%", height: "100%", objectFit: "contain", padding: 12, boxSizing: "border-box" }}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
         );
     }
-    if (failed) return <Icon.Grid size={32} />;
+    if (failed) {
+        return (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon.Grid size={32} />
+            </div>
+        );
+    }
     return null;
+}
+
+function CodeSnippet({ fileId }: { fileId: string }) {
+    const [text, setText] = useState<string | null>(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        fetch(`${AUTH_BASE}/files/${fileId}/preview`, { credentials: "include" })
+            .then(res => {
+                if (!res.ok) throw new Error();
+                return res.text();
+            })
+            .then(t => setText(t.trim()))
+            .catch(() => setFailed(true));
+    }, [fileId]);
+
+    if (failed || (text !== null && text === "")) {
+        return (
+            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon.File size={32} />
+            </div>
+        );
+    }
+    if (text === null) return null;
+    return (
+        <Prism
+            language="cpp"
+            customStyle={{
+                width: "100%",
+                height: "100%",
+                margin: 0,
+                padding: "8px 10px",
+                overflow: "hidden",
+                fontSize: 9,
+                lineHeight: 1.35,
+                fontFamily: token.font.family.mono,
+                background: "transparent",
+                color: token.color.fgMuted,
+                whiteSpace: "pre",
+                wordBreak: "normal",
+                pointerEvents: "none",
+            }}
+            codeTagProps={{ style: { fontFamily: token.font.family.mono } }}
+        >
+            {text}
+        </Prism>
+    );
 }
 
 interface FileCardProps {
@@ -329,12 +706,16 @@ interface FileCardProps {
     renameValue: string;
     renameInputRef?: React.RefObject<HTMLInputElement | null>;
     menuOpen: boolean;
+    thumbnailVersion: number;
+    previewRef?: (el: HTMLDivElement | null) => void;
     onOpen: () => void;
     onMenuToggle: () => void;
     onMenuClose: () => void;
     onRename: () => void;
     onDuplicate: () => void;
+    onDuplicateAsCpp?: () => void;
     onShare: () => void;
+    onSetThumbnail: () => void;
     onDelete: () => void;
     onRenameChange: (v: string) => void;
     onRenameCommit: () => void;
@@ -343,8 +724,8 @@ interface FileCardProps {
 
 function FileCard({
     file, isRenaming, renameValue, renameInputRef,
-    menuOpen, onOpen, onMenuToggle, onMenuClose,
-    onRename, onDuplicate, onShare, onDelete,
+    menuOpen, thumbnailVersion, previewRef, onOpen, onMenuToggle, onMenuClose,
+    onRename, onDuplicate, onDuplicateAsCpp, onShare, onSetThumbnail, onDelete,
     onRenameChange, onRenameCommit, onRenameCancel,
 }: FileCardProps) {
     const [, , pack] = useLanguagePack();
@@ -378,19 +759,24 @@ function FileCard({
         >
             {/* Preview area */}
             <div
+                ref={previewRef}
                 onClick={onOpen}
                 style={{
-                    height: 120,
+                    aspectRatio: "2 / 1",
                     background: token.color.bgSubtle,
                     display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
+                    alignItems: "stretch",
+                    justifyContent: "stretch",
                     color: token.color.fgSubtle,
                     borderRadius: `${token.radius.lg} ${token.radius.lg} 0 0`,
                     overflow: "hidden",
                 }}
             >
-                <FileThumbnail fileId={file.id} />
+                {file.thumbnail_custom
+                    ? <FileThumbnail fileId={file.id} version={thumbnailVersion} />
+                    : file.type === "clangfile"
+                        ? <CodeSnippet fileId={file.id} />
+                        : <FileThumbnail fileId={file.id} version={thumbnailVersion} />}
             </div>
 
             {/* Footer */}
@@ -463,11 +849,25 @@ function FileCard({
                                 >
                                     <Icon.Layers size={12} /> {t.menu_duplicate}
                                 </button>
+                                {onDuplicateAsCpp && (
+                                    <button style={menuItem} onClick={onDuplicateAsCpp}
+                                        onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
+                                        onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                                    >
+                                        <Icon.File size={12} /> {t.menu_duplicate_cpp}
+                                    </button>
+                                )}
                                 <button style={menuItem} onClick={onShare}
                                     onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                 >
                                     <Icon.Globe size={12} /> {t.menu_share}
+                                </button>
+                                <button style={menuItem} onClick={onSetThumbnail}
+                                    onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
+                                    onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                                >
+                                    <Icon.Download size={12} /> {t.menu_set_thumbnail}
                                 </button>
                                 <div style={{ height: 1, background: token.color.border, margin: "4px 0" }} />
                                 <button
@@ -487,6 +887,17 @@ function FileCard({
                     <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle, flex: 1 }}>
                         {t.card_updated.replace("{date}", formatDate(file.updated_at))}
                     </span>
+                    {file.type === "clangfile" && (
+                        <span style={{
+                            display: "inline-flex", alignItems: "center",
+                            padding: "1px 6px", borderRadius: 999,
+                            background: token.color.bgSubtle, color: token.color.fgMuted,
+                            fontSize: token.font.size.fs10, fontWeight: 600,
+                            fontFamily: token.font.family.mono,
+                        }}>
+                            {t.badge_clangfile}
+                        </span>
+                    )}
                     {file.visibility === "link" && (
                         <span style={{
                             display: "inline-flex", alignItems: "center", gap: 4,
@@ -511,5 +922,145 @@ function MoreIcon() {
             <circle cx="12" cy="12" r="1.5" />
             <circle cx="12" cy="19" r="1.5" />
         </svg>
+    );
+}
+
+interface ThumbnailUploadModalProps {
+    fileName: string;
+    recommendedSize: { w: number; h: number };
+    canReset: boolean;
+    onUpload: (file: File) => Promise<void>;
+    onReset: () => Promise<void>;
+    onClose: () => void;
+    pack: ReturnType<typeof useLanguagePack>[2]["dashboard"];
+}
+
+function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, onReset, onClose, pack }: ThumbnailUploadModalProps) {
+    const inputRef = useRef<HTMLInputElement>(null);
+    const [dragOver, setDragOver] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [resetting, setResetting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const busy = uploading || resetting;
+
+    const recHint = pack.thumbnail_recommended_size
+        .replace("{w}", String(recommendedSize.w))
+        .replace("{h}", String(recommendedSize.h));
+
+    const handleFile = async (file: File) => {
+        setError(null);
+        setUploading(true);
+        try {
+            await onUpload(file);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : pack.thumbnail_upload_failed);
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    const handleReset = async () => {
+        setError(null);
+        setResetting(true);
+        try {
+            await onReset();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : pack.thumbnail_reset_failed);
+        } finally {
+            setResetting(false);
+        }
+    };
+
+    return (
+        <Modal width={480} onClose={() => !busy && onClose()}>
+            <ModalHeader onClose={() => !busy && onClose()}>
+                {pack.thumbnail_modal_title}
+            </ModalHeader>
+            <ModalBody>
+                <p style={{ margin: `0 0 ${token.space.sp3} 0`, fontSize: token.font.size.fs12, color: token.color.fgSubtle, fontFamily: token.font.family.mono }}>
+                    {fileName}
+                </p>
+                <div
+                    onDrop={(e) => {
+                        e.preventDefault();
+                        setDragOver(false);
+                        if (busy) return;
+                        const f = e.dataTransfer.files[0];
+                        if (f) handleFile(f);
+                    }}
+                    onDragEnter={() => !busy && setDragOver(true)}
+                    onDragLeave={() => setDragOver(false)}
+                    onDragOver={(e) => { e.preventDefault(); if (!busy) setDragOver(true); }}
+                    onClick={() => !busy && inputRef.current?.click()}
+                    role="button"
+                    tabIndex={0}
+                    style={{
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        gap: token.space.sp2,
+                        padding: `${token.space.sp8} ${token.space.sp6}`,
+                        borderRadius: token.radius.lg,
+                        border: `2px dashed ${dragOver ? token.color.accent : token.color.border}`,
+                        background: dragOver ? token.color.accentSubtle : token.color.bgSubtle,
+                        cursor: uploading ? "wait" : "pointer",
+                        transition: "border-color 0.15s, background 0.15s",
+                    }}
+                >
+                    {uploading ? (
+                        <>
+                            <Spinner size="lg" />
+                            <p style={{ margin: 0, fontSize: token.font.size.fs13, color: token.color.fgMuted }}>{pack.thumbnail_uploading}</p>
+                        </>
+                    ) : (
+                        <>
+                            <div style={{
+                                width: 48, height: 48,
+                                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                borderRadius: 999,
+                                background: dragOver ? token.color.accent : token.color.bg,
+                                color: dragOver ? token.color.fgOnAccent : token.color.fgMuted,
+                                border: `1px solid ${token.color.border}`,
+                                transition: "background 0.15s, color 0.15s",
+                            }}>
+                                <Icon.Download size={20} />
+                            </div>
+                            <p style={{ margin: 0, fontSize: token.font.size.fs13, fontWeight: 600, color: token.color.fg, textAlign: "center" }}>
+                                {pack.thumbnail_dropzone_idle}
+                            </p>
+                            <p style={{ margin: 0, fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
+                                {pack.thumbnail_dropzone_hint}
+                            </p>
+                        </>
+                    )}
+                    <input
+                        ref={inputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: "none" }}
+                        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handleFile(f); }}
+                    />
+                </div>
+                <p style={{ margin: `${token.space.sp3} 0 0 0`, fontSize: token.font.size.fs11, color: token.color.fgSubtle, fontFamily: token.font.family.mono, textAlign: "center" }}>
+                    {recHint}
+                </p>
+                {error && (
+                    <p style={{ margin: `${token.space.sp3} 0 0 0`, fontSize: token.font.size.fs12, color: token.color.danger, textAlign: "center" }}>
+                        {error}
+                    </p>
+                )}
+                {canReset && (
+                    <div style={{ display: "flex", justifyContent: "center", marginTop: token.space.sp4 }}>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            leading={resetting ? <Spinner size="sm" /> : <Icon.Trash size={11} />}
+                            onClick={handleReset}
+                            disabled={busy}
+                        >
+                            {pack.thumbnail_reset_button}
+                        </Button>
+                    </div>
+                )}
+            </ModalBody>
+        </Modal>
     );
 }

@@ -39,12 +39,16 @@ export interface RecoveryUserOut extends UserOut {
 
 export type FileVisibility = "private" | "link";
 
+export type FileType = "blockfile" | "clangfile";
+
 export interface FileOut {
     idx: number;
     id: string;
     author_id: number;
     name: string;
+    type: FileType;
     visibility: string;
+    thumbnail_custom: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -90,8 +94,14 @@ export async function listFiles(): Promise<FileOut[]> {
     return res.json();
 }
 
-export async function createFile(name: string, content = "{}"): Promise<FileDetail> {
-    const res = await reqJson("/files", "POST", { name, content });
+export async function createFile(
+    name: string,
+    type: FileType = "blockfile",
+    content?: string,
+): Promise<FileDetail> {
+    const body: { name: string; type: FileType; content?: string } = { name, type };
+    if (content !== undefined) body.content = content;
+    const res = await reqJson("/files", "POST", body);
     throwIfConflict(res);
     if (!res.ok) throw new Error("Failed to create file");
     return res.json();
@@ -136,11 +146,17 @@ export async function setFileVisibility(id: string, visibility: FileVisibility):
     return res.json();
 }
 
-export async function uploadThumbnail(fileId: string, blob: Blob): Promise<void> {
-    const res = await req(`/files/${fileId}/thumbnail`, {
+export async function uploadThumbnail(fileId: string, blob: Blob, opts?: { manual?: boolean }): Promise<void> {
+    const qs = opts?.manual ? "?manual=true" : "";
+    const res = await req(`/files/${fileId}/thumbnail${qs}`, {
         method: "PUT",
-        headers: { "Content-Type": "image/png" },
+        headers: { "Content-Type": blob.type || "image/png" },
         body: blob,
     });
     if (!res.ok) throw new Error("Failed to upload thumbnail");
+}
+
+export async function deleteThumbnail(fileId: string): Promise<void> {
+    const res = await req(`/files/${fileId}/thumbnail`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to delete thumbnail");
 }

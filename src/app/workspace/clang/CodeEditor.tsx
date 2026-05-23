@@ -55,9 +55,10 @@ type Props = {
     initialCode: string;
     lspWsUrl: string;
     onTextChanged: (code: string) => void;
+    readOnly?: boolean;
 };
 
-const CodeEditor: React.FC<Props> = ({ initialCode, lspWsUrl, onTextChanged }) => {
+const CodeEditor: React.FC<Props> = ({ initialCode, lspWsUrl, onTextChanged, readOnly = false }) => {
     return (
         <MonacoEditorReactComp
             style={{ width: "100%", height: "100%" }}
@@ -94,6 +95,7 @@ const CodeEditor: React.FC<Props> = ({ initialCode, lspWsUrl, onTextChanged }) =
                 editorOptions: {
                     automaticLayout: true,
                     scrollBeyondLastLine: false,
+                    readOnly,
                 },
             }}
             languageClientConfig={{
