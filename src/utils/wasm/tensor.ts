@@ -29,6 +29,32 @@ function openBuffer(tensorId: number) {
     bufferSpace[tensorId] = tf.buffer(tensor.shape as number[], "float32", tensor.dataSync() as Float32Array);
 }
 
+export function js_tensor_create_with_shape(varid: number, shape: number[]): number {
+    console.log(`js_tensor_create_with_shape: varid=${varid}, shape=[${shape.join(", ")}]`);
+    tfSpace[varid] = tf.zeros(shape, "float32");
+    return varid;
+}
+
+export function js_tensor_random_with_shape(
+    varid: number,
+    distType: number,
+    param1: number,
+    param2: number,
+    shape: number[],
+): number {
+    let tensor: tf.Tensor;
+    if (distType === 1) {
+        tensor = tf.randomNormal(shape, param1, param2, "float32");
+    } else if (distType === 2) {
+        tensor = tf.truncatedNormal(shape, param1, param2, "float32");
+    } else {
+        tensor = tf.randomUniform(shape, param1, param2, "float32");
+    }
+    tfSpace[varid] = tensor;
+    console.log(`js_tensor_random_with_shape: varid=${varid}, distType=${distType}, p1=${param1}, p2=${param2}, shape=[${shape.join(", ")}]`);
+    return varid;
+}
+
 export function js_tensor_create(
     memory: WebAssembly.Memory,
     varid: number,
@@ -36,9 +62,7 @@ export function js_tensor_create(
     cap: number,
 ): number {
     const dimList: number[] = simulizer.pipe.load_arr_i32(memory, ptr, cap) || [];
-    console.log(`js_tensor_create: varid=${varid}, ptr=0x${ptr.toString(16)}, cap=${cap}, dimList=[${dimList.join(", ")}]`);
-    tfSpace[varid] = tf.zeros(dimList, "float32");
-    return varid;
+    return js_tensor_create_with_shape(varid, dimList);
 }
 
 export function js_tensor_random(
@@ -51,17 +75,7 @@ export function js_tensor_random(
     cap: number,
 ): number {
     const dimList: number[] = simulizer.pipe.load_arr_i32(memory, ptr, cap) || [];
-    let tensor: tf.Tensor;
-    if (distType === 1) {
-        tensor = tf.randomNormal(dimList, param1, param2, "float32");
-    } else if (distType === 2) {
-        tensor = tf.truncatedNormal(dimList, param1, param2, "float32");
-    } else {
-        tensor = tf.randomUniform(dimList, param1, param2, "float32");
-    }
-    tfSpace[varid] = tensor;
-    console.log(`js_tensor_random: varid=${varid}, distType=${distType}, p1=${param1}, p2=${param2}, shape=[${dimList.join(", ")}]`);
-    return varid;
+    return js_tensor_random_with_shape(varid, distType, param1, param2, dimList);
 }
 
 export function js_tensor_scale(tensorVarId: number, scalar: number): number {
