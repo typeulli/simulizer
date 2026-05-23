@@ -1146,7 +1146,7 @@ function Mode4({ videoFile, startFrame, paintMask, onDone, updateMask, onServerM
                     form.append("mask", blob, "mask.png");
                 }
 
-                const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                const API = process.env.NEXT_PUBLIC_AI_URL;
                 const res = await fetch(`${API}/track/start`, { method: "POST", body: form });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const { session_id, fps: serverFps, total_frames: serverTotal } = await res.json() as { session_id: string; fps: number; total_frames: number };
@@ -1155,7 +1155,7 @@ function Mode4({ videoFile, startFrame, paintMask, onDone, updateMask, onServerM
                 sessionIdRef.current = session_id;
                 onServerMetadata(serverFps, serverTotal);
 
-                const apiHost = API.replace(/^http/, "ws");
+                const apiHost = API!.replace(/^http/, "ws");
                 const ws = new WebSocket(`${apiHost}/track/ws/${session_id}`);
                 wsRef.current = ws;
 
@@ -1231,7 +1231,7 @@ function Mode4({ videoFile, startFrame, paintMask, onDone, updateMask, onServerM
             active = false;
             wsRef.current?.close();
             if (sessionIdRef.current) {
-                const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                const API = process.env.NEXT_PUBLIC_AI_URL;
                 fetch(`${API}/track/stop`, { method: "POST", body: JSON.stringify({ session_id: sessionIdRef.current }), headers: { "Content-Type": "application/json" } }).catch(() => {});
                 sessionIdRef.current = "";
             }

@@ -5,7 +5,7 @@
 // Agreed model:
 //  - The fence body is an example id resolved against system-level bundled
 //    examples (S1: src/contents/docs/assets/<id>.json, served via
-//    /api/docs-examples/<id>). No account, no auth.
+//    /api/docs/examples/<id>). No account, no auth.
 //  - Read-only render + lazy activation + "open in workspace" link to the
 //    shared project. In-doc Run was intentionally dropped (decision reversal
 //    of F2): execution happens in the real workspace one click away. This
@@ -144,7 +144,7 @@ export function SimulizerEmbed({ fileId }: SimulizerEmbedProps) {
         (async () => {
             try {
                 registerBlocks(pack);
-                const res = await fetch(`/api/docs-examples/${encodeURIComponent(id)}`);
+                const res = await fetch(`/api/docs/examples/${encodeURIComponent(id)}`);
                 if (!res.ok) throw new Error(`Example not found (${res.status})`);
                 const content = await res.text();
                 if (disposed || !canvasRef.current) return;

@@ -824,7 +824,7 @@ const BlocklyWasmIDE: React.FC = () => {
     const [showToolsMenu, setShowToolsMenu]     = useState(false);
     const toolsMenuRef                          = useRef<HTMLDivElement>(null);
     const [canvasTab, setCanvasTab]             = useState<"blocks" | "wat" | "ai">("blocks");
-    const [watLang, setWatLang]                 = useState<"wat" | "cpp">("wat");
+    const [watLang, setWatLang]                 = useState<"wat" | "cpp" | "py" | "js">("wat");
     const [translatedSource, setTranslatedSource] = useState<string | null>(null);
     const [translating, setTranslating]         = useState(false);
     const [compiling, setCompiling]             = useState(false);
@@ -1718,7 +1718,7 @@ const BlocklyWasmIDE: React.FC = () => {
         const processedSave = replaceLatexBlocksInWorkspace(rawSave);
         const blocklyJson = JSON.stringify(processedSave);
         setTranslating(true);
-        fetch(`${API_BASE}/translate`, {
+        fetch(`${API_BASE}/compile`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ lang: watLang, code: blocklyJson }),
@@ -1898,77 +1898,60 @@ const BlocklyWasmIDE: React.FC = () => {
         setCompiling(true);
         setCompileProgress({ status: "progress", step: 0, total: 0, message: "요청 전송 중..." });
         try {
-            const res = await fetch(`${API_BASE}/compile`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-                body: JSON.stringify({ code: blocklyJson }),
-            });
-            if (!res.ok || !res.body) {
-                const err = await res.json().catch(() => ({ detail: res.statusText }));
-                setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: err.detail ?? "Compile failed" }));
-                return;
-            }
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
+            const ctrl = new AbortController();
             let uuid: string | null = null;
-            let doneUuid: string | null = null;
-            let errored = false;
-            let streamEnded = false;
 
-            const handleEvent = (eventName: string, dataStr: string) => {
-                if (!dataStr) return;
-                let payload: { uuid?: string; step?: number; total?: number; message?: string; detail?: string };
-                try { payload = JSON.parse(dataStr); } catch { return; }
-                if (eventName === "error") {
-                    errored = true;
-                    setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: payload.detail ?? "Compile failed" }));
-                    return;
-                }
-                if (eventName === "done") {
-                    doneUuid = payload.uuid ?? uuid;
-                    setCompileProgress(prev => ({ status: "progress", step: prev?.total ?? prev?.step ?? 0, total: prev?.total ?? 0, message: "다운로드 준비 중..." }));
-                    return;
-                }
-                // default "message" event: progress — total/step driven entirely by server
-                if (payload.uuid && !uuid) uuid = payload.uuid;
-                if (payload.message) {
-                    setCompileProgress(prev => ({
-                        status: "progress",
-                        step: payload.step ?? prev?.step ?? 0,
-                        total: payload.total ?? prev?.total ?? 0,
-                        message: payload.message!,
-                    }));
-                }
-            };
+            const doneUuid = await new Promise<string>((resolve, reject) => {
+                fetchEventSource(`${API_BASE}/compile/build`, {
+                method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: blocklyJson }),
+                    signal: ctrl.signal,
+                    openWhenHidden: true,
+                    async onopen(res) {
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({ detail: res.statusText }));
+                            throw new Error(err.detail ?? "Compile failed");
+                        }
+                    },
+                    onmessage(e) {
+                        let payload: { uuid?: string; step?: number; total?: number; message?: string; detail?: string };
+                        try { payload = JSON.parse(e.data); } catch { return; }
+                        if (e.event === "error") {
+                            throw new Error(payload.detail ?? "Compile failed");
+                        }
+                        if (e.event === "done") {
+                            const finalUuid = payload.uuid ?? uuid;
+                            if (!finalUuid) throw new Error("Compile stream ended without uuid");
+                            setCompileProgress(prev => ({ status: "progress", step: Math.max(0, (prev?.total ?? prev?.step ?? 0) - 1), total: prev?.total ?? 0, message: "다운로드 준비 중..." }));
+                            ctrl.abort();
+                            resolve(finalUuid);
+                            return;
+                        }
+                        // default "message" event: progress — total/step driven entirely by server (+1 reserved for download)
+                        if (payload.uuid && !uuid) uuid = payload.uuid;
+                        if (payload.message) {
+                            setCompileProgress(prev => ({
+                                status: "progress",
+                                step: payload.step ?? prev?.step ?? 0,
+                                        total: payload.total !== undefined ? payload.total + 1 : (prev?.total ?? 0),
+                                message: payload.message!,
+                            }));
+                        }
+                    },
+                    onerror(err) {
+                        if ((err as Error)?.name !== "AbortError") {
+                            reject(err instanceof Error ? err : new Error(String(err)));
+                        }
+                        throw err; // stop retries
+                    },
+                    onclose() {
+                        reject(new Error("Compile stream ended without completion"));
+                    },
+                }).catch(reject);
+            });
 
-            while (!streamEnded) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                let sepIdx: number;
-                while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
-                    const rawBlock = buffer.slice(0, sepIdx);
-                    buffer = buffer.slice(sepIdx + 2);
-                    let eventName = "message";
-                    const dataLines: string[] = [];
-                    for (const line of rawBlock.split("\n")) {
-                        if (line.startsWith("event:")) eventName = line.slice(6).trim();
-                        else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
-                    }
-                    handleEvent(eventName, dataLines.join("\n"));
-                    if (errored || doneUuid) { streamEnded = true; break; }
-                }
-            }
-
-            if (errored) return;
-            if (!doneUuid) {
-                setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: "Compile stream ended without completion" }));
-                return;
-            }
-
-            const dlRes = await fetch(`${API_BASE}/compile/download/${doneUuid}`);
+            const dlRes = await fetch(`${API_BASE}/compile/build/download/${doneUuid}`);
             if (!dlRes.ok) {
                 const err = await dlRes.json().catch(() => ({ detail: dlRes.statusText }));
                 setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: err.detail ?? "Download failed" }));
@@ -2288,7 +2271,7 @@ const BlocklyWasmIDE: React.FC = () => {
             if (exampleParam) {
                 (async () => {
                     const res = await fetch(
-                        `/api/docs-examples/${encodeURIComponent(exampleParam)}`,
+                        `/api/docs/examples/${encodeURIComponent(exampleParam)}`,
                     ).catch(() => null);
                     if (!res || !res.ok) {
                         setFileError("not_found");
@@ -2733,12 +2716,14 @@ const BlocklyWasmIDE: React.FC = () => {
                             <div style={{ position:"absolute", top:8, right:24, zIndex:10, display:"flex", alignItems:"center", gap:4 }}>
                                 <select
                                     value={watLang}
-                                    onChange={e => setWatLang(e.target.value as "wat" | "cpp")}
+                                    onChange={e => setWatLang(e.target.value as "wat" | "cpp" | "py" | "js")}
                                     disabled={translating}
                                     style={{ padding:"3px 6px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer", opacity: translating ? 0.5 : 1 }}
                                 >
                                     <option value="wat">WAT</option>
-                                    <option value="cpp">CPP</option>
+                                    <option value="cpp">C++</option>
+                                    <option value="py">Python</option>
+                                    <option value="js">JavaScript</option>
                                 </select>
                                 <button
                                     onClick={() => { const src = watLang === "wat" ? watSource : (translatedSource ?? ""); navigator.clipboard.writeText(src); }}
@@ -2793,7 +2778,7 @@ const BlocklyWasmIDE: React.FC = () => {
                                         ? <Prism language="wasm" customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{watSource}</Prism>
                                         : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>{pack.workspace.ui.wat_empty}</div>
                                     : translatedSource
-                                        ? <Prism language="cpp" customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{translatedSource}</Prism>
+                                        ? <Prism language={watLang === "py" ? "python" : watLang === "js" ? "javascript" : "cpp"} customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{translatedSource}</Prism>
                                         : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>{pack.workspace.ui.wat_empty}</div>
                             }
                         </div>
