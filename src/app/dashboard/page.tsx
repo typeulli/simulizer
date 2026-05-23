@@ -26,9 +26,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
 import { Prism } from "react-syntax-highlighter";
 
-function pathForType(file: { id: string; type: FileType }): string {
-    const base = file.type === "clangfile" ? "/workspace/clang" : "/workspace";
-    return `${base}?file=${file.id}`;
+function pathForType(file: { id: string }): string {
+    return `/workspace?file=${file.id}`;
 }
 
 type NewFileAction = FileType | "import";

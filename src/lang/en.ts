@@ -176,6 +176,13 @@ const en: langpack = {
         forbidden_desc:  "You don't have permission to access this file. Try asking the owner for access.",
         go_dashboard:    "Go to Dashboard",
     },
+    not_found: {
+        code:    "404",
+        title:   "Page not found",
+        desc:    "The page you're looking for doesn't exist or has been moved.",
+        go_home: "Go to Home",
+        go_back: "Go back",
+    },
     boundary: {
         no_data_error:  "No data to run.",
         breadcrumb_2d:  "Boundary 2D",

@@ -176,6 +176,13 @@ const ko: langpack = {
         forbidden_desc:  "이 파일에 접근할 수 있는 권한이 없어요. 소유자에게 권한을 요청해 보세요.",
         go_dashboard:    "대시보드로 가기",
     },
+    not_found: {
+        code:    "404",
+        title:   "페이지를 찾을 수 없습니다",
+        desc:    "요청하신 페이지가 존재하지 않거나 이동되었습니다.",
+        go_home: "홈으로 가기",
+        go_back: "이전 페이지",
+    },
     boundary: {
         no_data_error:  "실행할 데이터가 없습니다.",
         breadcrumb_2d:  "경계조건 2D",

@@ -175,6 +175,13 @@ type langpack = {
         forbidden_desc: string,
         go_dashboard: string,
     },
+    not_found: {
+        code: string,
+        title: string,
+        desc: string,
+        go_home: string,
+        go_back: string,
+    },
     boundary: {
         no_data_error: string,
         breadcrumb_2d: string,

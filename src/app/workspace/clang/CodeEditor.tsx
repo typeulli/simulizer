@@ -1,10 +1,10 @@
 "use client";
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { LogLevel } from "@codingame/monaco-vscode-api";
 import getKeybindingsServiceOverride from "@codingame/monaco-vscode-keybindings-service-override";
 import getThemeServiceOverride from "@codingame/monaco-vscode-theme-service-override";
 import getTextmateServiceOverride from "@codingame/monaco-vscode-textmate-service-override";
-import getConfigurationServiceOverride from "@codingame/monaco-vscode-configuration-service-override";
+import getConfigurationServiceOverride, { updateUserConfiguration } from "@codingame/monaco-vscode-configuration-service-override";
 import getLanguagesServiceOverride from "@codingame/monaco-vscode-languages-service-override";
 import { getEnhancedMonacoEnvironment } from "monaco-languageclient/vscodeApiWrapper";
 import { MonacoEditorReactComp } from "@typefox/monaco-editor-react";
@@ -56,9 +56,33 @@ type Props = {
     lspWsUrl: string;
     onTextChanged: (code: string) => void;
     readOnly?: boolean;
+    theme?: "light" | "dark";
 };
 
-const CodeEditor: React.FC<Props> = ({ initialCode, lspWsUrl, onTextChanged, readOnly = false }) => {
+const CodeEditor: React.FC<Props> = ({ initialCode, lspWsUrl, onTextChanged, readOnly = false, theme = "light" }) => {
+    const colorTheme = theme === "dark" ? "Default Dark Modern" : "Default Light Modern";
+
+    // Push theme changes through the vscode configuration service so Monaco
+    // swaps the theme without remounting. The first effect run on mount is a
+    // no-op since initial userConfiguration already sets the same value; we
+    // still call it so the service applies the theme even if the initial
+    // bootstrap was racy.
+    const themeAppliedRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (themeAppliedRef.current === colorTheme) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                await updateUserConfiguration(JSON.stringify({ "workbench.colorTheme": colorTheme }));
+                if (!cancelled) themeAppliedRef.current = colorTheme;
+            } catch {
+                // Service not initialized yet on first mount — initial
+                // userConfiguration already provided the same theme.
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [colorTheme]);
+
     return (
         <MonacoEditorReactComp
             style={{ width: "100%", height: "100%" }}
@@ -75,7 +99,7 @@ const CodeEditor: React.FC<Props> = ({ initialCode, lspWsUrl, onTextChanged, rea
                 },
                 userConfiguration: {
                     json: JSON.stringify({
-                        "workbench.colorTheme": "Default Dark Modern",
+                        "workbench.colorTheme": colorTheme,
                         "editor.fontSize": 13,
                         "editor.fontFamily": "Consolas, 'JetBrains Mono', Menlo, monospace",
                         "editor.minimap.enabled": false,

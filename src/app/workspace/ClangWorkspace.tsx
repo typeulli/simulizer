@@ -1,7 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
@@ -12,14 +12,14 @@ import { vec_field_to_image_url, mat_data_to_image_url } from "@/utils/wasm/tens
 
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
-import { Logo } from "@/components/atoms/Logo";
 import { Spinner } from "@/components/atoms/Spinner";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { token } from "@/components/tokens";
-import { duplicateFile, getFile, getMe, renameFile, saveFile, type FileOut } from "@/lib/authapi";
+import { duplicateFile, renameFile, saveFile, type FileDetail, type FileOut } from "@/lib/authapi";
 import { CppManagerModal } from "@/components/workspace-modals/CppManagerModal";
 import { ShareControl } from "@/components/share/ShareControl";
 import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTheme } from "@/hooks/useTheme";
 
 type SaveStatus = "idle" | "saved" | "unsaved" | "saving" | "error";
 type CppMode = "code" | "share";
@@ -34,7 +34,7 @@ const LSP_WS_URL = (() => {
 })();
 
 
-const CodeEditor = dynamic(() => import("./CodeEditor"), {
+const CodeEditor = dynamic(() => import("./clang/CodeEditor"), {
     ssr: false,
     loading: () => (
         <div style={{ flex: 1, padding: 16, color: token.color.fgMuted, fontFamily: token.font.family.mono, fontSize: token.font.size.fs12 }}>
@@ -63,10 +63,15 @@ int worker() {
 }
 `;
 
-const ClangIDE: React.FC = () => {
+type Props = {
+    initialFile: FileDetail;
+    initialOwner: boolean;
+};
+
+const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const router = useRouter();
-    const searchParams = useSearchParams();
     const [, , pack] = useLanguagePack();
+    const { theme } = useTheme();
 
     const [code, setCode] = useState(INITIAL_CODE);
     const [editorKey, setEditorKey] = useState(0);
@@ -74,7 +79,6 @@ const ClangIDE: React.FC = () => {
     const [fileName, setFileName] = useState<string>("main.cpp");
     const [fileMeta, setFileMeta] = useState<FileOut | null>(null);
     const [isOwner, setIsOwner] = useState<boolean | null>(null);
-    const [fileError, setFileError] = useState<"not_found" | "forbidden" | null>(null);
     const [duplicating, setDuplicating] = useState(false);
     const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
 
@@ -93,47 +97,30 @@ const ClangIDE: React.FC = () => {
     const [buildState, setBuildState] = useState<BuildState>("idle");
     const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null);
 
-    // Load file from ?file= query
+    // Hydrate from props (parent already fetched the file + ownership).
     useEffect(() => {
-        const id = searchParams.get("file");
-        if (!id) {
-            router.replace("/dashboard");
-            return;
+        const f = initialFile;
+        const owner = initialOwner;
+        setIsOwner(owner);
+        setFileMeta(f);
+        setFileId(f.id);
+        fileIdRef.current = f.id;
+        setFileName(f.name);
+        // "{}" is the FileCreate default produced when dashboard creates a
+        // new file without sending content. Treat it as never-seeded and
+        // populate with the template, then persist immediately so the
+        // preview/refresh shows real content (Monaco doesn't fire
+        // onTextChanged on mount, so autosave wouldn't run otherwise).
+        // Plain "" is the user's deliberate empty state — preserve it.
+        const needsSeed = f.content === "{}";
+        const content = needsSeed ? INITIAL_CODE : f.content;
+        setCode(content);
+        setEditorKey(k => k + 1);
+        setSaveStatus("saved");
+        if (needsSeed && owner) {
+            saveFile(f.id, INITIAL_CODE).catch(() => { /* surfaced on next edit */ });
         }
-        (async () => {
-            const me = await getMe().catch(() => null);
-            const f = await getFile(id).catch((err) => {
-                const status = (err as { status?: number }).status;
-                setFileError(status === 403 ? "forbidden" : "not_found");
-                return null;
-            });
-            if (!f) return;
-            if (f.type !== "clangfile") {
-                router.replace(`/workspace?file=${f.id}`);
-                return;
-            }
-            const owner = !!(me && me.id === f.author_id);
-            setIsOwner(owner);
-            setFileMeta(f);
-            setFileId(f.id);
-            fileIdRef.current = f.id;
-            setFileName(f.name);
-            // "{}" is the FileCreate default produced when dashboard creates a
-            // new file without sending content. Treat it as never-seeded and
-            // populate with the template, then persist immediately so the
-            // preview/refresh shows real content (Monaco doesn't fire
-            // onTextChanged on mount, so autosave wouldn't run otherwise).
-            // Plain "" is the user's deliberate empty state — preserve it.
-            const needsSeed = f.content === "{}";
-            const content = needsSeed ? INITIAL_CODE : f.content;
-            setCode(content);
-            setEditorKey(k => k + 1);
-            setSaveStatus("saved");
-            if (needsSeed && owner) {
-                saveFile(f.id, INITIAL_CODE).catch(() => { /* surfaced on next edit */ });
-            }
-        })();
-    }, [searchParams, router]);
+    }, [initialFile, initialOwner]);
 
     // Autosave on code change (debounced). Non-owners (link-share viewers) skip
     // the save call entirely — they have no write permission and the editor is
@@ -201,10 +188,10 @@ const ClangIDE: React.FC = () => {
         setDuplicating(true);
         try {
             const dup = await duplicateFile(fileId);
-            router.push(`/workspace/clang?file=${dup.id}`);
+            router.push(`/workspace?file=${dup.id}`);
         } catch (err: any) {
             if (err?.status === 401) {
-                router.push(`/login?next=${encodeURIComponent(`/workspace/clang?file=${fileId}`)}`);
+                router.push(`/login?next=${encodeURIComponent(`/workspace?file=${fileId}`)}`);
             } else {
                 setErrorMsg(pack.workspace.ui.share_login_to_duplicate);
             }
@@ -229,6 +216,17 @@ const ClangIDE: React.FC = () => {
     }, [code, fileName]);
 
     const workerRef = useRef<Worker | null>(null);
+    const tfBackendRef = useRef<string>("initializing");
+    useEffect(() => { tfBackendRef.current = tfBackend; }, [tfBackend]);
+    const pendingBackendSwitchRef = useRef<{ previous: string } | null>(null);
+
+    const handleSwitchBackend = useCallback((backend: string) => {
+        const worker = workerRef.current;
+        if (!worker) return;
+        pendingBackendSwitchRef.current = { previous: tfBackendRef.current };
+        setTfBackend("initializing");
+        worker.postMessage({ type: "switch-backend", backend } satisfies ClangWorkerInMsg);
+    }, []);
     const {
         logAreaRef, addLog, addBar, setBar,
         addSeries, logToHolder, visualToHolder, graphToHolder,
@@ -245,7 +243,11 @@ const ClangIDE: React.FC = () => {
         const b = bindingsRef.current;
 
         if (msg.type === "ready") { setRunState("idle"); return; }
-        if (msg.type === "backend-switched") { setTfBackend(msg.backend); return; }
+        if (msg.type === "backend-switched") {
+            setTfBackend(msg.backend);
+            pendingBackendSwitchRef.current = null;
+            return;
+        }
         if (msg.type === "log") { b.logToHolder(msg.holderId, msg.kind, msg.text); return; }
         if (msg.type === "holder_create") { if (msg.kind === "series") b.addSeries(msg.holderId); return; }
         if (msg.type === "bar_create") { b.addBar(msg.min, msg.max, msg.barId); return; }
@@ -267,6 +269,16 @@ const ClangIDE: React.FC = () => {
         if (msg.type === "result") { setResultValue(msg.value); return; }
         if (msg.type === "done") { setRunState("done"); return; }
         if (msg.type === "error") {
+            // If the error is from an in-flight backend switch, restore the
+            // previous backend instead of leaving the UI stuck on "initializing".
+            // Backend switch errors aren't runtime errors so we don't flip
+            // runState.
+            if (pendingBackendSwitchRef.current) {
+                setTfBackend(pendingBackendSwitchRef.current.previous);
+                pendingBackendSwitchRef.current = null;
+                b.addLog("error", msg.message);
+                return;
+            }
             b.addLog("error", msg.message);
             setErrorMsg(msg.message);
             setRunState("error");
@@ -432,42 +444,6 @@ const ClangIDE: React.FC = () => {
     const runSpinning = runState === "loading" || runState === "compiling" || runState === "running";
     const buildSpinning = buildState === "building" || buildState === "downloading";
 
-    if (fileError) {
-        const ft = pack.file_error;
-        const isForbidden = fileError === "forbidden";
-        return (
-            <div style={{
-                minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-                background: token.color.bg, fontFamily: token.font.family.sans, color: token.color.fg,
-                padding: "32px 16px",
-            }}>
-                <div style={{ width: "100%", maxWidth: 400, display: "flex", flexDirection: "column", alignItems: "center", gap: token.space.sp6, textAlign: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <Logo size={22} />
-                        <span style={{ fontSize: token.font.size.fs16, fontWeight: 700, letterSpacing: "-0.02em" }}>Simulizer</span>
-                    </div>
-                    <div style={{ fontSize: 48, lineHeight: 1, color: token.color.fgSubtle }}>
-                        {isForbidden ? "🔒" : "📄"}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
-                        <div style={{ fontSize: token.font.size.fs20, fontWeight: 700, color: token.color.fgStrong, letterSpacing: token.font.tracking.tight }}>
-                            {isForbidden ? ft.forbidden_title : ft.not_found_title}
-                        </div>
-                        <div style={{ fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.6 }}>
-                            {isForbidden ? ft.forbidden_desc : ft.not_found_desc}
-                        </div>
-                    </div>
-                    <button
-                        onClick={() => router.replace("/dashboard")}
-                        style={{ padding: "8px 20px", borderRadius: token.radius.md, background: token.color.accent, color: token.color.fgOnAccent, fontWeight: 600, fontSize: token.font.size.fs13, border: "none", cursor: "pointer" }}
-                    >
-                        {ft.go_dashboard}
-                    </button>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
             {/* ── Top bar ── */}
@@ -493,28 +469,6 @@ const ClangIDE: React.FC = () => {
                         />
                         {isOwner && <Icon.Chevron size={11} />}
                     </button>
-                    {fileId && (
-                        <span style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, fontFamily: token.font.family.mono, marginLeft: 4 }}>
-                            {saveStatus === "saving" ? "저장 중…"
-                                : saveStatus === "unsaved" ? "저장 안 됨"
-                                : saveStatus === "saved" ? "저장됨"
-                                : saveStatus === "error" ? "저장 실패"
-                                : ""}
-                        </span>
-                    )}
-                    <span style={{
-                        marginLeft: 4,
-                        padding: "2px 8px",
-                        background: token.color.bgSubtle,
-                        border: `1px solid ${token.color.border}`,
-                        borderRadius: 999,
-                        fontSize: token.font.size.fs10,
-                        color: token.color.fgMuted,
-                        fontFamily: token.font.family.mono,
-                        whiteSpace: "nowrap",
-                    }}>
-                        C++
-                    </span>
                     {isOwner === false && (
                         <span style={{
                             marginLeft: 6,
@@ -532,9 +486,9 @@ const ClangIDE: React.FC = () => {
                     )}
                 </div>
 
-                {/* Center — build progress / idle */}
+                {/* Center — build progress (only when building) */}
                 <div style={{ display: "flex", justifyContent: "center" }}>
-                    {buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done") ? (
+                    {buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done") && (
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, color: token.color.fgMuted, fontSize: token.font.size.fs12, minWidth: 340, fontFamily: token.font.family.mono }}>
                             {buildSpinning ? <Spinner size="sm" /> : <Icon.Check size={12} />}
                             <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -542,11 +496,6 @@ const ClangIDE: React.FC = () => {
                                     ? `${buildProgress.step}/${buildProgress.total} · ${buildProgress.message}`
                                     : buildProgress.message}
                             </span>
-                        </div>
-                    ) : (
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, color: token.color.fgSubtle, fontSize: token.font.size.fs12, minWidth: 340, fontFamily: token.font.family.mono, justifyContent: "center" }}>
-                            <Icon.Cpu size={12} />
-                            <span>emscripten · clang++ · WebAssembly</span>
                         </div>
                     )}
                 </div>
@@ -581,10 +530,33 @@ const ClangIDE: React.FC = () => {
                             {pack.workspace.ui.share_duplicate_button}
                         </Button>
                     )}
-                    {/* Backend pill */}
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: 999, fontSize: token.font.size.fs10, color: token.color.fgMuted, fontFamily: token.font.family.mono }}>
-                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: tfBackend === "initializing" ? token.color.warning : token.color.success, display: "inline-block" }} />
-                        <span>backend: {tfBackend}</span>
+                    {/* Backend toggle */}
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: "4px 8px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: 999, fontSize: token.font.size.fs10, color: token.color.fgMuted, fontFamily: token.font.family.mono }}>
+                        {(["webgpu", "webgl", "cpu"] as const).map((b, i, arr) => {
+                            const isSelected = tfBackend === b;
+                            const label = b === "webgpu" ? "WebGPU" : b === "webgl" ? "WebGL" : "CPU";
+                            return (
+                                <React.Fragment key={b}>
+                                    <button
+                                        onClick={() => tfBackend !== "initializing" && handleSwitchBackend(b)}
+                                        style={{
+                                            background: "none",
+                                            border: "none",
+                                            cursor: tfBackend === "initializing" ? "default" : "pointer",
+                                            color: isSelected ? token.color.accent : token.color.fgSubtle,
+                                            fontSize: token.font.size.fs10,
+                                            padding: "0 4px",
+                                            fontWeight: isSelected ? 700 : 500,
+                                            opacity: tfBackend === "initializing" ? 0.4 : 1,
+                                            transition: "all 0.1s",
+                                        }}
+                                    >
+                                        {label}
+                                    </button>
+                                    {i < arr.length - 1 && <span style={{ color: token.color.border, opacity: 0.5 }}>|</span>}
+                                </React.Fragment>
+                            );
+                        })}
                     </div>
 
                     {/* Build */}
@@ -604,17 +576,16 @@ const ClangIDE: React.FC = () => {
                         disabled={runDisabled}
                         style={{
                             display: "inline-flex", alignItems: "center", gap: 7,
-                            padding: "6px 12px",
+                            padding: "6px 11px",
                             borderRadius: token.radius.sm,
-                            background: token.color.gradient.run,
+                            background: token.color.gradient.ai,
                             color: "#fff",
                             fontSize: token.font.size.fs12,
                             fontWeight: 600,
                             border: "none",
                             cursor: runDisabled ? "not-allowed" : "pointer",
-                            opacity: runDisabled ? 0.55 : 1,
+                            opacity: runDisabled ? 0.45 : 1,
                             boxShadow: "0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)",
-                            transition: "opacity 0.15s",
                         }}
                     >
                         {runSpinning ? <Spinner size="sm" /> : <Icon.Play size={11} fill />}
@@ -624,14 +595,16 @@ const ClangIDE: React.FC = () => {
             </header>
 
             {/* ── Main 2-column layout ── */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", flex: 1, minHeight: 0 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", flex: 1, minHeight: 0 }}>
 
                 {/* Editor area */}
                 <main style={{ display: "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
                     {/* Editor toolbar */}
                     <div style={{ display: "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: token.radius.sm, background: token.color.bgSubtle, color: token.color.fg, fontSize: token.font.size.fs11, fontWeight: 600 }}>
-                            <Icon.File size={11} /> {fileName}
+                        <div style={{ display: "flex", gap: 2 }}>
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: token.radius.sm, background: token.color.bgSubtle, cursor: "default", color: token.color.fg, fontSize: token.font.size.fs11, fontWeight: 600 }}>
+                                <Icon.File size={11} /> {fileName}
+                            </div>
                         </div>
                         <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}>
                             <Icon.Globe size={11} /> LSP: cpp
@@ -646,57 +619,60 @@ const ClangIDE: React.FC = () => {
                             lspWsUrl={LSP_WS_URL}
                             onTextChanged={handleCodeChange}
                             readOnly={isOwner === false}
+                            theme={theme}
                         />
                     </div>
                 </main>
 
-                {/* Right panel: console */}
+                {/* Right panel: console + result */}
                 <aside style={{ display: "flex", flexDirection: "column", borderLeft: `1px solid ${token.color.border}`, background: token.color.bg, overflow: "hidden" }}>
-                    {/* Tab header */}
+                    {/* Tabs (mirror block's tab styling — clang only exposes Console) */}
                     <div style={{ display: "flex", padding: "8px 8px 0", gap: 2, borderBottom: `1px solid ${token.color.border}` }}>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, color: token.color.fg, fontWeight: 500, borderBottom: `2px solid ${token.color.accent}`, marginBottom: -1 }}>
-                            <Icon.Terminal size={11} /> Console
-                        </div>
+                        <button
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "default", color: token.color.fg, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: `2px solid ${token.color.accent}` }}
+                        >
+                            <Icon.Terminal size={11} /> {pack.workspace.ui.console_tab}
+                        </button>
                     </div>
 
-                    {/* Result card */}
-                    <div style={{ padding: 14, borderBottom: `1px solid ${token.color.borderSubtle}` }}>
-                        <div style={{ padding: 14, background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md }}>
-                            <div style={{ fontSize: token.font.size.fs10, textTransform: "uppercase", letterSpacing: "0.06em", color: token.color.fgSubtle, fontWeight: 600 }}>Result</div>
-                            <div style={{
-                                fontFamily: token.font.family.mono,
-                                fontSize: resultValue !== null ? token.font.size.fs32 : token.font.size.fs24,
-                                fontWeight: 500,
-                                letterSpacing: "-0.02em",
-                                color: resultValue !== null ? token.color.fgStrong : token.color.fgSubtle,
-                                lineHeight: 1.1,
-                                marginTop: 4,
-                                wordBreak: "break-all",
-                            }}>
-                                {resultValue ?? "—"}
+                    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+                        {/* Result card */}
+                        <div style={{ padding: 14, borderBottom: `1px solid ${token.color.borderSubtle}` }}>
+                            <div style={{ padding: 14, background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md }}>
+                                <div style={{ fontSize: token.font.size.fs10, textTransform: "uppercase", letterSpacing: "0.06em", color: token.color.fgSubtle, fontWeight: 600 }}>{pack.workspace.ui.output_label}</div>
+                                <div style={{
+                                    fontFamily: token.font.family.mono,
+                                    fontSize: resultValue !== null ? token.font.size.fs32 : token.font.size.fs24,
+                                    fontWeight: 500,
+                                    letterSpacing: "-0.02em",
+                                    color: resultValue !== null ? token.color.fgStrong : token.color.fgSubtle,
+                                    lineHeight: 1.1,
+                                    marginTop: 4,
+                                    wordBreak: "break-all",
+                                }}>
+                                    {resultValue ?? "—"}
+                                </div>
+                                <div style={{ marginTop: 6, fontSize: token.font.size.fs11, color: runStatusColor, fontFamily: token.font.family.mono, display: "flex", alignItems: "center", gap: 4 }}>
+                                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: runStatusColor, display: "inline-block" }} />
+                                    {runStatusLabel}
+                                </div>
                             </div>
-                            <div style={{ marginTop: 6, fontSize: token.font.size.fs11, color: runStatusColor, fontFamily: token.font.family.mono, display: "flex", alignItems: "center", gap: 6 }}>
-                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: runStatusColor, display: "inline-block" }} />
-                                {runStatusLabel}
+                        </div>
+                        {/* Log */}
+                        <div
+                            className="simulizer-log"
+                            ref={logAreaRef}
+                            style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}
+                        >
+                            <div data-placeholder style={{ padding: "3px 14px", color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>
+                                {pack.workspace.ui.log_placeholder}
                             </div>
                         </div>
-                    </div>
-
-                    {/* Log */}
-                    <div
-                        className="simulizer-log"
-                        ref={logAreaRef}
-                        style={{ flex: 1, overflowY: "auto", padding: "8px 0", minHeight: 0 }}
-                    >
-                        <div data-placeholder style={{ padding: "3px 14px", color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>
-                            Run 버튼을 눌러 컴파일하고 실행하세요.
+                        {/* Footer */}
+                        <div style={{ padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, fontFamily: token.font.family.mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle, display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: token.color.success, display: "inline-block" }} />
+                            {tfBackend === "initializing" ? pack.workspace.ui.backend_initializing : `${tfBackend} · ${pack.workspace.ui.backend_ready}`}
                         </div>
-                    </div>
-
-                    {/* Footer */}
-                    <div style={{ padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, fontFamily: token.font.family.mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle, display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: tfBackend === "initializing" ? token.color.warning : token.color.success, display: "inline-block" }} />
-                        {tfBackend === "initializing" ? "백엔드 초기화 중…" : `${tfBackend} · ready`}
                     </div>
                 </aside>
             </div>
@@ -769,10 +745,4 @@ const ClangIDE: React.FC = () => {
     );
 };
 
-export default function ClangPage() {
-    return (
-        <React.Suspense>
-            <ClangIDE />
-        </React.Suspense>
-    );
-}
+export default ClangWorkspace;
