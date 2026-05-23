@@ -45,6 +45,30 @@ interface StatusResponse {
     count: number;
 }
 
+// ─── History (uptime report) types ──────────────────────────────────────────────
+
+interface HistoryDayUptime {
+    percentage: number;
+    percentage_incl_maint: number;
+    downtimes: number;
+    downtimes_incl_maint: number;
+}
+
+interface HistoryDay {
+    uptime: HistoryDayUptime;
+}
+
+interface HistoryResponse {
+    timezone?: string;
+    data?: Record<string, HistoryDay>;
+    summary?: { uptime?: { percentage?: number } };
+}
+
+type HistoryState =
+    | { status: "loading" }
+    | { status: "error" }
+    | { status: "ready"; data: Record<string, HistoryDay>; summaryPct: number | null };
+
 // ─── Status semantics ────────────────────────────────────────────────────────────
 
 type Tone = "success" | "danger" | "warning" | "muted";
@@ -270,7 +294,7 @@ export default function StatusPage() {
                         <OverallBanner tone={overall.tone} title={overall.title} count={monitors.length} />
                         <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
                             {monitors.map((m) => (
-                                <MonitorCard key={m.id} monitor={m} />
+                                <MonitorCard key={m.id} monitor={m} fetchedAt={fetchedAt} />
                             ))}
                         </div>
                     </>
@@ -318,13 +342,36 @@ function OverallBanner({ tone, title, count }: { tone: Tone; title: string; coun
 
 // ─── Monitor card ──────────────────────────────────────────────────────────────
 
-function MonitorCard({ monitor }: { monitor: Monitor }) {
+function MonitorCard({ monitor, fetchedAt }: { monitor: Monitor; fetchedAt: number | null }) {
     const tone = statusTone(monitor.uptime_status);
     const locationKeys = Object.keys(monitor.locations);
     const info = monitor.resolve_address_info;
     const infoParts = info
         ? [info.City, info.Region, info.Country].filter(Boolean).join(", ")
         : "";
+
+    const [history, setHistory] = useState<HistoryState>({ status: "loading" });
+
+    useEffect(() => {
+        let cancelled = false;
+        setHistory({ status: "loading" });
+        (async () => {
+            try {
+                const res = await fetch(`/api/status/history?monitor_id=${encodeURIComponent(monitor.id)}`, { cache: "no-store" });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const json = (await res.json()) as HistoryResponse;
+                if (cancelled) return;
+                const data = json.data ?? {};
+                const summaryPct =
+                    typeof json.summary?.uptime?.percentage === "number" ? json.summary.uptime.percentage : null;
+                setHistory({ status: "ready", data, summaryPct });
+            } catch {
+                if (cancelled) return;
+                setHistory({ status: "error" });
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [monitor.id, fetchedAt]);
 
     return (
         <div style={{
@@ -356,6 +403,11 @@ function MonitorCard({ monitor }: { monitor: Monitor }) {
                         가동률 {uptimePct(monitor.uptime)}
                     </span>
                 </div>
+            </div>
+
+            {/* history bar */}
+            <div style={{ padding: `0 ${token.space.sp4} ${token.space.sp3}` }}>
+                <HistoryBar history={history} />
             </div>
 
             {/* locations */}
@@ -460,6 +512,112 @@ function StatusPill({ tone, children }: { tone: Tone; children: React.ReactNode 
         }}>
             {children}
         </span>
+    );
+}
+
+// ─── History bar ─────────────────────────────────────────────────────────────
+
+const HISTORY_DAYS = 90;
+
+function dayKey(d: Date): string {
+    return d.toISOString().slice(0, 10);
+}
+
+function historyTone(entry: HistoryDay | undefined): Tone {
+    if (!entry) return "muted";
+    const p = entry.uptime.percentage;
+    if (p >= 100) return "success";
+    if (p >= 99) return "success";
+    if (p >= 95) return "warning";
+    return "danger";
+}
+
+function formatHistoryPct(n: number): string {
+    return `${parseFloat(n.toFixed(4))}%`;
+}
+
+function HistoryBar({ history }: { history: HistoryState }) {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const days = Array.from({ length: HISTORY_DAYS }, (_, i) => {
+        const d = new Date(today.getTime() - (HISTORY_DAYS - 1 - i) * 86400000);
+        return dayKey(d);
+    });
+
+    const summaryText =
+        history.status === "ready" && history.summaryPct != null
+            ? `지난 ${HISTORY_DAYS}일 가동률 ${formatHistoryPct(history.summaryPct)}`
+            : history.status === "error"
+            ? "히스토리를 불러오지 못했습니다"
+            : `최근 ${HISTORY_DAYS}일`;
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp15 }}>
+            <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                fontSize: token.font.size.fs11,
+                color: token.color.fgSubtle,
+            }}>
+                <span style={{ color: token.color.fgMuted, fontWeight: token.font.weight.semibold }}>
+                    가동 이력
+                </span>
+                <span style={{ fontFamily: token.font.family.mono }}>{summaryText}</span>
+            </div>
+
+            <div style={{
+                display: "flex",
+                gap: 2,
+                height: 28,
+                alignItems: "stretch",
+            }}>
+                {days.map((key) => {
+                    const entry = history.status === "ready" ? history.data[key] : undefined;
+                    const isPending = history.status === "loading";
+                    const tone = isPending ? "muted" : historyTone(entry);
+                    const pct = entry?.uptime.percentage;
+                    const downtimes = entry?.uptime.downtimes ?? 0;
+                    const titleParts = [key];
+                    if (entry) {
+                        titleParts.push(`가동률 ${formatHistoryPct(pct!)}`);
+                        if (downtimes > 0) titleParts.push(`다운타임 ${downtimes}회`);
+                    } else if (history.status === "ready") {
+                        titleParts.push("데이터 없음");
+                    } else if (history.status === "error") {
+                        titleParts.push("로드 실패");
+                    } else {
+                        titleParts.push("불러오는 중");
+                    }
+                    return (
+                        <span
+                            key={key}
+                            title={titleParts.join(" · ")}
+                            style={{
+                                flex: 1,
+                                minWidth: 0,
+                                background: tone === "muted" ? token.color.bgMuted : TONE_FG[tone],
+                                borderRadius: token.radius.sm,
+                                opacity: isPending ? 0.5 : 1,
+                                transition: "opacity 120ms ease",
+                            }}
+                        />
+                    );
+                })}
+            </div>
+
+            <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: token.font.size.fs11,
+                color: token.color.fgSubtle,
+                fontFamily: token.font.family.mono,
+            }}>
+                <span>{HISTORY_DAYS}일 전</span>
+                <span>오늘</span>
+            </div>
+        </div>
     );
 }
 
