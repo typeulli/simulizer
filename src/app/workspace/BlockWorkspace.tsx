@@ -128,14 +128,9 @@ function generateThumbnailBlob(ws: Blockly.WorkspaceSvg): Promise<Blob | null> {
     svgEl.setAttribute("width", String(thumbW));
     svgEl.setAttribute("height", String(thumbH));
 
-    // Solid background so the letterboxed area isn't transparent.
-    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    bg.setAttribute("x", String(viewLeft));
-    bg.setAttribute("y", String(viewTop));
-    bg.setAttribute("width", String(viewW));
-    bg.setAttribute("height", String(viewH));
-    bg.setAttribute("fill", "#f6f7f9");
-    svgEl.appendChild(bg);
+    // Transparent letterbox: the dashboard card behind the thumbnail provides
+    // its own theme-aware background, so a baked-in light/dark fill would
+    // clash whenever the viewer switches themes.
 
     // Copy defs (gradients, filters, etc.) from parent SVG.
     // Strip any elements referencing external URLs to prevent canvas taint.

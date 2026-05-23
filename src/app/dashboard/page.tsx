@@ -25,6 +25,8 @@ import {
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
 import { Prism } from "react-syntax-highlighter";
+import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light";
+import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark";
 
 function pathForType(file: { id: string }): string {
     return `/workspace?file=${file.id}`;
@@ -653,6 +655,7 @@ function FileThumbnail({ fileId, version = 0 }: { fileId: string; version?: numb
 }
 
 function CodeSnippet({ fileId }: { fileId: string }) {
+    const { theme } = useTheme();
     const [text, setText] = useState<string | null>(null);
     const [failed, setFailed] = useState(false);
 
@@ -677,6 +680,7 @@ function CodeSnippet({ fileId }: { fileId: string }) {
     return (
         <Prism
             language="cpp"
+            style={theme === "dark" ? oneDark : oneLight}
             customStyle={{
                 width: "100%",
                 height: "100%",
@@ -687,12 +691,11 @@ function CodeSnippet({ fileId }: { fileId: string }) {
                 lineHeight: 1.35,
                 fontFamily: token.font.family.mono,
                 background: "transparent",
-                color: token.color.fgMuted,
                 whiteSpace: "pre",
                 wordBreak: "normal",
                 pointerEvents: "none",
             }}
-            codeTagProps={{ style: { fontFamily: token.font.family.mono } }}
+            codeTagProps={{ style: { fontFamily: token.font.family.mono, background: "transparent" } }}
         >
             {text}
         </Prism>
