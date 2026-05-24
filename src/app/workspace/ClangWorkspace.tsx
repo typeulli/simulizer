@@ -9,6 +9,12 @@ import { useConsolePanel } from "@/components/console";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import type { ClangWorkerInMsg } from "@/utils/wasm/clang-worker";
 import { vec_field_to_image_url, mat_data_to_image_url } from "@/utils/wasm/tensor";
+import type { ClangDiagnostic, CodeEditorRef } from "./clang/CodeEditor";
+
+// Keep this in sync with DEFAULT_MAIN_URI in ./clang/CodeEditor. Inlined here
+// (instead of imported) so this module doesn't drag in the monaco-vscode
+// bundle during SSR — CodeEditor itself is loaded via dynamic({ ssr: false }).
+const DEFAULT_MAIN_URI = "file:///workspace/user.cpp";
 
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
@@ -32,6 +38,18 @@ const LSP_WS_URL = (() => {
     const base = API_BASE || (typeof window !== "undefined" ? window.location.origin : "");
     return base.replace(/^http/, "ws") + "/lsp/cpp";
 })();
+
+type EditorTab = {
+    uri: string;
+    label: string;
+    readOnly: boolean;
+    closable: boolean;
+};
+
+const systemTabLabel = (uri: string): string => {
+    const slash = uri.lastIndexOf("/");
+    return slash >= 0 ? uri.slice(slash + 1) : uri;
+};
 
 
 const CodeEditor = dynamic(() => import("./clang/CodeEditor"), {
@@ -97,6 +115,56 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [buildState, setBuildState] = useState<BuildState>("idle");
     const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null);
 
+    const [rightTab, setRightTab] = useState<"console" | "infos">("console");
+    const [infos, setInfos] = useState<ClangDiagnostic[]>([]);
+    const codeEditorRef = useRef<CodeEditorRef | null>(null);
+
+    const [editorTabs, setEditorTabs] = useState<EditorTab[]>([
+        { uri: DEFAULT_MAIN_URI, label: "main.cpp", readOnly: false, closable: false },
+    ]);
+    const [activeTabUri, setActiveTabUri] = useState<string>(DEFAULT_MAIN_URI);
+
+    // Keep the main tab label in sync with the (renameable) file name. The
+    // main tab is always index 0 by construction.
+    useEffect(() => {
+        setEditorTabs(prev => {
+            if (prev.length === 0) return prev;
+            const main = prev[0];
+            if (main.label === fileName && main.readOnly === (isOwner === false)) return prev;
+            return [{ ...main, label: fileName, readOnly: isOwner === false }, ...prev.slice(1)];
+        });
+    }, [fileName, isOwner]);
+
+    const handleDiagnosticsChanged = useCallback((diagnostics: ClangDiagnostic[]) => {
+        setInfos(diagnostics);
+    }, []);
+
+    const handleActiveModelChanged = useCallback((uri: string) => {
+        setActiveTabUri(uri);
+        // When monaco-vscode opens a system header via go-to-definition, the
+        // model switch fires before we have a tab for it — register it here so
+        // the tab strip stays in sync with the editor.
+        if (uri !== DEFAULT_MAIN_URI) {
+            setEditorTabs(prev => {
+                if (prev.some(t => t.uri === uri)) return prev;
+                return [...prev, { uri, label: systemTabLabel(uri), readOnly: true, closable: true }];
+            });
+        }
+    }, []);
+
+    const handleTabClick = useCallback((uri: string) => {
+        codeEditorRef.current?.setActiveModel(uri);
+    }, []);
+
+    const handleTabClose = useCallback((uri: string) => {
+        codeEditorRef.current?.closeModel(uri);
+        setEditorTabs(prev => prev.filter(t => t.uri !== uri));
+    }, []);
+
+    const focusInfoEntry = useCallback((entry: ClangDiagnostic) => {
+        codeEditorRef.current?.revealAt(DEFAULT_MAIN_URI, entry.line, entry.column);
+    }, []);
+
     // Hydrate from props (parent already fetched the file + ownership).
     useEffect(() => {
         const f = initialFile;
@@ -116,6 +184,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const content = needsSeed ? INITIAL_CODE : f.content;
         setCode(content);
         setEditorKey(k => k + 1);
+        setEditorTabs([{ uri: DEFAULT_MAIN_URI, label: f.name, readOnly: !owner, closable: false }]);
+        setActiveTabUri(DEFAULT_MAIN_URI);
         setSaveStatus("saved");
         if (needsSeed && owner) {
             saveFile(f.id, INITIAL_CODE).catch(() => { /* surfaced on next edit */ });
@@ -237,6 +307,18 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     useEffect(() => {
         bindingsRef.current = { addLog, addBar, setBar, addSeries, logToHolder, visualToHolder, graphToHolder };
     }, [addLog, addBar, setBar, addSeries, logToHolder, visualToHolder, graphToHolder]);
+
+    const [editorNotice, setEditorNotice] = useState<string | null>(null);
+    const editorNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => {
+        if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
+    }, []);
+    const handleUnresolvedDefinition = useCallback((uri: string) => {
+        const filename = uri.split(/[/\\]/).pop() || uri;
+        setEditorNotice(`외부 라이브러리 파일은 열 수 없습니다: ${filename}`);
+        if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
+        editorNoticeTimerRef.current = setTimeout(() => setEditorNotice(null), 4500);
+    }, []);
 
     const handleWorkerMessage = useCallback((e: MessageEvent<WorkerOutMsg>) => {
         const msg = e.data;
@@ -599,12 +681,63 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
                 {/* Editor area */}
                 <main style={{ display: "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
-                    {/* Editor toolbar */}
+                    {/* Editor toolbar (tab strip) */}
                     <div style={{ display: "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
-                        <div style={{ display: "flex", gap: 2 }}>
-                            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: token.radius.sm, background: token.color.bgSubtle, cursor: "default", color: token.color.fg, fontSize: token.font.size.fs11, fontWeight: 600 }}>
-                                <Icon.File size={11} /> {fileName}
-                            </div>
+                        <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
+                            {editorTabs.map(tab => {
+                                const isActive = tab.uri === activeTabUri;
+                                return (
+                                    <div
+                                        key={tab.uri}
+                                        onClick={() => !isActive && handleTabClick(tab.uri)}
+                                        style={{
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            gap: 5,
+                                            padding: "4px 8px 4px 10px",
+                                            borderRadius: token.radius.sm,
+                                            background: isActive ? token.color.bgSubtle : "transparent",
+                                            cursor: isActive ? "default" : "pointer",
+                                            color: isActive ? token.color.fg : token.color.fgMuted,
+                                            fontSize: token.font.size.fs11,
+                                            fontWeight: isActive ? 600 : 500,
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        <Icon.File size={11} />
+                                        <span>{tab.label}</span>
+                                        {tab.readOnly && (
+                                            <span style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, fontFamily: token.font.family.mono }}>
+                                                read-only
+                                            </span>
+                                        )}
+                                        {tab.closable && (
+                                            <button
+                                                type="button"
+                                                onClick={e => { e.stopPropagation(); handleTabClose(tab.uri); }}
+                                                aria-label={`${tab.label} 탭 닫기`}
+                                                style={{
+                                                    marginLeft: 2,
+                                                    width: 16,
+                                                    height: 16,
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "center",
+                                                    border: "none",
+                                                    background: "transparent",
+                                                    color: token.color.fgSubtle,
+                                                    cursor: "pointer",
+                                                    borderRadius: token.radius.xs,
+                                                    fontSize: token.font.size.fs11,
+                                                    lineHeight: 1,
+                                                }}
+                                            >
+                                                ×
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                         <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}>
                             <Icon.Globe size={11} /> LSP: cpp
@@ -615,27 +748,109 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
                         <CodeEditor
                             key={editorKey}
+                            ref={codeEditorRef}
                             initialCode={code}
+                            mainUri={DEFAULT_MAIN_URI}
                             lspWsUrl={LSP_WS_URL}
                             onTextChanged={handleCodeChange}
                             readOnly={isOwner === false}
                             theme={theme}
+                            onDiagnosticsChanged={handleDiagnosticsChanged}
+                            onActiveModelChanged={handleActiveModelChanged}
+                            onUnresolvedDefinition={handleUnresolvedDefinition}
                         />
+                        {editorNotice && (
+                            <div
+                                role="status"
+                                style={{
+                                    position: "absolute",
+                                    top: 12,
+                                    right: 16,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    maxWidth: "calc(100% - 32px)",
+                                    padding: "8px 10px 8px 12px",
+                                    background: token.color.bgSubtle,
+                                    border: `1px solid ${token.color.border}`,
+                                    borderRadius: token.radius.md,
+                                    boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
+                                    color: token.color.fg,
+                                    fontSize: token.font.size.fs11,
+                                    fontFamily: token.font.family.mono,
+                                    zIndex: 10,
+                                }}
+                            >
+                                <span aria-hidden style={{
+                                    width: 14,
+                                    height: 14,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: "50%",
+                                    border: `1px solid ${token.color.fgSubtle}`,
+                                    color: token.color.fgSubtle,
+                                    fontSize: 10,
+                                    fontFamily: "serif",
+                                    fontStyle: "italic",
+                                    lineHeight: 1,
+                                    flexShrink: 0,
+                                }}>i</span>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {editorNotice}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
+                                        setEditorNotice(null);
+                                    }}
+                                    aria-label="알림 닫기"
+                                    style={{
+                                        marginLeft: 4,
+                                        width: 16,
+                                        height: 16,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        border: "none",
+                                        background: "transparent",
+                                        color: token.color.fgSubtle,
+                                        cursor: "pointer",
+                                        borderRadius: token.radius.xs,
+                                        fontSize: token.font.size.fs11,
+                                        lineHeight: 1,
+                                    }}
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </main>
 
-                {/* Right panel: console + result */}
+                {/* Right panel: console + infos */}
                 <aside style={{ display: "flex", flexDirection: "column", borderLeft: `1px solid ${token.color.border}`, background: token.color.bg, overflow: "hidden" }}>
-                    {/* Tabs (mirror block's tab styling — clang only exposes Console) */}
+                    {/* Tabs */}
                     <div style={{ display: "flex", padding: "8px 8px 0", gap: 2, borderBottom: `1px solid ${token.color.border}` }}>
-                        <button
-                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "default", color: token.color.fg, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: `2px solid ${token.color.accent}` }}
+                        <button onClick={() => setRightTab("console")}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "console" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "console" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
                         >
                             <Icon.Terminal size={11} /> {pack.workspace.ui.console_tab}
                         </button>
+                        <button onClick={() => setRightTab("infos")}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "infos" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "infos" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
+                        >
+                            {pack.workspace.ui.infos_tab}
+                            {infos.filter(i => i.severity === "error" || i.severity === "warn").length > 0 && (
+                                <span style={{ marginLeft: 2, padding: "1px 5px", borderRadius: 999, background: infos.some(i => i.severity === "error") ? token.color.danger : token.color.warning, color: "#fff", fontSize: token.font.size.fs10, fontWeight: 700, lineHeight: 1.4 }}>
+                                    {infos.filter(i => i.severity === "error" || i.severity === "warn").length}
+                                </span>
+                            )}
+                        </button>
                     </div>
 
-                    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+                    <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
                         {/* Result card */}
                         <div style={{ padding: 14, borderBottom: `1px solid ${token.color.borderSubtle}` }}>
                             <div style={{ padding: 14, background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md }}>
@@ -674,6 +889,56 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             {tfBackend === "initializing" ? pack.workspace.ui.backend_initializing : `${tfBackend} · ${pack.workspace.ui.backend_ready}`}
                         </div>
                     </div>
+
+                    {rightTab === "infos" && (
+                        <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+                            {infos.length === 0 ? (
+                                <div style={{ padding: "3px 14px", color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>
+                                    {pack.workspace.ui.infos_empty}
+                                </div>
+                            ) : infos.map((entry, i) => {
+                                const levelColor =
+                                    entry.severity === "error" ? token.color.danger :
+                                    entry.severity === "warn"  ? token.color.warning :
+                                    token.color.fgMuted;
+                                const icon =
+                                    entry.severity === "error" ? "✕" :
+                                    entry.severity === "warn"  ? "⚠" :
+                                    entry.severity === "info"  ? "ℹ" :
+                                    "·";
+                                const tag = entry.source ?? (entry.code ? String(entry.code) : "");
+                                return (
+                                    <button
+                                        key={i}
+                                        type="button"
+                                        onClick={() => focusInfoEntry(entry)}
+                                        title="클릭하여 해당 위치로 이동"
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "flex-start",
+                                            gap: 8,
+                                            width: "100%",
+                                            padding: "3px 14px",
+                                            fontFamily: token.font.family.mono,
+                                            fontSize: token.font.size.fs11,
+                                            lineHeight: 1.6,
+                                            border: "none",
+                                            background: "none",
+                                            textAlign: "left",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        <span style={{ color: levelColor, flexShrink: 0, marginTop: 1 }}>{icon}</span>
+                                        <span style={{ color: token.color.fgSubtle, flexShrink: 0, minWidth: 44, textAlign: "right" }}>{entry.line}:{entry.column}</span>
+                                        <span style={{ color: token.color.fg, flex: 1, wordBreak: "break-word" }}>{entry.message}</span>
+                                        {tag && (
+                                            <span style={{ color: token.color.fgSubtle, flexShrink: 0 }}>{tag}</span>
+                                        )}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
                 </aside>
             </div>
 

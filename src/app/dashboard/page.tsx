@@ -21,6 +21,7 @@ import {
     type FileOut,
     type FileType,
 } from "@/lib/authapi";
+import { replaceLatexBlocksInWorkspace } from "@/utils/tex/blockgen";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
@@ -299,10 +300,13 @@ export default function DashboardPage() {
         setMenuOpen(null);
         try {
             const src = await getFile(file.id);
+            const rawSave = JSON.parse(src.content);
+            const processedSave = replaceLatexBlocksInWorkspace(rawSave);
+            const blocklyJson = JSON.stringify(processedSave);
             const res = await fetch(`${API_URL}/compile`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ lang: "cpp", code: src.content }),
+                body: JSON.stringify({ lang: "cpp", code: blocklyJson, main_fn: "worker" }),
             });
             if (!res.ok) throw new Error(`compile failed: ${res.status}`);
             const data = await res.json();

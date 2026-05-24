@@ -50,6 +50,9 @@ import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
 import { replaceLatexBlocksInWorkspace } from "@/utils/tex/blockgen";
 import { Prism } from "react-syntax-highlighter";
+import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light";
+import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark";
+import { useTheme } from "@/hooks/useTheme";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
@@ -812,6 +815,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const wasmWorkerRef = useRef<Worker | null>(null);
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { theme } = useTheme();
 
     const [runState, setRunState]           = useState<RunState>("idle");
     const [result, setResult]               = useState<string | null>(null);
@@ -2857,10 +2861,10 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 ? <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>Translating…</div>
                                 : watLang === "wat"
                                     ? watSource
-                                        ? <Prism language="wasm" customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{watSource}</Prism>
+                                        ? <Prism language="wasm" style={theme === "dark" ? oneDark : oneLight} customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }} codeTagProps={{ style: { fontFamily: token.font.family.mono, background: "transparent" } }}>{watSource}</Prism>
                                         : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>{pack.workspace.ui.wat_empty}</div>
                                     : translatedSource
-                                        ? <Prism language={watLang === "py" ? "python" : watLang === "js" ? "javascript" : "cpp"} customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }}>{translatedSource}</Prism>
+                                        ? <Prism language={watLang === "py" ? "python" : watLang === "js" ? "javascript" : "cpp"} style={theme === "dark" ? oneDark : oneLight} customStyle={{ height:"100%", overflowY:"scroll", overflowX:"auto", margin:0, padding:16, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, color:token.color.fg, lineHeight:1.7, whiteSpace:"pre", background:token.color.bgCanvas }} codeTagProps={{ style: { fontFamily: token.font.family.mono, background: "transparent" } }}>{translatedSource}</Prism>
                                         : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>{pack.workspace.ui.wat_empty}</div>
                             }
                         </div>
