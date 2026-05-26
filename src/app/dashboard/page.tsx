@@ -22,6 +22,7 @@ import {
     type FileType,
 } from "@/lib/authapi";
 import { replaceLatexBlocksInWorkspace } from "@/utils/tex/blockgen";
+import { serializeBundle, makeDefaultBundle, type CppBundle } from "@/lib/cppBundle";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
@@ -255,7 +256,32 @@ export default function DashboardPage() {
 
         setCreating(true);
         try {
-            const content = await file.text();
+            const raw = await file.text();
+            // clangfile imports come in as raw source; wrap them in a single-
+            // file bundle so the workspace's parser sees a v1 schema and the
+            // imported file becomes both the entry and the only tab.
+            let content = raw;
+            if (type === "clangfile") {
+                const ext2 = ext.toLowerCase();
+                const isHeader = [".hpp", ".h", ".hxx"].includes(ext2);
+                const fileName = isHeader ? `${base || "header"}.hpp` : "main.cpp";
+                const bundle: CppBundle = {
+                    version: 1,
+                    entry: "main.cpp",
+                    tree: isHeader
+                        ? [
+                            { type: "file", name: "main.cpp", content: "" },
+                            { type: "file", name: fileName, content: raw },
+                        ]
+                        : [{ type: "file", name: "main.cpp", content: raw }],
+                    ui: {
+                        activeFile: isHeader ? fileName : "main.cpp",
+                        openTabs: isHeader ? ["main.cpp", fileName] : ["main.cpp"],
+                        treeOpen: false,
+                    },
+                };
+                content = serializeBundle(bundle);
+            }
             const existing = new Set(files.map(f => f.name));
             let candidate = base || "untitled";
             let counter = 2;
@@ -320,10 +346,17 @@ export default function DashboardPage() {
             while (existing.has(candidate)) {
                 candidate = `${baseName} ${counter++}`;
             }
+            // Wrap the generated source as a single-file bundle; clangfiles
+            // are JSON now, not raw C++.
+            const bundle: CppBundle = {
+                ...makeDefaultBundle(),
+                tree: [{ type: "file", name: "main.cpp", content: cppSource }],
+            };
+            const wrapped = serializeBundle(bundle);
             let created;
             for (;;) {
                 try {
-                    created = await createFile(candidate, "clangfile", cppSource);
+                    created = await createFile(candidate, "clangfile", wrapped);
                     break;
                 } catch (err: any) {
                     if (err?.status === 409) {

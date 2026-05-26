@@ -58,6 +58,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { getMe, getFile, saveFile, renameFile, uploadThumbnail, duplicateFile, createFile, type FileOut, type FileDetail } from "@/lib/authapi";
+import { serializeBundle, makeDefaultBundle, type CppBundle } from "@/lib/cppBundle";
 import { ShareControl } from "@/components/share/ShareControl";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/organisms/Modal";
 
@@ -1129,9 +1130,16 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             let candidate = baseName;
             let counter = 2;
             let created: { id: string } | null = null;
+            // clangfiles are JSON bundles now — wrap the generated source as
+            // a single-file bundle whose `main.cpp` is the entry.
+            const wrappedBundle: CppBundle = {
+                ...makeDefaultBundle(),
+                tree: [{ type: "file", name: "main.cpp", content: cppSource }],
+            };
+            const wrapped = serializeBundle(wrappedBundle);
             for (;;) {
                 try {
-                    created = await createFile(candidate, "clangfile", cppSource);
+                    created = await createFile(candidate, "clangfile", wrapped);
                     break;
                 } catch (err: any) {
                     if (err?.status === 409) {

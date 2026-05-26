@@ -77,7 +77,8 @@ export type ClangDiagnostic = {
 export const SIMSTD_MONACO_URI = "simulizer:/simstd.hpp";
 const SIMULIZER_SCHEME = "simulizer";
 
-export const DEFAULT_MAIN_URI = "file:///workspace/user.cpp";
+import { WORKSPACE_URI_PREFIX, pathToUri, uriToPath } from "./uri";
+export { WORKSPACE_URI_PREFIX, pathToUri, uriToPath };
 
 // registerCustomProvider must run BEFORE monaco-vscode services initialize
 // (the registration helper throws "Services are already initialized" once
@@ -110,6 +111,12 @@ function setupSimstdProvider() {
 }
 setupSimstdProvider();
 
+export type EditorFile = {
+    /** workspace-relative path like "main.cpp" or "src/util.hpp" */
+    path: string;
+    content: string;
+};
+
 export type CodeEditorRef = {
     setActiveModel: (uri: string) => void;
     closeModel: (uri: string) => void;
@@ -118,10 +125,18 @@ export type CodeEditorRef = {
 };
 
 type Props = {
-    initialCode: string;
-    mainUri?: string;
+    files: EditorFile[];
+    /**
+     * Full URI of the currently-focused model. For workspace files use
+     * pathToUri(path); for system headers opened via go-to-definition this
+     * is the simulizer:/... URI.
+     */
+    activeUri: string;
+    /** workspace-relative path of the project entry; used for diagnostics scoping */
+    entryPath: string;
     lspWsUrl: string;
-    onTextChanged: (code: string) => void;
+    onTextChanged: (path: string, content: string) => void;
+    /** If true, all bundle files are read-only (link-share viewer). */
     readOnly?: boolean;
     theme?: "light" | "dark";
     onDiagnosticsChanged?: (diagnostics: ClangDiagnostic[]) => void;
@@ -137,8 +152,9 @@ function severityToLevel(s: monaco.MarkerSeverity): ClangDiagnostic["severity"] 
 }
 
 const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
-    initialCode,
-    mainUri = DEFAULT_MAIN_URI,
+    files,
+    activeUri,
+    entryPath,
     lspWsUrl,
     onTextChanged,
     readOnly = false,
@@ -150,10 +166,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     const colorTheme = theme === "dark" ? "Default Dark Modern" : "Default Light Modern";
 
     // Push theme changes through the vscode configuration service so Monaco
-    // swaps the theme without remounting. The first effect run on mount is a
-    // no-op since initial userConfiguration already sets the same value; we
-    // still call it so the service applies the theme even if the initial
-    // bootstrap was racy.
+    // swaps the theme without remounting.
     const themeAppliedRef = useRef<string | null>(null);
     useEffect(() => {
         if (themeAppliedRef.current === colorTheme) return;
@@ -163,48 +176,128 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                 await updateUserConfiguration(JSON.stringify({ "workbench.colorTheme": colorTheme }));
                 if (!cancelled) themeAppliedRef.current = colorTheme;
             } catch {
-                // Service not initialized yet on first mount — initial
-                // userConfiguration already provided the same theme.
+                /* not initialized yet */
             }
         })();
         return () => { cancelled = true; };
     }, [colorTheme]);
 
-    // Latest callbacks captured via refs so the editor-start handler doesn't
-    // need to re-subscribe every time the parent re-renders with new closures.
     const onDiagnosticsChangedRef = useRef(onDiagnosticsChanged);
     const onActiveModelChangedRef = useRef(onActiveModelChanged);
     const onUnresolvedDefinitionRef = useRef(onUnresolvedDefinition);
+    const onTextChangedRef = useRef(onTextChanged);
     useEffect(() => { onDiagnosticsChangedRef.current = onDiagnosticsChanged; }, [onDiagnosticsChanged]);
     useEffect(() => { onActiveModelChangedRef.current = onActiveModelChanged; }, [onActiveModelChanged]);
     useEffect(() => { onUnresolvedDefinitionRef.current = onUnresolvedDefinition; }, [onUnresolvedDefinition]);
+    useEffect(() => { onTextChangedRef.current = onTextChanged; }, [onTextChanged]);
 
     const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-    const mainUriRef = useRef(mainUri);
-    useEffect(() => { mainUriRef.current = mainUri; }, [mainUri]);
+    const entryUriRef = useRef(pathToUri(entryPath));
+    useEffect(() => { entryUriRef.current = pathToUri(entryPath); }, [entryPath]);
 
-    // The `readOnly` prop only governs the main file (ownership-driven). Any
-    // other model (system headers opened via go-to-definition or pinned tabs)
-    // is always read-only. Monaco bakes editorOptions in on mount, so we have
-    // to push readOnly imperatively whenever the active model changes or the
-    // prop flips.
     const readOnlyRef = useRef(readOnly);
     useEffect(() => {
         readOnlyRef.current = readOnly;
         const editor = editorRef.current;
         if (!editor) return;
         const currentUri = editor.getModel()?.uri.toString();
-        if (currentUri === mainUriRef.current) {
-            editor.updateOptions({ readOnly });
-        }
+        if (currentUri) syncReadOnlyForModel(currentUri);
     }, [readOnly]);
 
     const syncReadOnlyForModel = useCallback((uri: string | undefined) => {
         const editor = editorRef.current;
         if (!editor || !uri) return;
-        const isMain = uri === mainUriRef.current;
-        editor.updateOptions({ readOnly: isMain ? readOnlyRef.current : true });
+        const isWorkspaceFile = uri.startsWith(WORKSPACE_URI_PREFIX);
+        // System headers (simulizer:) and external URIs are always read-only;
+        // workspace files follow the prop. The prop itself flips between true
+        // (link-share viewer) and false (owner editing).
+        editor.updateOptions({ readOnly: isWorkspaceFile ? readOnlyRef.current : true });
     }, []);
+
+    // Track which paths have models so we can sync efficiently when `files`
+    // changes. We never dispose the active model directly — we swap the editor
+    // to another model first.
+    const modelOwnedPathsRef = useRef<Set<string>>(new Set());
+    const contentChangeDisposablesRef = useRef<Map<string, monaco.IDisposable>>(new Map());
+
+    const ensureModel = useCallback((path: string, initialContent: string): monaco.editor.ITextModel => {
+        const uri = monaco.Uri.parse(pathToUri(path));
+        let model = monaco.editor.getModel(uri);
+        if (!model) {
+            model = monaco.editor.createModel(initialContent, "cpp", uri);
+            const disp = model.onDidChangeContent(() => {
+                const m = monaco.editor.getModel(uri);
+                if (!m) return;
+                onTextChangedRef.current?.(path, m.getValue());
+            });
+            contentChangeDisposablesRef.current.set(path, disp);
+            modelOwnedPathsRef.current.add(path);
+        } else if (model.getValue() !== initialContent) {
+            // Programmatic content sync (e.g., after a load). We deliberately
+            // do NOT set value back to the model for every prop change — the
+            // editor's own content is the source of truth while focused.
+        }
+        return model;
+    }, []);
+
+    // Sync the set of models with the `files` prop. Models for files no longer
+    // in the bundle are disposed (after swapping the editor away if active).
+    useEffect(() => {
+        if (!editorRef.current) return;
+        const desired = new Set(files.map(f => f.path));
+
+        // Create / update models for present files.
+        for (const f of files) {
+            const uri = monaco.Uri.parse(pathToUri(f.path));
+            const existing = monaco.editor.getModel(uri);
+            if (!existing) {
+                ensureModel(f.path, f.content);
+            }
+            // We don't push prop content into an existing model — the user's
+            // ongoing edits would be clobbered. ClangWorkspace's bundle state
+            // tracks edits through onTextChanged so they stay in sync.
+        }
+
+        // Dispose models for removed paths.
+        const owned = Array.from(modelOwnedPathsRef.current);
+        for (const path of owned) {
+            if (desired.has(path)) continue;
+            const uri = monaco.Uri.parse(pathToUri(path));
+            const model = monaco.editor.getModel(uri);
+            if (!model) {
+                modelOwnedPathsRef.current.delete(path);
+                contentChangeDisposablesRef.current.get(path)?.dispose();
+                contentChangeDisposablesRef.current.delete(path);
+                continue;
+            }
+            const editor = editorRef.current;
+            if (editor && editor.getModel() === model) {
+                // Swap to the current active URI (or entry as a last resort)
+                // before disposing.
+                const target = monaco.editor.getModel(monaco.Uri.parse(activeUri))
+                    ?? monaco.editor.getModel(monaco.Uri.parse(pathToUri(entryPath)));
+                if (target && target !== model) {
+                    editor.setModel(target);
+                }
+            }
+            contentChangeDisposablesRef.current.get(path)?.dispose();
+            contentChangeDisposablesRef.current.delete(path);
+            model.dispose();
+            modelOwnedPathsRef.current.delete(path);
+        }
+    }, [files, activeUri, entryPath, ensureModel]);
+
+    // Sync the active model with `activeUri`. Falls back to the entry's URI
+    // when the target model doesn't exist (e.g., a stale path after a rename).
+    useEffect(() => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        const target = monaco.editor.getModel(monaco.Uri.parse(activeUri))
+            ?? monaco.editor.getModel(monaco.Uri.parse(pathToUri(entryPath)));
+        if (target && editor.getModel() !== target) {
+            editor.setModel(target);
+        }
+    }, [activeUri, entryPath]);
 
     const markersDisposableRef = useRef<monaco.IDisposable | null>(null);
     const modelChangeDisposableRef = useRef<monaco.IDisposable | null>(null);
@@ -216,16 +309,13 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         markersDisposableRef.current = null;
         modelChangeDisposableRef.current = null;
         mouseDownDisposableRef.current = null;
+        for (const d of contentChangeDisposablesRef.current.values()) d.dispose();
+        contentChangeDisposablesRef.current.clear();
         editorRef.current = null;
     }, []);
 
-    // Monaco invokes provideDefinition both on Ctrl/Cmd+hover (to underline
-    // the link target) and on Ctrl/Cmd+click (to actually navigate). The
-    // middleware below performs the model swap itself, so without this gate
-    // hover alone would jump into the header. We flip the flag during a
-    // modifier+left-click mouseDown so only the click-triggered invocation
-    // navigates; hover invocations just return the locations so the underline
-    // still appears.
+    // Modifier+click gate (see CodeEditor history): hover and click both
+    // invoke provideDefinition; we only want navigation on click.
     const definitionClickAllowedRef = useRef(false);
     const definitionClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     useEffect(() => () => {
@@ -244,10 +334,16 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             if (!model) return;
             const editor = editorRef.current;
             if (editor && editor.getModel()?.uri.toString() === uri) {
-                const mainModel = monaco.editor.getModel(monaco.Uri.parse(mainUriRef.current));
-                if (mainModel) editor.setModel(mainModel);
+                const entryUri = entryUriRef.current;
+                const fallback = monaco.editor.getModel(monaco.Uri.parse(entryUri));
+                if (fallback) editor.setModel(fallback);
             }
-            model.dispose();
+            // Only dispose models we don't own (system headers etc.). Workspace
+            // models are disposed by the files-sync effect.
+            const path = uriToPath(uri);
+            if (!path || !modelOwnedPathsRef.current.has(path)) {
+                model.dispose();
+            }
         },
         revealAt: (uri: string, line: number, column: number = 1) => {
             const editor = editorRef.current;
@@ -262,16 +358,51 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         focus: () => { editorRef.current?.focus(); },
     }), []);
 
+    const initialFilesRef = useRef(files);
+    const initialActiveUriRef = useRef(activeUri);
+    const initialEntryPathRef = useRef(entryPath);
+
     const handleEditorStartDone = useCallback((app?: EditorApp) => {
         if (!app) return;
         const editor = app.getEditor() ?? null;
         editorRef.current = editor;
         if (!editor) return;
-        const mainModel = editor.getModel();
-        if (!mainModel) return;
-        const mainModelUri = mainModel.uri;
 
-        onActiveModelChangedRef.current?.(mainModelUri.toString());
+        // Bootstrap models for every bundle file so clangd's didOpen pipeline
+        // sees the whole project at startup. The active file already has a
+        // model created by MonacoEditorReactComp via codeResources; we hook
+        // into it the same way as the others so its edits flow through
+        // onTextChanged.
+        const initialFiles = initialFilesRef.current;
+        for (const f of initialFiles) {
+            const uri = monaco.Uri.parse(pathToUri(f.path));
+            const existing = monaco.editor.getModel(uri);
+            const path = f.path;
+            if (existing) {
+                if (!contentChangeDisposablesRef.current.has(path)) {
+                    const disp = existing.onDidChangeContent(() => {
+                        const m = monaco.editor.getModel(uri);
+                        if (!m) return;
+                        onTextChangedRef.current?.(path, m.getValue());
+                    });
+                    contentChangeDisposablesRef.current.set(path, disp);
+                }
+                modelOwnedPathsRef.current.add(path);
+            } else {
+                ensureModel(path, f.content);
+            }
+        }
+
+        // Make sure the active model matches the prop (may differ from the
+        // editor's auto-created initial model if `activeUri !== entryPath`).
+        const wanted = initialActiveUriRef.current;
+        const activeModel = monaco.editor.getModel(monaco.Uri.parse(wanted));
+        if (activeModel && editor.getModel() !== activeModel) {
+            editor.setModel(activeModel);
+        }
+        const currentUri = editor.getModel()?.uri.toString();
+        syncReadOnlyForModel(currentUri);
+        if (currentUri) onActiveModelChangedRef.current?.(currentUri);
 
         modelChangeDisposableRef.current?.dispose();
         modelChangeDisposableRef.current = editor.onDidChangeModel((e) => {
@@ -288,37 +419,45 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             if (!ev.ctrlKey && !ev.metaKey) return;
             definitionClickAllowedRef.current = true;
             if (definitionClickTimerRef.current) clearTimeout(definitionClickTimerRef.current);
-            // Auto-clear in case provideDefinition never fires (e.g., the
-            // clicked token has no definition).
             definitionClickTimerRef.current = setTimeout(() => {
                 definitionClickAllowedRef.current = false;
                 definitionClickTimerRef.current = null;
             }, 500);
         });
 
-        // Diagnostics are scoped to the main file — user cares about their
-        // own code, not lints inside a system header.
+        // Diagnostics: emit markers for every workspace file. ClangWorkspace
+        // displays them grouped in the Infos panel.
         const emit = () => {
             const cb = onDiagnosticsChangedRef.current;
             if (!cb) return;
-            const markers = monaco.editor.getModelMarkers({ resource: mainModelUri });
-            cb(markers.map(m => ({
-                severity:  severityToLevel(m.severity),
-                message:   m.message,
-                line:      m.startLineNumber,
-                column:    m.startColumn,
-                endLine:   m.endLineNumber,
-                endColumn: m.endColumn,
-                source:    m.source,
-                code:      typeof m.code === "string" ? m.code : m.code?.value,
-            })));
+            const markers = monaco.editor.getModelMarkers({});
+            cb(markers
+                .filter(m => m.resource.toString().startsWith(WORKSPACE_URI_PREFIX))
+                .map(m => ({
+                    severity:  severityToLevel(m.severity),
+                    message:   m.message,
+                    line:      m.startLineNumber,
+                    column:    m.startColumn,
+                    endLine:   m.endLineNumber,
+                    endColumn: m.endColumn,
+                    source:    m.source,
+                    code:      typeof m.code === "string" ? m.code : m.code?.value,
+                })));
         };
         emit();
         markersDisposableRef.current?.dispose();
-        markersDisposableRef.current = monaco.editor.onDidChangeMarkers(uris => {
-            if (uris.some(u => u.toString() === mainModelUri.toString())) emit();
-        });
-    }, []);
+        markersDisposableRef.current = monaco.editor.onDidChangeMarkers(() => emit());
+    }, [ensureModel, syncReadOnlyForModel]);
+
+    // The seed for monaco-editor-react has to point at a workspace file (the
+    // simulizer:/... scheme can't be used as a primary resource). Pick the
+    // entry; ClangWorkspace also passes `activeUri` which we swap to in
+    // handleEditorStartDone if it differs.
+    const initialEntryPath = initialEntryPathRef.current;
+    const initialFile = initialFilesRef.current.find(f => f.path === initialEntryPath)
+        ?? initialFilesRef.current[0];
+    const initialContent = initialFile?.content ?? "";
+    const initialUri = pathToUri(initialFile?.path ?? initialEntryPath);
 
     return (
         <MonacoEditorReactComp
@@ -350,8 +489,8 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             editorAppConfig={{
                 codeResources: {
                     modified: {
-                        text: initialCode,
-                        uri: mainUri,
+                        text: initialContent,
+                        uri: initialUri,
                     },
                 },
                 editorOptions: {
@@ -396,11 +535,6 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                                 return !!u && u.toString().startsWith(`${SIMULIZER_SCHEME}:`);
                             });
                             if (target) {
-                                // Hover invocation — return locations so
-                                // Monaco renders the link underline, but do
-                                // not navigate. The Ctrl/Cmd+click handler
-                                // re-invokes this middleware with the flag
-                                // set, which is when we actually swap models.
                                 if (!definitionClickAllowedRef.current) return result;
                                 definitionClickAllowedRef.current = false;
                                 if (definitionClickTimerRef.current) {
@@ -435,27 +569,17 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                                 return [];
                             }
 
-                            // Workspace targets — let monaco's default flow
-                            // handle them (it can open file:///workspace/...
-                            // because the main model is already registered).
                             const allWorkspace = locations.every(loc => {
                                 const u = (loc.uri ?? loc.targetUri)?.toString() ?? "";
-                                return u.startsWith("file:///workspace");
+                                return u.startsWith(WORKSPACE_URI_PREFIX);
                             });
                             if (allWorkspace) return result;
 
-                            // External (std library, MSVC includes, etc.) —
-                            // we have no content for these. Notify the parent
-                            // and return empty so monaco doesn't throw an
-                            // unhandled FileOperationError trying to read
-                            // from a non-existent in-browser path.
                             const external = locations.find(loc => {
                                 const u = (loc.uri ?? loc.targetUri)?.toString() ?? "";
-                                return !u.startsWith("file:///workspace") && !u.startsWith(`${SIMULIZER_SCHEME}:`);
+                                return !u.startsWith(WORKSPACE_URI_PREFIX) && !u.startsWith(`${SIMULIZER_SCHEME}:`);
                             });
                             if (external) {
-                                // Same hover-vs-click gate as the simulizer
-                                // branch — don't spam the parent on hover.
                                 if (definitionClickAllowedRef.current) {
                                     definitionClickAllowedRef.current = false;
                                     if (definitionClickTimerRef.current) {
@@ -471,8 +595,12 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                     },
                 },
             }}
-            onTextChanged={(changes: TextContents) => {
-                if (changes.modified !== undefined) onTextChanged(changes.modified);
+            onTextChanged={(_changes: TextContents) => {
+                // Per-model edits are routed through the explicit
+                // onDidChangeContent listeners we attach in ensureModel,
+                // which carry the file path. The top-level callback only
+                // sees changes to the editor's main resource which is
+                // confusing in multi-file mode; ignore it.
             }}
             onEditorStartDone={handleEditorStartDone}
             enforceLanguageClientDispose={true}

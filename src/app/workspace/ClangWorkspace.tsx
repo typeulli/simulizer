@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
@@ -9,12 +9,26 @@ import { useConsolePanel } from "@/components/console";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import type { ClangWorkerInMsg } from "@/utils/wasm/clang-worker";
 import { vec_field_to_image_url, mat_data_to_image_url } from "@/utils/wasm/tensor";
-import type { ClangDiagnostic, CodeEditorRef } from "./clang/CodeEditor";
-
-// Keep this in sync with DEFAULT_MAIN_URI in ./clang/CodeEditor. Inlined here
-// (instead of imported) so this module doesn't drag in the monaco-vscode
-// bundle during SSR — CodeEditor itself is loaded via dynamic({ ssr: false }).
-const DEFAULT_MAIN_URI = "file:///workspace/user.cpp";
+import type { ClangDiagnostic, CodeEditorRef, EditorFile } from "./clang/CodeEditor";
+import { pathToUri, uriToPath } from "./clang/uri";
+import FileTree from "./clang/FileTree";
+import {
+    parseBundle,
+    serializeBundle,
+    listFiles as listBundleFiles,
+    setFileContent,
+    findFile as findBundleFile,
+    addFile as bundleAddFile,
+    addFolder as bundleAddFolder,
+    removeNode as bundleRemoveNode,
+    renameNode as bundleRenameNode,
+    moveNode as bundleMoveNode,
+    descendantFilePaths,
+    validateFileName,
+    validateFolderName,
+    splitPath,
+    type CppBundle,
+} from "@/lib/cppBundle";
 
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
@@ -41,8 +55,11 @@ const LSP_WS_URL = (() => {
 })();
 
 type EditorTab = {
+    /** Full URI (workspace `file:///workspace/...` or system `simulizer:/...`) */
     uri: string;
     label: string;
+    /** Workspace-relative path, present only for workspace tabs. */
+    path?: string;
     readOnly: boolean;
     closable: boolean;
 };
@@ -51,7 +68,6 @@ const systemTabLabel = (uri: string): string => {
     const slash = uri.lastIndexOf("/");
     return slash >= 0 ? uri.slice(slash + 1) : uri;
 };
-
 
 const CodeEditor = dynamic(() => import("./clang/CodeEditor"), {
     ssr: false,
@@ -66,22 +82,6 @@ type RunState = "idle" | "loading" | "compiling" | "running" | "done" | "error";
 type BuildState = "idle" | "building" | "downloading" | "done" | "error";
 type BuildProgress = { step: number; total: number; message: string };
 
-const INITIAL_CODE = `#include "simstd.hpp"
-
-int worker() {
-    auto a = matrix_create(2, 3);
-    a(0, 0) = 1.0; a(0, 1) = 2.0; a(0, 2) = 3.0;
-    a(1, 0) = 4.0; a(1, 1) = 5.0; a(1, 2) = 6.0;
-
-    auto b = matrix_transpose(a);
-    auto c = matrix_matmul(a, b);
-
-    show_mat(c);
-    debug_log(c);
-    return 0;
-}
-`;
-
 type Props = {
     initialFile: FileDetail;
     initialOwner: boolean;
@@ -94,22 +94,25 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const isMobile = useIsMobile();
     const [mobileTab, setMobileTab] = useState<"code" | "result">("code");
 
-    const [code, setCode] = useState(INITIAL_CODE);
-    const [editorKey, setEditorKey] = useState(0);
-    const [fileId, setFileId] = useState<string | null>(null);
-    const [fileName, setFileName] = useState<string>("main.cpp");
-    const [fileMeta, setFileMeta] = useState<FileOut | null>(null);
-    const [isOwner, setIsOwner] = useState<boolean | null>(null);
+    const [bundle, setBundle] = useState<CppBundle>(() => parseBundle(initialFile.content));
+    const fileId = initialFile.id;
+    const [fileName, setFileName] = useState<string>(initialFile.name);
+    const [fileMeta, setFileMeta] = useState<FileOut | null>(initialFile);
+    const isOwner = initialOwner;
     const [duplicating, setDuplicating] = useState(false);
-    const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+    const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
 
     const [managerOpen, setManagerOpen] = useState(false);
     const [managerMode, setManagerMode] = useState<CppMode>("code");
 
-    const fileIdRef = useRef<string | null>(null);
-    const isOwnerRef = useRef<boolean>(false);
-    useEffect(() => { isOwnerRef.current = !!isOwner; }, [isOwner]);
+    const fileIdRef = useRef<string | null>(initialFile.id);
+    const isOwnerRef = useRef<boolean>(initialOwner);
+
     const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // The latest bundle snapshot the autosave timer should serialize. Using a
+    // ref so the debounced timer always sees the freshest state without
+    // recreating it on every keystroke.
+    const pendingBundleRef = useRef<CppBundle>(bundle);
 
     const [runState, setRunState] = useState<RunState>("loading");
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -122,85 +125,35 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [infos, setInfos] = useState<ClangDiagnostic[]>([]);
     const codeEditorRef = useRef<CodeEditorRef | null>(null);
 
-    const [editorTabs, setEditorTabs] = useState<EditorTab[]>([
-        { uri: DEFAULT_MAIN_URI, label: "main.cpp", readOnly: false, closable: false },
-    ]);
-    const [activeTabUri, setActiveTabUri] = useState<string>(DEFAULT_MAIN_URI);
+    // System-header tabs (simulizer:/simstd.hpp etc.) live outside the bundle
+    // because they're not user code — they appear/disappear via go-to-definition
+    // and are never persisted.
+    const [systemTabs, setSystemTabs] = useState<EditorTab[]>([]);
+    const [activeUri, setActiveUri] = useState<string>(() => pathToUri(parseBundle(initialFile.content).ui.activeFile));
 
-    // Keep the main tab label in sync with the (renameable) file name. The
-    // main tab is always index 0 by construction.
-    useEffect(() => {
-        setEditorTabs(prev => {
-            if (prev.length === 0) return prev;
-            const main = prev[0];
-            if (main.label === fileName && main.readOnly === (isOwner === false)) return prev;
-            return [{ ...main, label: fileName, readOnly: isOwner === false }, ...prev.slice(1)];
-        });
-    }, [fileName, isOwner]);
+    // ─── Tabs derived from bundle + system tabs ───────────────────────────
+    const editorTabs: EditorTab[] = useMemo(() => {
+        const allBundlePaths = new Set(listBundleFiles(bundle.tree).map(f => f.path));
+        const bundleTabs: EditorTab[] = bundle.ui.openTabs
+            .filter(p => allBundlePaths.has(p))
+            .map(p => ({
+                uri: pathToUri(p),
+                label: p,
+                path: p,
+                readOnly: !isOwner,
+                closable: p !== bundle.entry,
+            }));
+        return [...bundleTabs, ...systemTabs];
+    }, [bundle.tree, bundle.ui.openTabs, bundle.entry, isOwner, systemTabs]);
 
-    const handleDiagnosticsChanged = useCallback((diagnostics: ClangDiagnostic[]) => {
-        setInfos(diagnostics);
-    }, []);
+    // ─── Files passed to the editor (all bundle files) ────────────────────
+    const editorFiles: EditorFile[] = useMemo(
+        () => listBundleFiles(bundle.tree).map(({ path, file }) => ({ path, content: file.content })),
+        [bundle.tree],
+    );
 
-    const handleActiveModelChanged = useCallback((uri: string) => {
-        setActiveTabUri(uri);
-        // When monaco-vscode opens a system header via go-to-definition, the
-        // model switch fires before we have a tab for it — register it here so
-        // the tab strip stays in sync with the editor.
-        if (uri !== DEFAULT_MAIN_URI) {
-            setEditorTabs(prev => {
-                if (prev.some(t => t.uri === uri)) return prev;
-                return [...prev, { uri, label: systemTabLabel(uri), readOnly: true, closable: true }];
-            });
-        }
-    }, []);
-
-    const handleTabClick = useCallback((uri: string) => {
-        codeEditorRef.current?.setActiveModel(uri);
-    }, []);
-
-    const handleTabClose = useCallback((uri: string) => {
-        codeEditorRef.current?.closeModel(uri);
-        setEditorTabs(prev => prev.filter(t => t.uri !== uri));
-    }, []);
-
-    const focusInfoEntry = useCallback((entry: ClangDiagnostic) => {
-        codeEditorRef.current?.revealAt(DEFAULT_MAIN_URI, entry.line, entry.column);
-    }, []);
-
-    // Hydrate from props (parent already fetched the file + ownership).
-    useEffect(() => {
-        const f = initialFile;
-        const owner = initialOwner;
-        setIsOwner(owner);
-        setFileMeta(f);
-        setFileId(f.id);
-        fileIdRef.current = f.id;
-        setFileName(f.name);
-        // "{}" is the FileCreate default produced when dashboard creates a
-        // new file without sending content. Treat it as never-seeded and
-        // populate with the template, then persist immediately so the
-        // preview/refresh shows real content (Monaco doesn't fire
-        // onTextChanged on mount, so autosave wouldn't run otherwise).
-        // Plain "" is the user's deliberate empty state — preserve it.
-        const needsSeed = f.content === "{}";
-        const content = needsSeed ? INITIAL_CODE : f.content;
-        setCode(content);
-        setEditorKey(k => k + 1);
-        setEditorTabs([{ uri: DEFAULT_MAIN_URI, label: f.name, readOnly: !owner, closable: false }]);
-        setActiveTabUri(DEFAULT_MAIN_URI);
-        setSaveStatus("saved");
-        if (needsSeed && owner) {
-            saveFile(f.id, INITIAL_CODE).catch(() => { /* surfaced on next edit */ });
-        }
-    }, [initialFile, initialOwner]);
-
-    // Autosave on code change (debounced). Non-owners (link-share viewers) skip
-    // the save call entirely — they have no write permission and the editor is
-    // read-only, but Monaco can still fire onTextChanged during programmatic
-    // updates so we gate at the handler level too.
-    const handleCodeChange = useCallback((next: string) => {
-        setCode(next);
+    // ─── Autosave ─────────────────────────────────────────────────────────
+    const scheduleAutosave = useCallback(() => {
         if (!fileIdRef.current || !isOwnerRef.current) return;
         setSaveStatus("unsaved");
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -209,7 +162,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (!id) return;
             setSaveStatus("saving");
             try {
-                await saveFile(id, next);
+                await saveFile(id, serializeBundle(pendingBundleRef.current));
                 setSaveStatus("saved");
             } catch {
                 setSaveStatus("error");
@@ -217,10 +170,116 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         }, 2000);
     }, []);
 
+    // Flush the latest bundle to the server right away. Use this for
+    // structural changes (file add/remove/rename, entry change) that the
+    // user expects to stick the moment they perform the action; content
+    // edits go through scheduleAutosave instead so we don't hammer the
+    // server on every keystroke.
+    const flushSave = useCallback(() => {
+        if (!isOwnerRef.current || !fileIdRef.current) return;
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        setSaveStatus("saving");
+        saveFile(fileIdRef.current, serializeBundle(pendingBundleRef.current))
+            .then(() => setSaveStatus("saved"))
+            .catch(() => setSaveStatus("error"));
+    }, []);
+
     useEffect(() => () => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     }, []);
 
+    // ─── Diagnostics ──────────────────────────────────────────────────────
+    const handleDiagnosticsChanged = useCallback((diagnostics: ClangDiagnostic[]) => {
+        setInfos(diagnostics);
+    }, []);
+
+    const handleActiveModelChanged = useCallback((uri: string) => {
+        setActiveUri(uri);
+        const path = uriToPath(uri);
+        if (path) {
+            const prev = pendingBundleRef.current;
+            if (prev.ui.activeFile === path && prev.ui.openTabs.includes(path)) return;
+            const next: CppBundle = {
+                ...prev,
+                ui: {
+                    ...prev.ui,
+                    activeFile: path,
+                    openTabs: prev.ui.openTabs.includes(path)
+                        ? prev.ui.openTabs
+                        : [...prev.ui.openTabs, path],
+                },
+            };
+            pendingBundleRef.current = next;
+            setBundle(next);
+            scheduleAutosave();
+        } else {
+            // System / external header — track as ephemeral tab.
+            setSystemTabs(prev => prev.some(t => t.uri === uri) ? prev : [
+                ...prev,
+                { uri, label: systemTabLabel(uri), readOnly: true, closable: true },
+            ]);
+        }
+    }, [scheduleAutosave]);
+
+    const handleTabClick = useCallback((tab: EditorTab) => {
+        codeEditorRef.current?.setActiveModel(tab.uri);
+    }, []);
+
+    const handleTabClose = useCallback((tab: EditorTab) => {
+        codeEditorRef.current?.closeModel(tab.uri);
+        if (tab.path) {
+            const prev = pendingBundleRef.current;
+            if (!prev.ui.openTabs.includes(tab.path)) return;
+            const remainingTabs = prev.ui.openTabs.filter(p => p !== tab.path);
+            let activeFile = prev.ui.activeFile;
+            if (activeFile === tab.path) {
+                activeFile = remainingTabs[remainingTabs.length - 1] ?? prev.entry;
+                if (!remainingTabs.includes(activeFile)) remainingTabs.push(activeFile);
+            }
+            const next: CppBundle = {
+                ...prev,
+                ui: { ...prev.ui, openTabs: remainingTabs, activeFile },
+            };
+            pendingBundleRef.current = next;
+            setBundle(next);
+            if (activeFile !== prev.ui.activeFile) setActiveUri(pathToUri(activeFile));
+            scheduleAutosave();
+        } else {
+            setSystemTabs(prev => prev.filter(t => t.uri !== tab.uri));
+        }
+    }, [scheduleAutosave]);
+
+    const focusInfoEntry = useCallback((entry: ClangDiagnostic) => {
+        // The Infos pane shows diagnostics for all bundle files; we'd need
+        // each entry to carry its file URI to jump precisely. clangd reports
+        // markers per resource, but our current shape only carries line/column.
+        // Reveal in the currently-active file for now (matches old behavior).
+        codeEditorRef.current?.revealAt(activeUri, entry.line, entry.column);
+    }, [activeUri]);
+
+    // ─── Initial seed for fresh files ─────────────────────────────────────
+    // "{}" is the FileCreate default produced when dashboard creates a new
+    // clangfile without sending content. parseBundle treats it as a fresh
+    // bundle; we persist immediately so the preview/refresh shows real
+    // content (the editor's onTextChanged wouldn't fire on mount otherwise).
+    useEffect(() => {
+        if (initialFile.content === "{}" && initialOwner) {
+            saveFile(initialFile.id, serializeBundle(pendingBundleRef.current)).catch(() => { /* surfaced later */ });
+        }
+    }, [initialFile.content, initialFile.id, initialOwner]);
+
+    // ─── Per-file content change from the editor ──────────────────────────
+    const handleEditorTextChanged = useCallback((path: string, content: string) => {
+        if (!isOwnerRef.current) return;
+        const prev = pendingBundleRef.current;
+        const nextTree = setFileContent(prev.tree, path, content);
+        const next: CppBundle = { ...prev, tree: nextTree };
+        pendingBundleRef.current = next;
+        setBundle(next);
+        scheduleAutosave();
+    }, [scheduleAutosave]);
+
+    // ─── Rename project (the JSON file itself) ────────────────────────────
     const handleRenameFile = useCallback(async () => {
         if (!fileId) return;
         const trimmed = fileName.trim();
@@ -234,7 +293,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setFileName(updated.name);
             setFileMeta(prev => prev ? { ...prev, name: updated.name } : prev);
         } catch (err: any) {
-            if (err?.status === 409) setErrorMsg("같은 이름의 파일이 이미 있어요.");
+            if (err?.status === 409) setErrorMsg("같은 이름의 프로젝트가 이미 있어요.");
             if (fileMeta) setFileName(fileMeta.name);
         }
     }, [fileId, fileName, fileMeta]);
@@ -249,12 +308,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
         setSaveStatus("saving");
         try {
-            await saveFile(fileId, code);
+            await saveFile(fileId, serializeBundle(pendingBundleRef.current));
             setSaveStatus("saved");
         } catch {
             setSaveStatus("error");
         }
-    }, [fileId, code]);
+    }, [fileId]);
 
     const handleDuplicateToMine = useCallback(async () => {
         if (!fileId || duplicating) return;
@@ -273,21 +332,280 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         }
     }, [fileId, duplicating, router, pack]);
 
+    // ─── File-tree operations ─────────────────────────────────────────────
+    // Apply a pure transformation to the bundle, persist immediately, and
+    // update React state. Returning null from `transform` is the "do nothing"
+    // signal (e.g., the user-facing alert was already raised). The transform
+    // must NOT itself call setBundle/setActiveUri — those happen here.
+    const applyBundleChange = useCallback((transform: (prev: CppBundle) => CppBundle | null) => {
+        const prev = pendingBundleRef.current;
+        const next = transform(prev);
+        if (!next) return;
+        pendingBundleRef.current = next;
+        setBundle(next);
+        // Only sync activeUri when the bundle's active file actually changed
+        // — otherwise we'd yank the user away from a system header they're
+        // viewing whenever they rename a sibling file or change the entry.
+        if (next.ui.activeFile !== prev.ui.activeFile) {
+            setActiveUri(pathToUri(next.ui.activeFile));
+        }
+        flushSave();
+    }, [flushSave]);
+
+    const handleCreateFile = useCallback((parentPath: string) => {
+        if (!isOwnerRef.current) return;
+        const raw = window.prompt(`새 파일 이름 (확장자 포함, ${parentPath ? `${parentPath}/` : ""}…):`, "");
+        if (raw === null) return;
+        const name = raw.trim();
+        const err = validateFileName(name);
+        if (err) { window.alert(err); return; }
+        const path = parentPath ? `${parentPath}/${name}` : name;
+        applyBundleChange(prev => {
+            const nextTree = bundleAddFile(prev.tree, path, "");
+            if (!nextTree) { window.alert("같은 이름의 파일이 이미 있습니다."); return null; }
+            return {
+                ...prev,
+                tree: nextTree,
+                ui: {
+                    ...prev.ui,
+                    activeFile: path,
+                    openTabs: prev.ui.openTabs.includes(path) ? prev.ui.openTabs : [...prev.ui.openTabs, path],
+                },
+            };
+        });
+    }, [applyBundleChange]);
+
+    const handleCreateFolder = useCallback((parentPath: string) => {
+        if (!isOwnerRef.current) return;
+        const raw = window.prompt(`새 폴더 이름 (${parentPath ? `${parentPath}/` : ""}…):`, "");
+        if (raw === null) return;
+        const name = raw.trim();
+        const err = validateFolderName(name);
+        if (err) { window.alert(err); return; }
+        const path = parentPath ? `${parentPath}/${name}` : name;
+        applyBundleChange(prev => {
+            const nextTree = bundleAddFolder(prev.tree, path);
+            if (!nextTree) { window.alert("같은 이름의 폴더가 이미 있습니다."); return null; }
+            return { ...prev, tree: nextTree };
+        });
+    }, [applyBundleChange]);
+
+    const handleRenameNode = useCallback((path: string) => {
+        if (!isOwnerRef.current) return;
+        const { base, dir } = splitPath(path);
+        const raw = window.prompt("새 이름:", base);
+        if (raw === null) return;
+        const newName = raw.trim();
+        if (!newName || newName === base) return;
+        const isFile = listBundleFiles(pendingBundleRef.current.tree).some(f => f.path === path);
+        const err = isFile ? validateFileName(newName) : validateFolderName(newName);
+        if (err) { window.alert(err); return; }
+        const newPath = dir ? `${dir}/${newName}` : newName;
+        applyBundleChange(prev => {
+            const nextTree = bundleRenameNode(prev.tree, path, newName);
+            if (!nextTree) { window.alert("같은 이름이 이미 있습니다."); return null; }
+            // A rename affects every descendant path, so prefix-swap path
+            // references in entry / activeFile / openTabs.
+            const rewrite = (p: string) =>
+                p === path ? newPath
+                : p.startsWith(path + "/") ? newPath + p.slice(path.length)
+                : p;
+            return {
+                ...prev,
+                tree: nextTree,
+                entry: rewrite(prev.entry),
+                ui: {
+                    ...prev.ui,
+                    activeFile: rewrite(prev.ui.activeFile),
+                    openTabs: prev.ui.openTabs.map(rewrite),
+                },
+            };
+        });
+    }, [applyBundleChange]);
+
+    const handleDeleteNode = useCallback((path: string) => {
+        if (!isOwnerRef.current) return;
+        const affected = descendantFilePaths(pendingBundleRef.current.tree, path);
+        if (affected.includes(pendingBundleRef.current.entry)) {
+            window.alert("Entry 파일은 삭제할 수 없습니다. 다른 파일을 Entry로 지정한 뒤 다시 시도해주세요.");
+            return;
+        }
+        const ok = window.confirm(
+            affected.length > 1
+                ? `${path} 와 그 하위 ${affected.length}개 파일을 삭제할까요?`
+                : `${path} 를 삭제할까요?`,
+        );
+        if (!ok) return;
+        applyBundleChange(prev => {
+            const nextTree = bundleRemoveNode(prev.tree, path);
+            const removed = new Set(affected);
+            const newOpenTabs = prev.ui.openTabs.filter(p => !removed.has(p));
+            let activeFile = prev.ui.activeFile;
+            if (removed.has(activeFile)) {
+                activeFile = newOpenTabs[newOpenTabs.length - 1] ?? prev.entry;
+                if (!newOpenTabs.includes(activeFile)) newOpenTabs.push(activeFile);
+            }
+            return {
+                ...prev,
+                tree: nextTree,
+                ui: { ...prev.ui, openTabs: newOpenTabs, activeFile },
+            };
+        });
+    }, [applyBundleChange]);
+
+    const handleMoveNode = useCallback((srcPath: string, destDir: string) => {
+        if (!isOwnerRef.current) return;
+        const srcName = srcPath.split("/").pop()!;
+        const newPath = destDir ? `${destDir}/${srcName}` : srcName;
+        applyBundleChange(prev => {
+            const nextTree = bundleMoveNode(prev.tree, srcPath, destDir);
+            if (!nextTree) {
+                // No-op (same parent), invalid (cycle), or name collision —
+                // only the collision case is worth surfacing.
+                return null;
+            }
+            // Move shifts every descendant path; prefix-swap entry / activeFile /
+            // openTabs the same way rename does.
+            const rewrite = (p: string) =>
+                p === srcPath ? newPath
+                : p.startsWith(srcPath + "/") ? newPath + p.slice(srcPath.length)
+                : p;
+            return {
+                ...prev,
+                tree: nextTree,
+                entry: rewrite(prev.entry),
+                ui: {
+                    ...prev.ui,
+                    activeFile: rewrite(prev.ui.activeFile),
+                    openTabs: prev.ui.openTabs.map(rewrite),
+                },
+            };
+        });
+    }, [applyBundleChange]);
+
+    const handleSetAsEntry = useCallback((path: string) => {
+        if (!isOwnerRef.current) return;
+        if (!path.toLowerCase().endsWith(".cpp")) {
+            window.alert("Entry 는 .cpp 파일이어야 합니다.");
+            return;
+        }
+        applyBundleChange(prev => prev.entry === path ? null : { ...prev, entry: path });
+    }, [applyBundleChange]);
+
+    // ─── Per-file upload / download ───────────────────────────────────────
+    // The native <input type="file"> can't be programmatically targeted to a
+    // specific folder, so we stash the desired parent path in a ref and read
+    // it from the change handler. A single hidden input is reused for every
+    // upload invocation.
+    const uploadInputRef = useRef<HTMLInputElement | null>(null);
+    const uploadParentRef = useRef<string>("");
+
+    const handleUploadFile = useCallback((parentPath: string) => {
+        if (!isOwnerRef.current) return;
+        uploadParentRef.current = parentPath;
+        if (uploadInputRef.current) {
+            // Reset so re-uploading the same filename still triggers change.
+            uploadInputRef.current.value = "";
+            uploadInputRef.current.click();
+        }
+    }, []);
+
+    const handleUploadInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+        const name = file.name;
+        const err = validateFileName(name);
+        if (err) { window.alert(err); return; }
+        // Cap per-file size at 1 MB. The whole bundle is bounded by the
+        // backend's 5 MB content limit; this is a friendlier per-file ceiling.
+        if (file.size > 1 * 1024 * 1024) {
+            window.alert("파일이 너무 큽니다 (1MB 이하)");
+            return;
+        }
+        const parentPath = uploadParentRef.current;
+        const path = parentPath ? `${parentPath}/${name}` : name;
+        const content = await file.text();
+        applyBundleChange(prev => {
+            const nextTree = bundleAddFile(prev.tree, path, content);
+            if (!nextTree) { window.alert("같은 이름의 파일이 이미 있습니다."); return null; }
+            return {
+                ...prev,
+                tree: nextTree,
+                ui: {
+                    ...prev.ui,
+                    activeFile: path,
+                    openTabs: prev.ui.openTabs.includes(path) ? prev.ui.openTabs : [...prev.ui.openTabs, path],
+                },
+            };
+        });
+    }, [applyBundleChange]);
+
+    const handleDownloadTreeFile = useCallback((path: string) => {
+        const file = findBundleFile(pendingBundleRef.current.tree, path);
+        if (!file) return;
+        const ext = path.toLowerCase().endsWith(".hpp") ? "text/x-c++hdr" : "text/x-c++src";
+        const blob = new Blob([file.content], { type: `${ext};charset=utf-8` });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        // Use the file's basename (last segment) so nested files don't try to
+        // download as `src/util.hpp` — most browsers reject `/` in download
+        // filenames anyway.
+        a.download = path.split("/").pop() || "untitled";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+    }, []);
+
+    const handleOpenFile = useCallback((path: string) => {
+        const prev = pendingBundleRef.current;
+        const openTabs = prev.ui.openTabs.includes(path)
+            ? prev.ui.openTabs
+            : [...prev.ui.openTabs, path];
+        if (prev.ui.openTabs === openTabs && prev.ui.activeFile === path) {
+            setActiveUri(pathToUri(path));
+            return;
+        }
+        const next: CppBundle = {
+            ...prev,
+            ui: { ...prev.ui, openTabs, activeFile: path },
+        };
+        pendingBundleRef.current = next;
+        setBundle(next);
+        setActiveUri(pathToUri(path));
+        scheduleAutosave();
+    }, [scheduleAutosave]);
+
+    const handleToggleTree = useCallback(() => {
+        const prev = pendingBundleRef.current;
+        const next: CppBundle = {
+            ...prev,
+            ui: { ...prev.ui, treeOpen: !prev.ui.treeOpen },
+        };
+        pendingBundleRef.current = next;
+        setBundle(next);
+        scheduleAutosave();
+    }, [scheduleAutosave]);
+
+    // ─── Download ─────────────────────────────────────────────────────────
     const handleDownloadCpp = useCallback(() => {
+        const entryFile = listBundleFiles(bundle.tree).find(f => f.path === bundle.entry);
+        const code = entryFile?.file.content ?? "";
         const blob = new Blob([code], { type: "text/x-c++src;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        // Strip any existing C/C++ extension so we don't end up with foo.cpp.cpp
         const base = (fileName || "untitled").replace(/\.(cpp|cc|cxx|c\+\+|h|hpp|hxx)$/i, "");
         a.download = `${base || "untitled"}.cpp`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        // Revoke on the next tick so the browser has begun fetching the blob: URL.
         setTimeout(() => URL.revokeObjectURL(url), 0);
-    }, [code, fileName]);
+    }, [bundle.tree, bundle.entry, fileName]);
 
+    // ─── Wasm worker / runtime backend ────────────────────────────────────
     const workerRef = useRef<Worker | null>(null);
     const tfBackendRef = useRef<string>("initializing");
     useEffect(() => { tfBackendRef.current = tfBackend; }, [tfBackend]);
@@ -354,10 +672,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (msg.type === "result") { setResultValue(msg.value); return; }
         if (msg.type === "done") { setRunState("done"); return; }
         if (msg.type === "error") {
-            // If the error is from an in-flight backend switch, restore the
-            // previous backend instead of leaving the UI stuck on "initializing".
-            // Backend switch errors aren't runtime errors so we don't flip
-            // runState.
             if (pendingBackendSwitchRef.current) {
                 setTfBackend(pendingBackendSwitchRef.current.previous);
                 pendingBackendSwitchRef.current = null;
@@ -391,6 +705,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setRightTab("console");
     }, [isMobile]);
 
+    // ─── Run / build ──────────────────────────────────────────────────────
     const handleRun = useCallback(async () => {
         if (runState === "loading" || runState === "compiling" || runState === "running") return;
         const worker = workerRef.current;
@@ -407,7 +722,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             const res = await fetch(`${API_BASE}/compile/emcc`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code }),
+                body: JSON.stringify({ tree: bundle.tree, entry: bundle.entry }),
             });
             if (!res.ok) {
                 const errText = await res.text();
@@ -424,7 +739,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setErrorMsg(err instanceof Error ? err.message : String(err));
             setRunState("error");
         }
-    }, [code, runState, clearLog, isMobile]);
+    }, [bundle.tree, bundle.entry, runState, clearLog, isMobile]);
 
     const handleBuild = useCallback(async () => {
         if (buildState === "building" || buildState === "downloading") return;
@@ -440,7 +755,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 fetchEventSource(`${API_BASE}/compile/build`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ code, lang: "cpp" }),
+                    body: JSON.stringify({ tree: bundle.tree, entry: bundle.entry, lang: "cpp" }),
                     signal: ctrl.signal,
                     openWhenHidden: true,
                     async onopen(res) {
@@ -505,7 +820,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setBuildState("error");
             setErrorMsg(e instanceof Error ? e.message : String(e));
         }
-    }, [code, buildState]);
+    }, [bundle.tree, bundle.entry, buildState]);
 
     const runDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
     const buildDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
@@ -537,6 +852,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const runSpinning = runState === "loading" || runState === "compiling" || runState === "running";
     const buildSpinning = buildState === "building" || buildState === "downloading";
 
+    const entryFile = useMemo(() => listBundleFiles(bundle.tree).find(f => f.path === bundle.entry), [bundle.tree, bundle.entry]);
+    const entryCode = entryFile?.file.content ?? "";
+
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
             {/* ── Top bar ── */}
@@ -544,7 +862,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 ? { display: "flex", alignItems: "center", gap: 4, padding: "0 12px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
                 : { display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
             }>
-                {/* Brand + filename */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap", flex: isMobile ? 1 : undefined }}>
                     <TopbarBrand compact={isMobile} />
                     {!isMobile && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
@@ -588,7 +905,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     )}
                 </div>
 
-                {/* Center — build progress (only when building) */}
                 {!isMobile && <div style={{ display: "flex", justifyContent: "center" }}>
                     {buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done") && (
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, color: token.color.fgMuted, fontSize: token.font.size.fs12, minWidth: 340, fontFamily: token.font.family.mono }}>
@@ -602,7 +918,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     )}
                 </div>}
 
-                {/* Actions */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
                     {!isMobile && <>
                     {isOwner && saveStatus === "unsaved" && (
@@ -633,7 +948,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             {pack.workspace.ui.share_duplicate_button}
                         </Button>
                     )}
-                    {/* Backend toggle */}
                     <div style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: "4px 8px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: 999, fontSize: token.font.size.fs10, color: token.color.fgMuted, fontFamily: token.font.family.mono }}>
                         {(["webgpu", "webgl", "cpu"] as const).map((b, i, arr) => {
                             const isSelected = tfBackend === b;
@@ -662,7 +976,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         })}
                     </div>
 
-                    {/* Build */}
                     <Button
                         variant="secondary"
                         size="sm"
@@ -674,7 +987,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     </Button>
                     </>}
 
-                    {/* Run */}
                     <button
                         onClick={handleRun}
                         disabled={runDisabled}
@@ -703,15 +1015,32 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
                 {/* Editor area */}
                 <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
-                    {/* Editor toolbar (tab strip) */}
-                    <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
-                        <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
+                    {/* Editor toolbar (tab strip + tree toggle) */}
+                    <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0, gap: 6 }}>
+                        <button
+                            type="button"
+                            onClick={handleToggleTree}
+                            title="파일 트리 열기/닫기"
+                            aria-pressed={bundle.ui.treeOpen}
+                            style={{
+                                display: "inline-flex", alignItems: "center",
+                                padding: "4px 6px",
+                                background: bundle.ui.treeOpen ? token.color.bgSubtle : "transparent",
+                                border: "none", borderRadius: token.radius.sm,
+                                color: token.color.fgMuted,
+                                cursor: "pointer",
+                            }}
+                        >
+                            <Icon.Menu size={12} />
+                        </button>
+                        <div style={{ display: "flex", gap: 2, overflowX: "auto", flex: 1 }}>
                             {editorTabs.map(tab => {
-                                const isActive = tab.uri === activeTabUri;
+                                const isActive = tab.uri === activeUri;
+                                const isEntry  = tab.path === bundle.entry;
                                 return (
                                     <div
                                         key={tab.uri}
-                                        onClick={() => !isActive && handleTabClick(tab.uri)}
+                                        onClick={() => !isActive && handleTabClick(tab)}
                                         style={{
                                             display: "inline-flex",
                                             alignItems: "center",
@@ -728,6 +1057,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     >
                                         <Icon.File size={11} />
                                         <span>{tab.label}</span>
+                                        {isEntry && (
+                                            <span title="Entry" style={{ display: "inline-flex", color: token.color.warning }}>
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                                            </span>
+                                        )}
                                         {tab.readOnly && (
                                             <span style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, fontFamily: token.font.family.mono }}>
                                                 read-only
@@ -736,7 +1070,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                         {tab.closable && (
                                             <button
                                                 type="button"
-                                                onClick={e => { e.stopPropagation(); handleTabClose(tab.uri); }}
+                                                onClick={e => { e.stopPropagation(); handleTabClose(tab); }}
                                                 aria-label={`${tab.label} 탭 닫기`}
                                                 style={{
                                                     marginLeft: 2,
@@ -766,94 +1100,112 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         </div>
                     </div>
 
-                    {/* Editor */}
-                    <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-                        <CodeEditor
-                            key={editorKey}
-                            ref={codeEditorRef}
-                            initialCode={code}
-                            mainUri={DEFAULT_MAIN_URI}
-                            lspWsUrl={LSP_WS_URL}
-                            onTextChanged={handleCodeChange}
-                            readOnly={isOwner === false || isMobile}
-                            theme={theme}
-                            onDiagnosticsChanged={handleDiagnosticsChanged}
-                            onActiveModelChanged={handleActiveModelChanged}
-                            onUnresolvedDefinition={handleUnresolvedDefinition}
-                        />
-                        {editorNotice && (
-                            <div
-                                role="status"
-                                style={{
-                                    position: "absolute",
-                                    top: 12,
-                                    right: 16,
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    maxWidth: "calc(100% - 32px)",
-                                    padding: "8px 10px 8px 12px",
-                                    background: token.color.bgSubtle,
-                                    border: `1px solid ${token.color.border}`,
-                                    borderRadius: token.radius.md,
-                                    boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
-                                    color: token.color.fg,
-                                    fontSize: token.font.size.fs11,
-                                    fontFamily: token.font.family.mono,
-                                    zIndex: 10,
-                                }}
-                            >
-                                <span aria-hidden style={{
-                                    width: 14,
-                                    height: 14,
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    borderRadius: "50%",
-                                    border: `1px solid ${token.color.fgSubtle}`,
-                                    color: token.color.fgSubtle,
-                                    fontSize: 10,
-                                    fontFamily: "serif",
-                                    fontStyle: "italic",
-                                    lineHeight: 1,
-                                    flexShrink: 0,
-                                }}>i</span>
-                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                    {editorNotice}
-                                </span>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
-                                        setEditorNotice(null);
-                                    }}
-                                    aria-label="알림 닫기"
+                    {/* Tree + editor */}
+                    <div style={{ flex: 1, display: "flex", position: "relative", overflow: "hidden" }}>
+                        {!isMobile && bundle.ui.treeOpen && (
+                            <FileTree
+                                tree={bundle.tree}
+                                entryPath={bundle.entry}
+                                activePath={bundle.ui.activeFile}
+                                readOnly={!isOwner}
+                                onOpenFile={handleOpenFile}
+                                onCreateFile={handleCreateFile}
+                                onCreateFolder={handleCreateFolder}
+                                onUploadFile={handleUploadFile}
+                                onDownloadFile={handleDownloadTreeFile}
+                                onRename={handleRenameNode}
+                                onDelete={handleDeleteNode}
+                                onSetAsEntry={handleSetAsEntry}
+                                onMove={handleMoveNode}
+                            />
+                        )}
+                        <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+                            <CodeEditor
+                                ref={codeEditorRef}
+                                files={editorFiles}
+                                activeUri={activeUri}
+                                entryPath={bundle.entry}
+                                lspWsUrl={LSP_WS_URL}
+                                onTextChanged={handleEditorTextChanged}
+                                readOnly={isOwner === false || isMobile}
+                                theme={theme}
+                                onDiagnosticsChanged={handleDiagnosticsChanged}
+                                onActiveModelChanged={handleActiveModelChanged}
+                                onUnresolvedDefinition={handleUnresolvedDefinition}
+                            />
+                            {editorNotice && (
+                                <div
+                                    role="status"
                                     style={{
-                                        marginLeft: 4,
-                                        width: 16,
-                                        height: 16,
+                                        position: "absolute",
+                                        top: 12,
+                                        right: 16,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        maxWidth: "calc(100% - 32px)",
+                                        padding: "8px 10px 8px 12px",
+                                        background: token.color.bgSubtle,
+                                        border: `1px solid ${token.color.border}`,
+                                        borderRadius: token.radius.md,
+                                        boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
+                                        color: token.color.fg,
+                                        fontSize: token.font.size.fs11,
+                                        fontFamily: token.font.family.mono,
+                                        zIndex: 10,
+                                    }}
+                                >
+                                    <span aria-hidden style={{
+                                        width: 14,
+                                        height: 14,
                                         display: "inline-flex",
                                         alignItems: "center",
                                         justifyContent: "center",
-                                        border: "none",
-                                        background: "transparent",
+                                        borderRadius: "50%",
+                                        border: `1px solid ${token.color.fgSubtle}`,
                                         color: token.color.fgSubtle,
-                                        cursor: "pointer",
-                                        borderRadius: token.radius.xs,
-                                        fontSize: token.font.size.fs11,
+                                        fontSize: 10,
+                                        fontFamily: "serif",
+                                        fontStyle: "italic",
                                         lineHeight: 1,
-                                    }}
-                                >
-                                    ×
-                                </button>
-                            </div>
-                        )}
+                                        flexShrink: 0,
+                                    }}>i</span>
+                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {editorNotice}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
+                                            setEditorNotice(null);
+                                        }}
+                                        aria-label="알림 닫기"
+                                        style={{
+                                            marginLeft: 4,
+                                            width: 16,
+                                            height: 16,
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            border: "none",
+                                            background: "transparent",
+                                            color: token.color.fgSubtle,
+                                            cursor: "pointer",
+                                            borderRadius: token.radius.xs,
+                                            fontSize: token.font.size.fs11,
+                                            lineHeight: 1,
+                                        }}
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </main>
 
                 {/* Right panel: console + infos */}
                 <aside style={{ display: isMobile && mobileTab !== "result" ? "none" : "flex", flexDirection: "column", borderLeft: isMobile ? "none" : `1px solid ${token.color.border}`, background: token.color.bg, overflow: "hidden" }}>
-                    {/* Tabs (hidden on mobile — bottom tab bar handles it) */}
                     <div style={{ display: isMobile ? "none" : "flex", padding: "8px 8px 0", gap: 2, borderBottom: `1px solid ${token.color.border}` }}>
                         <button onClick={() => setRightTab("console")}
                             style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "console" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "console" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
@@ -873,7 +1225,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     </div>
 
                     <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
-                        {/* Result card */}
                         <div style={{ padding: 14, borderBottom: `1px solid ${token.color.borderSubtle}` }}>
                             <div style={{ padding: 14, background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md }}>
                                 <div style={{ fontSize: token.font.size.fs10, textTransform: "uppercase", letterSpacing: "0.06em", color: token.color.fgSubtle, fontWeight: 600 }}>{pack.workspace.ui.output_label}</div>
@@ -895,7 +1246,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 </div>
                             </div>
                         </div>
-                        {/* Log */}
                         <div
                             className="simulizer-log"
                             ref={logAreaRef}
@@ -905,7 +1255,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 {pack.workspace.ui.log_placeholder}
                             </div>
                         </div>
-                        {/* Footer */}
                         <div style={{ padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, fontFamily: token.font.family.mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle, display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: token.color.success, display: "inline-block" }} />
                             {tfBackend === "initializing" ? pack.workspace.ui.backend_initializing : `${tfBackend} · ${pack.workspace.ui.backend_ready}`}
@@ -964,7 +1313,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </aside>
             </div>
 
-            {/* Mobile bottom tab bar */}
             {isMobile && (
                 <div style={{
                     display: "flex",
@@ -1005,7 +1353,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </div>
             )}
 
-            {/* Error banner */}
             {errorMsg && (
                 <div style={{
                     padding: "10px 14px",
@@ -1052,10 +1399,18 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </div>
             )}
 
+            <input
+                ref={uploadInputRef}
+                type="file"
+                accept=".cpp,.hpp"
+                onChange={handleUploadInputChange}
+                style={{ display: "none" }}
+            />
+
             {!isMobile && <CppManagerModal
                 open={managerOpen}
                 mode={managerMode}
-                code={code}
+                code={entryCode}
                 fileName={fileName}
                 pack={pack}
                 sharePanel={isOwner && fileMeta ? (
