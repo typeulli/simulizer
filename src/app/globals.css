@@ -1157,3 +1157,12 @@ svg[display=none] { display: none; }
 .blocklyFlyout .blocklyScrollbarHandle {
   fill: var(--border-strong) !important;
 }
+
+/* ── Responsive: mobile (<=768px) ─────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
+  }
+  .dashboard-header-title { display: none !important; }
+}

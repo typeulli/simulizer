@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import { useUser } from "@/hooks/useAuth";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import Link from "next/link";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
@@ -16,6 +18,7 @@ import { Card, CardHeader, CardBody } from "@/components/organisms/Card";
 import { Stat } from "@/components/organisms/Stat";
 import { Topbar } from "@/components/organisms/Toolbar";
 import { BlocklyPreview } from "@/components/organisms/BlocklyPreview";
+import { MobileNavDrawer, MobileNavToggle } from "@/components/organisms/MobileNavDrawer";
 import { token } from "@/components/tokens";
 import useLanguagePack from "@/hooks/useLanguagePack";
 
@@ -23,6 +26,8 @@ export default function Home() {
   const { theme, toggleTheme } = useTheme();
   const { user, loading } = useUser();
   const [lang, , pack] = useLanguagePack();
+  const isMobile = useIsMobile();
+  const [navOpen, setNavOpen] = useState(false);
   const t = pack.home;
 
   function toggleLang() {
@@ -44,7 +49,7 @@ export default function Home() {
       }}
     >
       {/* ── Nav ── */}
-      <Topbar style={{ height: "auto", padding: `18px ${token.space.sp12}`, justifyContent: "space-between" }}>
+      <Topbar style={{ height: "auto", padding: isMobile ? "12px 16px" : `18px ${token.space.sp12}`, justifyContent: "space-between" }}>
         <Link href="#" style={{ textDecoration: "none", color: "inherit" }}>
           <Inline gap="sp2" style={{ fontSize: token.font.size.fs15, fontWeight: token.font.weight.semibold, letterSpacing: "-0.01em" }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
@@ -53,30 +58,56 @@ export default function Home() {
               <rect x="3" y="13" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
               <rect x="13" y="13" width="8" height="8" rx="1.5" fill={token.color.accent} opacity="0.4" />
             </svg>
-            <span>Simulizer</span>
+            {!isMobile && <span>Simulizer</span>}
           </Inline>
         </Link>
 
-        <Inline gap="sp6">
-          <Link href="/docs" style={{ textDecoration: "none" }}>
-            <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_docs}</Text>
-          </Link>
-          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_examples}</Text>
-          <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_github}</Text>
-          <Divider orientation="vertical" style={{ height: 16 }} />
-          <Button variant="ghost" size="xs" onClick={toggleTheme}>
+        {isMobile ? (
+          <MobileNavToggle onClick={() => setNavOpen(true)} />
+        ) : (
+          <Inline gap="sp6">
+            <Link href="/docs" style={{ textDecoration: "none" }}>
+              <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_docs}</Text>
+            </Link>
+            <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_examples}</Text>
+            <Text as="a" variant="body" tone="muted" style={{ cursor: "pointer" }}>{t.nav_github}</Text>
+            <Divider orientation="vertical" style={{ height: 16 }} />
+            <Button variant="ghost" size="xs" onClick={toggleTheme}>
+              {theme === "dark" ? <Icon.Sun size={14} /> : <Icon.Moon size={14} />}
+            </Button>
+            <Button variant="ghost" size="xs" onClick={toggleLang}>
+              <Icon.Globe size={14} />
+            </Button>
+            {!loading && (
+              <Link href={user ? "/dashboard" : "/login"}>
+                <Button variant="primary" size="md">{user ? t.nav_dashboard : t.nav_login}</Button>
+              </Link>
+            )}
+          </Inline>
+        )}
+      </Topbar>
+
+      <MobileNavDrawer open={navOpen} onClose={() => setNavOpen(false)}>
+        <Link href="/docs" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
+          <Text as="span" variant="body" tone="strong">{t.nav_docs}</Text>
+        </Link>
+        <Text as="a" variant="body" tone="strong" style={{ cursor: "pointer" }}>{t.nav_examples}</Text>
+        <Text as="a" variant="body" tone="strong" style={{ cursor: "pointer" }}>{t.nav_github}</Text>
+        <Divider />
+        <Inline gap="sp2">
+          <Button variant="ghost" size="sm" onClick={toggleTheme}>
             {theme === "dark" ? <Icon.Sun size={14} /> : <Icon.Moon size={14} />}
           </Button>
-          <Button variant="ghost" size="xs" onClick={toggleLang}>
+          <Button variant="ghost" size="sm" onClick={toggleLang}>
             <Icon.Globe size={14} />
           </Button>
-          {!loading && (
-            <Link href={user ? "/dashboard" : "/login"}>
-              <Button variant="primary" size="md">{user ? t.nav_dashboard : t.nav_login}</Button>
-            </Link>
-          )}
         </Inline>
-      </Topbar>
+        {!loading && (
+          <Link href={user ? "/dashboard" : "/login"} onClick={() => setNavOpen(false)}>
+            <Button variant="primary" size="md" style={{ width: "100%" }}>{user ? t.nav_dashboard : t.nav_login}</Button>
+          </Link>
+        )}
+      </MobileNavDrawer>
 
       {/* ── Main grid ── */}
       <main style={{
@@ -84,10 +115,10 @@ export default function Home() {
         maxWidth: 1200,
         width: "100%",
         margin: "0 auto",
-        padding: `64px ${token.space.sp12} ${token.space.sp12}`,
+        padding: isMobile ? `32px 16px` : `64px ${token.space.sp12} ${token.space.sp12}`,
         display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: token.space.sp12,
+        gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+        gap: isMobile ? token.space.sp6 : token.space.sp12,
         alignItems: "start",
       }}>
 
@@ -103,7 +134,7 @@ export default function Home() {
             as="h1"
             variant="display"
             tone="strong"
-            style={{ margin: `${token.space.sp6} 0 0`, fontSize: token.font.size.fs56, fontWeight: token.font.weight.semibold }}
+            style={{ margin: `${token.space.sp6} 0 0`, fontSize: isMobile ? "clamp(32px, 9vw, 44px)" : token.font.size.fs56, fontWeight: token.font.weight.semibold, lineHeight: 1.15 }}
           >
             {t.hero_title_pre}<br />
             <Text as="span" variant="display" gradient style={{ fontSize: "inherit", fontWeight: "inherit" }}>
@@ -121,7 +152,7 @@ export default function Home() {
             {t.hero_body}
           </Text>
 
-          <Inline gap="sp2" style={{ marginTop: token.space.sp8 }}>
+          <Inline gap="sp2" style={{ marginTop: token.space.sp8, flexWrap: "wrap" }}>
             <Link href={user ? "/dashboard" : "/login"}>
               <Button variant="primary" size="lg" trailing={<Icon.Chevron size={12} dir="right" />}>
                 {user ? t.cta_dashboard : t.cta_start}
@@ -141,7 +172,7 @@ export default function Home() {
             style={{
               marginTop: token.space.sp10,
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
+              gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr",
               gap: 1,
               background: token.color.border,
               overflow: "hidden",
@@ -181,10 +212,10 @@ export default function Home() {
             backgroundImage: "radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 1px)",
             backgroundSize: "20px 20px",
             padding: 0,
-            height: 420,
+            height: isMobile ? 320 : 520,
             overflow: "hidden",
           }}>
-            <BlocklyPreview height={420} />
+            <BlocklyPreview height={isMobile ? 320 : 520} />
           </CardBody>
 
           {/* Status bar */}
@@ -210,7 +241,7 @@ export default function Home() {
         <section style={{
           gridColumn: "1 / -1",
           display: "grid",
-          gridTemplateColumns: "1fr 1fr 1fr",
+          gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr",
           gap: token.space.sp4,
           marginTop: token.space.sp3,
         }}>
@@ -258,9 +289,11 @@ export default function Home() {
       {/* ── Footer ── */}
       <Divider />
       <footer style={{
-        padding: `${token.space.sp4} ${token.space.sp12}`,
+        padding: isMobile ? "16px" : `${token.space.sp4} ${token.space.sp12}`,
         display: "flex",
         justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 8,
       }}>
         <Text variant="mono" tone="subtle" style={{ fontSize: token.font.size.fs11 }}>{t.footer_copy}</Text>
         <Text variant="mono" tone="subtle" style={{ fontSize: token.font.size.fs11 }}>{t.footer_mode}</Text>

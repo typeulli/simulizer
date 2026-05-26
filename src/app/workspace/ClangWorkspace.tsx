@@ -26,6 +26,7 @@ import { CppManagerModal } from "@/components/workspace-modals/CppManagerModal";
 import { ShareControl } from "@/components/share/ShareControl";
 import useLanguagePack from "@/hooks/useLanguagePack";
 import { useTheme } from "@/hooks/useTheme";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 
 type SaveStatus = "idle" | "saved" | "unsaved" | "saving" | "error";
 type CppMode = "code" | "share";
@@ -90,6 +91,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const router = useRouter();
     const [, , pack] = useLanguagePack();
     const { theme } = useTheme();
+    const isMobile = useIsMobile();
+    const [mobileTab, setMobileTab] = useState<"code" | "result">("code");
 
     const [code, setCode] = useState(INITIAL_CODE);
     const [editorKey, setEditorKey] = useState(0);
@@ -382,10 +385,18 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         };
     }, [handleWorkerMessage]);
 
+    useEffect(() => {
+        if (!isMobile) return;
+        setManagerOpen(false);
+        setRightTab("console");
+    }, [isMobile]);
+
     const handleRun = useCallback(async () => {
         if (runState === "loading" || runState === "compiling" || runState === "running") return;
         const worker = workerRef.current;
         if (!worker) return;
+
+        if (isMobile) setMobileTab("result");
 
         clearLog();
         setErrorMsg(null);
@@ -413,7 +424,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setErrorMsg(err instanceof Error ? err.message : String(err));
             setRunState("error");
         }
-    }, [code, runState, clearLog]);
+    }, [code, runState, clearLog, isMobile]);
 
     const handleBuild = useCallback(async () => {
         if (buildState === "building" || buildState === "downloading") return;
@@ -501,8 +512,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const runLabel =
         runState === "loading"   ? "런타임 로드 중…" :
         runState === "compiling" ? "컴파일 중…" :
-        runState === "running"   ? "실행 중…" :
-        "Run";
+        runState === "running"   ? pack.workspace.ui.run_button_running :
+        pack.workspace.ui.run_button;
     const buildLabel =
         buildState === "building"    ? "빌드 중…" :
         buildState === "downloading" ? "다운로드 중…" :
@@ -529,27 +540,36 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
             {/* ── Top bar ── */}
-            <header style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
+            <header style={isMobile
+                ? { display: "flex", alignItems: "center", gap: 4, padding: "0 12px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
+                : { display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
+            }>
                 {/* Brand + filename */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap" }}>
-                    <TopbarBrand />
-                    <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap", flex: isMobile ? 1 : undefined }}>
+                    <TopbarBrand compact={isMobile} />
+                    {!isMobile && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
                     <button
-                        onClick={isOwner ? handleOpenManager : undefined}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}
+                        onClick={isOwner && !isMobile ? handleOpenManager : undefined}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: isMobile ? "4px 4px" : "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner && !isMobile ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, minWidth: 0, flex: isMobile ? "1 1 0" : undefined, overflow: "hidden" }}
                     >
-                        <Icon.File size={12} />
-                        <input
-                            value={fileName}
-                            onChange={e => isOwner && setFileName(e.target.value)}
-                            onBlur={isOwner ? handleRenameFile : undefined}
-                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                            onClick={e => e.stopPropagation()}
-                            placeholder="untitled"
-                            readOnly={!isOwner}
-                            style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: isOwner ? "text" : "default" }}
-                        />
-                        {isOwner && <Icon.Chevron size={11} />}
+                        {!isMobile && <Icon.File size={12} />}
+                        {isMobile ? (
+                            <span style={{ minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {fileName || "untitled"}
+                            </span>
+                        ) : (
+                            <input
+                                value={fileName}
+                                onChange={e => isOwner && setFileName(e.target.value)}
+                                onBlur={isOwner ? handleRenameFile : undefined}
+                                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                onClick={e => e.stopPropagation()}
+                                placeholder="untitled"
+                                readOnly={!isOwner}
+                                style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: isOwner ? "text" : "default" }}
+                            />
+                        )}
+                        {isOwner && !isMobile && <Icon.Chevron size={11} />}
                     </button>
                     {isOwner === false && (
                         <span style={{
@@ -569,7 +589,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </div>
 
                 {/* Center — build progress (only when building) */}
-                <div style={{ display: "flex", justifyContent: "center" }}>
+                {!isMobile && <div style={{ display: "flex", justifyContent: "center" }}>
                     {buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done") && (
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, color: token.color.fgMuted, fontSize: token.font.size.fs12, minWidth: 340, fontFamily: token.font.family.mono }}>
                             {buildSpinning ? <Spinner size="sm" /> : <Icon.Check size={12} />}
@@ -580,10 +600,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             </span>
                         </div>
                     )}
-                </div>
+                </div>}
 
                 {/* Actions */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                    {!isMobile && <>
                     {isOwner && saveStatus === "unsaved" && (
                         <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>저장 안됨</span>
                     )}
@@ -651,6 +672,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     >
                         {buildLabel}
                     </Button>
+                    </>}
 
                     {/* Run */}
                     <button
@@ -677,12 +699,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             </header>
 
             {/* ── Main 2-column layout ── */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", flex: 1, minHeight: 0 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 340px", flex: 1, minHeight: 0 }}>
 
                 {/* Editor area */}
-                <main style={{ display: "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
+                <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
                     {/* Editor toolbar (tab strip) */}
-                    <div style={{ display: "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
+                    <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
                         <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
                             {editorTabs.map(tab => {
                                 const isActive = tab.uri === activeTabUri;
@@ -753,7 +775,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             mainUri={DEFAULT_MAIN_URI}
                             lspWsUrl={LSP_WS_URL}
                             onTextChanged={handleCodeChange}
-                            readOnly={isOwner === false}
+                            readOnly={isOwner === false || isMobile}
                             theme={theme}
                             onDiagnosticsChanged={handleDiagnosticsChanged}
                             onActiveModelChanged={handleActiveModelChanged}
@@ -830,9 +852,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </main>
 
                 {/* Right panel: console + infos */}
-                <aside style={{ display: "flex", flexDirection: "column", borderLeft: `1px solid ${token.color.border}`, background: token.color.bg, overflow: "hidden" }}>
-                    {/* Tabs */}
-                    <div style={{ display: "flex", padding: "8px 8px 0", gap: 2, borderBottom: `1px solid ${token.color.border}` }}>
+                <aside style={{ display: isMobile && mobileTab !== "result" ? "none" : "flex", flexDirection: "column", borderLeft: isMobile ? "none" : `1px solid ${token.color.border}`, background: token.color.bg, overflow: "hidden" }}>
+                    {/* Tabs (hidden on mobile — bottom tab bar handles it) */}
+                    <div style={{ display: isMobile ? "none" : "flex", padding: "8px 8px 0", gap: 2, borderBottom: `1px solid ${token.color.border}` }}>
                         <button onClick={() => setRightTab("console")}
                             style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "console" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "console" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
                         >
@@ -942,6 +964,47 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </aside>
             </div>
 
+            {/* Mobile bottom tab bar */}
+            {isMobile && (
+                <div style={{
+                    display: "flex",
+                    borderTop: `1px solid ${token.color.border}`,
+                    background: token.color.bg,
+                    flexShrink: 0,
+                }}>
+                    {([
+                        { id: "code" as const, icon: <Icon.File size={14} />, label: "Code" },
+                        { id: "result" as const, icon: <Icon.Terminal size={14} />, label: pack.workspace.ui.result_tab },
+                    ]).map(({ id, icon, label }) => {
+                        const active = mobileTab === id;
+                        return (
+                            <button
+                                key={id}
+                                onClick={() => setMobileTab(id)}
+                                style={{
+                                    flex: 1,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: 6,
+                                    padding: "12px 8px",
+                                    background: "none",
+                                    border: "none",
+                                    borderTop: `2px solid ${active ? token.color.accent : "transparent"}`,
+                                    color: active ? token.color.accent : token.color.fgMuted,
+                                    fontSize: token.font.size.fs12,
+                                    fontWeight: active ? 600 : 500,
+                                    cursor: "pointer",
+                                }}
+                            >
+                                {icon}
+                                <span>{label}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+
             {/* Error banner */}
             {errorMsg && (
                 <div style={{
@@ -989,7 +1052,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </div>
             )}
 
-            <CppManagerModal
+            {!isMobile && <CppManagerModal
                 open={managerOpen}
                 mode={managerMode}
                 code={code}
@@ -1005,7 +1068,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onModeChange={setManagerMode}
                 onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
                 onDownload={handleDownloadCpp}
-            />
+            />}
         </div>
     );
 };

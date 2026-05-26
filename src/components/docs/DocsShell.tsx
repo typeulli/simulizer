@@ -15,6 +15,9 @@ import { Text } from "@/components/atoms/Text";
 import { Divider } from "@/components/atoms/Divider";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
+import { Inline } from "@/components/atoms/layout/Inline";
+import { MobileNavDrawer, MobileNavToggle } from "@/components/organisms/MobileNavDrawer";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { token } from "@/components/tokens";
 import { getDocsNav, docsUi } from "@/lib/docs-nav";
 import type { TocItem } from "@/components/docs/toc";
@@ -121,6 +124,8 @@ export function DocsShell({
 }) {
     const { theme, toggleTheme } = useTheme();
     const [lang, , pack] = useLanguagePack();
+    const isMobile = useIsMobile();
+    const [navOpen, setNavOpen] = useState(false);
 
     // Keep the server-readable cookie in sync with the client language so
     // route-level locale resolution matches what the user selected.
@@ -153,7 +158,7 @@ export function DocsShell({
             <Topbar
                 style={{
                     height: "auto",
-                    padding: `18px ${token.space.sp10}`,
+                    padding: isMobile ? "12px 16px" : `18px ${token.space.sp10}`,
                     justifyContent: "space-between",
                     position: "sticky",
                     top: 0,
@@ -183,34 +188,91 @@ export function DocsShell({
                     </span>
                 </Link>
 
-                <span style={{ display: "inline-flex", alignItems: "center", gap: token.space.sp6 }}>
-                    <Link href="/" style={{ textDecoration: "none" }}>
-                        <Text variant="body" tone="muted" style={{ cursor: "pointer" }}>
-                            {pack.topbar.home}
-                        </Text>
-                    </Link>
-                    <Divider orientation="vertical" style={{ height: 16 }} />
-                    <Button variant="ghost" size="xs" onClick={toggleTheme}>
+                {isMobile ? (
+                    <MobileNavToggle onClick={() => setNavOpen(true)} />
+                ) : (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: token.space.sp6 }}>
+                        <Link href="/" style={{ textDecoration: "none" }}>
+                            <Text variant="body" tone="muted" style={{ cursor: "pointer" }}>
+                                {pack.topbar.home}
+                            </Text>
+                        </Link>
+                        <Divider orientation="vertical" style={{ height: 16 }} />
+                        <Button variant="ghost" size="xs" onClick={toggleTheme}>
+                            {theme === "dark" ? <Icon.Sun size={14} /> : <Icon.Moon size={14} />}
+                        </Button>
+                        <Button variant="ghost" size="xs" onClick={toggleLang}>
+                            <Icon.Globe size={14} />
+                        </Button>
+                    </span>
+                )}
+            </Topbar>
+
+            <MobileNavDrawer open={navOpen} onClose={() => setNavOpen(false)}>
+                <Link href="/" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
+                    <Text as="span" variant="body" tone="strong">{pack.topbar.home}</Text>
+                </Link>
+                <Divider />
+                <nav>
+                    {nav.map((group) => (
+                        <div key={group.title} style={{ marginBottom: token.space.sp5 }}>
+                            <span style={groupLabel}>{group.title}</span>
+                            {group.items.map((it) => {
+                                const active = it.slug === activeSlug;
+                                return (
+                                    <Link
+                                        key={it.slug || "overview"}
+                                        href={hrefFor(it.slug)}
+                                        onClick={() => setNavOpen(false)}
+                                        style={{ textDecoration: "none", display: "block" }}
+                                    >
+                                        <span
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                minHeight: 38,
+                                                padding: `${token.space.sp2} ${token.space.sp3}`,
+                                                borderRadius: token.radius.md,
+                                                fontSize: token.font.size.fs14,
+                                                lineHeight: 1.5,
+                                                color: active ? token.color.accent : token.color.fgMuted,
+                                                background: active ? token.color.accentSoft : "transparent",
+                                                fontWeight: active
+                                                    ? token.font.weight.medium
+                                                    : token.font.weight.regular,
+                                            }}
+                                        >
+                                            {it.title}
+                                        </span>
+                                    </Link>
+                                );
+                            })}
+                        </div>
+                    ))}
+                </nav>
+                <Divider />
+                <Inline gap="sp2">
+                    <Button variant="ghost" size="sm" onClick={toggleTheme}>
                         {theme === "dark" ? <Icon.Sun size={14} /> : <Icon.Moon size={14} />}
                     </Button>
-                    <Button variant="ghost" size="xs" onClick={toggleLang}>
+                    <Button variant="ghost" size="sm" onClick={toggleLang}>
                         <Icon.Globe size={14} />
                     </Button>
-                </span>
-            </Topbar>
+                </Inline>
+            </MobileNavDrawer>
 
             <div
                 style={{
                     flex: 1,
                     width: "100%",
                     display: "grid",
-                    gridTemplateColumns: "260px minmax(0, 1fr) 240px",
-                    gap: token.space.sp10,
-                    padding: `${token.space.sp10} ${token.space.sp10} ${token.space.sp16}`,
+                    gridTemplateColumns: isMobile ? "1fr" : "260px minmax(0, 1fr) 240px",
+                    gap: isMobile ? token.space.sp4 : token.space.sp10,
+                    padding: isMobile ? "16px" : `${token.space.sp10} ${token.space.sp10} ${token.space.sp16}`,
                     alignItems: "start",
                 }}
             >
-                <nav
+                {!isMobile && <nav
                     style={{
                         position: "sticky",
                         top: TOP_OFFSET,
@@ -253,11 +315,13 @@ export function DocsShell({
                             })}
                         </div>
                     ))}
-                </nav>
+                </nav>}
 
                 <main style={{ minWidth: 0 }}>{children}</main>
 
-                <OnThisPage toc={toc} label={docsUi("onThisPage", uiLocale)} />
+                {!isMobile && (
+                    <OnThisPage toc={toc} label={docsUi("onThisPage", uiLocale)} />
+                )}
             </div>
         </div>
     );

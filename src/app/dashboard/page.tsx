@@ -420,7 +420,7 @@ export default function DashboardPage() {
                     <span style={{ fontWeight: 700, fontSize: token.font.size.fs15, letterSpacing: "-0.01em" }}>Simulizer</span>
                 </div>
 
-                <span style={{ fontSize: token.font.size.fs13, fontWeight: 600, color: token.color.fgMuted }}>
+                <span className="dashboard-header-title" style={{ fontSize: token.font.size.fs13, fontWeight: 600, color: token.color.fgMuted }}>
                     {t.header_title}
                 </span>
 
@@ -526,7 +526,7 @@ export default function DashboardPage() {
                         </div>
                     </div>
                 ) : (
-                    <div style={{
+                    <div className="dashboard-grid" style={{
                         display: "grid",
                         gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
                         gap: token.space.sp4,

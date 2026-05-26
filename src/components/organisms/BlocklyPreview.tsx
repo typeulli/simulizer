@@ -145,7 +145,8 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
             document.head.appendChild(s);
         }
 
-        const ws = Blockly.inject(divRef.current, {
+        const container = divRef.current;
+        const ws = Blockly.inject(container, {
             readOnly: true,
             scrollbars: false,
             zoom: { controls: false, wheel: false, startScale: 0.85 },
@@ -156,12 +157,48 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
 
         Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(PREVIEW_XML), ws);
 
-        // zoomToFit after layout is complete
-        requestAnimationFrame(() => {
-            ws.zoomToFit();
-        });
+        // Custom fit-and-center: compute scale from block bounds, then offset
+        // the canvas so blocks sit at the viewport center. Re-runs on container resize.
+        let cancelled = false;
+        const PADDING = 24;
+        const fitAndCenter = () => {
+            if (cancelled) return;
+            const rect = container.getBoundingClientRect();
+            if (rect.width < 2 || rect.height < 2) return;
+            Blockly.svgResize(ws);
+            const metrics = ws.getMetrics();
+            const vw = metrics.viewWidth;
+            const vh = metrics.viewHeight;
+            if (vw < 2 || vh < 2) return;
+            const blockBox = ws.getBlocksBoundingBox();
+            const bw = blockBox.right - blockBox.left;
+            const bh = blockBox.bottom - blockBox.top;
+            if (bw <= 0 || bh <= 0) return;
+            const scaleX = (vw - PADDING * 2) / bw;
+            const scaleY = (vh - PADDING * 2) / bh;
+            const scale = Math.max(0.3, Math.min(scaleX, scaleY, 2.0));
+            ws.setScale(scale);
+            ws.scrollCenter();
+        };
+        const tryFit = () => {
+            if (cancelled) return;
+            const rect = container.getBoundingClientRect();
+            if (rect.width < 2 || rect.height < 2) {
+                requestAnimationFrame(tryFit);
+                return;
+            }
+            fitAndCenter();
+        };
+        requestAnimationFrame(tryFit);
 
-        return () => ws.dispose();
+        const ro = new ResizeObserver(() => fitAndCenter());
+        ro.observe(container);
+
+        return () => {
+            cancelled = true;
+            ro.disconnect();
+            ws.dispose();
+        };
     }, []);
 
     return (

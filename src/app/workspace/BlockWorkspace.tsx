@@ -41,6 +41,7 @@ import { LatexOcrModal } from "@/components/workspace-modals/LatexOcrModal";
 
 import { useConsolePanel } from "@/components/console";
 import useLanguagePack from "@/hooks/useLanguagePack";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import langpack from "@/lang/lang";
 import { xmlF64Blocks } from "@/utils/blockly/f64";
 import { xmlFlowBlocks, registerFoldRegionBlock } from "@/utils/blockly/flow";
@@ -816,6 +817,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { theme } = useTheme();
+    const isMobile = useIsMobile();
 
     const [runState, setRunState]           = useState<RunState>("idle");
     const [result, setResult]               = useState<string | null>(null);
@@ -1351,21 +1353,23 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const cssVar = (v: string) => cs.getPropertyValue(v).trim();
 
         const ws = Blockly.inject(blocklyDivRef.current, {
-            toolbox:  isOwner ? buildBaseToolboxXml(pack) : undefined,
+            toolbox:  isOwner && !isMobile ? buildBaseToolboxXml(pack) : undefined,
             grid:     { spacing: 20, length: 3, colour: cssVar("--grid-dot"), snap: true },
-            zoom:     { controls: true, wheel: true, startScale: 0.9 },
-            trashcan: isOwner,
+            zoom:     { controls: true, wheel: true, startScale: isMobile ? 0.7 : 0.9 },
+            trashcan: isOwner && !isMobile,
             theme:    buildSimulizerTheme("simphy"),
             renderer: "zelos",
-            readOnly: !isOwner,
+            readOnly: !isOwner || isMobile,
             move:     { scrollbars: true, drag: true, wheel: true },
         });
 
         workspaceRef.current = ws;
-        ws.registerButtonCallback("OPEN_FUNC_MGR",   () => setShowFuncMgr(true));
-        ws.registerButtonCallback("OPEN_BD_MGR",     () => { setBdMgrTab("2d"); setShowBdMgr(true); });
-        ws.registerButtonCallback("OPEN_CONST_MGR",  () => setShowConstMgr(true));
-        ws.registerButtonCallback("OPEN_LATEX_OCR",  () => { setOcrLatex(""); setOcrImageUrl(null); setShowLatexOcr(true); });
+        if (!isMobile) {
+            ws.registerButtonCallback("OPEN_FUNC_MGR",   () => setShowFuncMgr(true));
+            ws.registerButtonCallback("OPEN_BD_MGR",     () => { setBdMgrTab("2d"); setShowBdMgr(true); });
+            ws.registerButtonCallback("OPEN_CONST_MGR",  () => setShowConstMgr(true));
+            ws.registerButtonCallback("OPEN_LATEX_OCR",  () => { setOcrLatex(""); setOcrImageUrl(null); setShowLatexOcr(true); });
+        }
         
         const refreshInfo = () => {
             const mainBlock = ws.getAllBlocks(false).find(b => b.type === "wasm_func_main");
@@ -1645,10 +1649,19 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             document.removeEventListener("keydown", onMultiKeyDown, { capture: true });
             multiSelectedRef.current.clear();
             barObserver.disconnect();
+            // Preserve workspace content across re-inject (e.g. viewport crossing 768px breakpoint)
+            if (fileLoadCompletedRef.current && ws.getAllBlocks(false).length > 0) {
+                try {
+                    const snapshot = Blockly.serialization.workspaces.save(ws);
+                    pendingContentRef.current = JSON.stringify(snapshot);
+                } catch {
+                    // ignore; fall back to INITIAL_WORKSPACE_XML on next inject
+                }
+            }
             ws.dispose();
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOwner]);
+    }, [isOwner, isMobile]);
 
     // Re-apply Blockly theme when data-theme attribute changes (dark/light mode toggle)
     useEffect(() => {
@@ -1922,10 +1935,25 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         return { wat, mod };
     }, [addLog, pack]);
 
+    useEffect(() => {
+        if (!isMobile) return;
+        setShowBlocks(false);
+        setShowFuncMgr(false);
+        setShowConstMgr(false);
+        setShowBdMgr(false);
+        setShowLatexOcr(false);
+        setShowChatPopover(false);
+        setShowToolsMenu(false);
+        // Console pane has the most useful info (output + log) — pick that on mobile.
+        setRightTab("console");
+    }, [isMobile]);
+
     const handleRun = useCallback(async () => {
 
         const ws = workspaceRef.current;
         if (!ws) return;
+
+        if (isMobile) setMobileTab("result");
 
         // Commit edited fields (number inputs, etc.) and close dropdowns
         Blockly.hideChaff();
@@ -1963,7 +1991,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             }
             console.error(err);
         }
-    }, [addLog, pack, clearLog]);
+    }, [addLog, pack, clearLog, isMobile]);
 
     const handleStop = useCallback(() => {
         const oldWorker = wasmWorkerRef.current;
@@ -2432,6 +2460,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     // UI-only state (no business logic)
     const [rightTab, setRightTab]     = useState<"console" | "result" | "infos">("console");
+    const [mobileTab, setMobileTab]   = useState<"blocks" | "result">("blocks");
     const [infos, setInfos]           = useState<InfoEntry[]>([]);
     const hasError = infos.some(e => e.level === "error");
 
@@ -2515,25 +2544,34 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             )}
 
             {/* ── Topbar ── */}
-            <header style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }}>
+            <header style={isMobile
+                ? { display: "flex", alignItems: "center", gap: 4, padding: "0 12px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
+                : { display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
+            }>
                 {/* Brand + filename */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap" }}>
-                    <TopbarBrand />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap", flex: isMobile ? 1 : undefined }}>
+                    <TopbarBrand compact={isMobile} />
 
-                    <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>
-                    <button onClick={isOwner ? handleOpenBlocks : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}>
-                        <Icon.File size={12} />
-                        <input
-                            value={fileName}
-                            onChange={e => isOwner && setFileName(e.target.value)}
-                            onBlur={isOwner ? handleRenameFile : undefined}
-                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                            onClick={e => e.stopPropagation()}
-                            placeholder="untitled"
-                            readOnly={!isOwner}
-                            style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: isOwner ? "text" : "default" }}
-                        />
-                        {isOwner && <Icon.Chevron size={11} />}
+                    {!isMobile && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
+                    <button onClick={isOwner && !isMobile ? handleOpenBlocks : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: isMobile ? "4px 4px" : "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner && !isMobile ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, minWidth: 0, flex: isMobile ? "1 1 0" : undefined, overflow: "hidden" }}>
+                        {!isMobile && <Icon.File size={12} />}
+                        {isMobile ? (
+                            <span style={{ minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {fileName || "untitled"}
+                            </span>
+                        ) : (
+                            <input
+                                value={fileName}
+                                onChange={e => isOwner && setFileName(e.target.value)}
+                                onBlur={isOwner ? handleRenameFile : undefined}
+                                onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                onClick={e => e.stopPropagation()}
+                                placeholder="untitled"
+                                readOnly={!isOwner}
+                                style={{ background: "transparent", border: "none", outline: "none", color: "inherit", fontFamily: "inherit", fontSize: "inherit", width: 140, cursor: isOwner ? "text" : "default" }}
+                            />
+                        )}
+                        {isOwner && !isMobile && <Icon.Chevron size={11} />}
                     </button>
                     {isOwner === false && (
                         <span style={{
@@ -2553,11 +2591,12 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </div>
 
                 {/* Center — reserved (search bar removed) */}
-                <div />
+                {!isMobile && <div />}
 
 
                 {/* Actions */}
                 <div style={{ display:"flex", alignItems:"center", gap:8, justifyContent:"flex-end" }}>
+                    {!isMobile && <>
                     {/* Save button (owner only) */}
                     {isOwner && saveStatus === "unsaved" && (
                         <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>저장 안됨</span>
@@ -2716,6 +2755,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         )}
                     </div>
                     )}
+                    </>}
                     {/* Run */}
                     <button onClick={isRunning ? handleStop : handleRun}
                         disabled={!isRunning && hasError}
@@ -2728,13 +2768,13 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             </header>
 
             {/* ── Main 2-column layout ── */}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 340px", flex:1, minHeight:0 }}>
+            <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 340px", flex:1, minHeight:0 }}>
 
                 {/* Canvas: Blockly (toolbox 포함) */}
-                <main style={{ display:"flex", flexDirection:"column", minWidth:0, background:token.color.bgCanvas, overflow:"hidden" }}>
+                <main style={{ display: isMobile && mobileTab !== "blocks" ? "none" : "flex", flexDirection:"column", minWidth:0, background:token.color.bgCanvas, overflow:"hidden" }}>
 
                     {/* Canvas toolbar */}
-                    <div style={{ display:"flex", alignItems:"center", padding:"5px 10px", borderBottom:`1px solid ${token.color.border}`, background:token.color.bg, flexShrink:0 }}>
+                    <div style={{ display: isMobile ? "none" : "flex", alignItems:"center", padding:"5px 10px", borderBottom:`1px solid ${token.color.border}`, background:token.color.bg, flexShrink:0 }}>
                         {/* Left: block / WAT toggle */}
                         <div style={{ display:"flex", gap:2 }}>
                             {([
@@ -2934,9 +2974,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </main>
 
                 {/* Right panel: console + result */}
-                <aside style={{ display:"flex", flexDirection:"column", borderLeft:`1px solid ${token.color.border}`, background:token.color.bg, overflow:"hidden" }}>
-                    {/* Tabs */}
-                    <div style={{ display:"flex", padding:"8px 8px 0", gap:2, borderBottom:`1px solid ${token.color.border}` }}>
+                <aside style={{ display: isMobile && mobileTab !== "result" ? "none" : "flex", flexDirection:"column", borderLeft: isMobile ? "none" : `1px solid ${token.color.border}`, background:token.color.bg, overflow:"hidden" }}>
+                    {/* Tabs (hidden on mobile — bottom tab bar handles it) */}
+                    <div style={{ display: isMobile ? "none" : "flex", padding:"8px 8px 0", gap:2, borderBottom:`1px solid ${token.color.border}` }}>
                         <button onClick={() => setRightTab("console")}
                             style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"7px 12px", fontSize:token.font.size.fs12, border:"none", background:"none", cursor:"pointer", color:rightTab==="console" ? token.color.fg : token.color.fgMuted, fontWeight:500, borderRadius:`${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom:-1, borderBottom:rightTab==="console" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}>
                             <Icon.Terminal size={11}/> {pack.workspace.ui.console_tab}
@@ -3055,7 +3095,48 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </aside>
             </div>
 
-            <BlockManagerModal
+            {/* Mobile bottom tab bar */}
+            {isMobile && (
+                <div style={{
+                    display: "flex",
+                    borderTop: `1px solid ${token.color.border}`,
+                    background: token.color.bg,
+                    flexShrink: 0,
+                }}>
+                    {([
+                        { id: "blocks" as const, icon: <Icon.Layers size={14} />, label: pack.workspace.ui.canvas_tab_blocks },
+                        { id: "result" as const, icon: <Icon.Terminal size={14} />, label: pack.workspace.ui.result_tab },
+                    ]).map(({ id, icon, label }) => {
+                        const active = mobileTab === id;
+                        return (
+                            <button
+                                key={id}
+                                onClick={() => setMobileTab(id)}
+                                style={{
+                                    flex: 1,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: 6,
+                                    padding: "12px 8px",
+                                    background: "none",
+                                    border: "none",
+                                    borderTop: `2px solid ${active ? token.color.accent : "transparent"}`,
+                                    color: active ? token.color.accent : token.color.fgMuted,
+                                    fontSize: token.font.size.fs12,
+                                    fontWeight: active ? 600 : 500,
+                                    cursor: "pointer",
+                                }}
+                            >
+                                {icon}
+                                <span>{label}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+
+            {!isMobile && <BlockManagerModal
                 open={showBlocks}
                 mode={blockMode}
                 blockData={blockData}
@@ -3070,9 +3151,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onModeChange={setBlockMode}
                 onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
                 onResetWorkspace={() => { handleReset(); setShowBlocks(false); }}
-            />
+            />}
 
-            <LatexOcrModal
+            {!isMobile && <LatexOcrModal
                 open={showLatexOcr}
                 imageUrl={ocrImageUrl}
                 latex={ocrLatex}
@@ -3081,9 +3162,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onClose={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }}
                 onUpload={handleLatexOcr}
                 onApply={() => handleLatexOcrApply(ocrLatex)}
-            />
+            />}
 
-            <FunctionManagerModal
+            {!isMobile && <FunctionManagerModal
                 open={showFuncMgr}
                 onClose={() => setShowFuncMgr(false)}
                 pack={pack}
@@ -3099,16 +3180,16 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onAddParam={() => setNewFuncParams(prev => [...prev, { name: `p${prev.length}`, type: "i32" }])}
                 onAddFunc={handleAddFunc}
                 onRemoveFunc={handleRemoveFunc}
-            />
+            />}
 
-            <ConstManagerModal
+            {!isMobile && <ConstManagerModal
                 open={showConstMgr}
                 onClose={() => setShowConstMgr(false)}
                 onAdd={handleAddConsts}
                 pack={pack}
-            />
+            />}
 
-            <BoundaryManagerModal
+            {!isMobile && <BoundaryManagerModal
                 open={showBdMgr}
                 tab={bdMgrTab}
                 arrays2d={bd2Arrays}
@@ -3125,7 +3206,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onFile3d={handleBd3FileInput}
                 onRemove2d={handleRemoveBd2}
                 onRemove3d={handleRemoveBd3}
-            />
+            />}
 
             <ErrorModal
                 message={errorModal}
