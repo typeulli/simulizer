@@ -111,6 +111,105 @@ function setupSimstdProvider() {
 }
 setupSimstdProvider();
 
+// `#pragma region` / `#pragma endregion` folding. clangd's foldingRange
+// service only knows C++ syntax (braces, comments, #if/#endif). MSVC-style
+// region markers aren't part of that — we add a second FoldingRangeProvider
+// for `cpp` so Monaco merges its ranges with clangd's. Nested regions
+// supported via a stack; matching is case-insensitive.
+//
+// Registration is deferred to handleEditorStartDone (post-mount): touching
+// `monaco.languages.*` at module-load triggers monaco-vscode's language
+// services, and MonacoEditorReactComp's own start sequence then crashes
+// with "Services are already initialized".
+const REGION_START_RE = /^\s*#\s*pragma\s+region\b/i;
+const REGION_END_RE   = /^\s*#\s*pragma\s+endregion\b/i;
+
+let pragmaRegionFoldingRegistered = false;
+function setupPragmaRegionFolding() {
+    if (pragmaRegionFoldingRegistered) return;
+    try {
+        monaco.languages.registerFoldingRangeProvider("cpp", {
+            provideFoldingRanges(model) {
+                const ranges: monaco.languages.FoldingRange[] = [];
+                const stack: number[] = [];
+                const count = model.getLineCount();
+                for (let i = 1; i <= count; i++) {
+                    const line = model.getLineContent(i);
+                    if (REGION_START_RE.test(line)) {
+                        stack.push(i);
+                    } else if (REGION_END_RE.test(line)) {
+                        const start = stack.pop();
+                        if (start !== undefined && i > start) {
+                            ranges.push({
+                                start,
+                                end: i,
+                                kind: monaco.languages.FoldingRangeKind.Region,
+                            });
+                        }
+                    }
+                }
+                return ranges;
+            },
+        });
+        pragmaRegionFoldingRegistered = true;
+    } catch (e) {
+        console.warn("[CodeEditor] pragma region folding registration skipped:", e);
+    }
+}
+
+// Offer `region` / `endregion` as completions after `#pragma `. clangd's
+// own completion sees `#pragma X` as a free-form preprocessor directive
+// and doesn't suggest these by default, so we register a small Monaco-
+// level provider. Items are scoped to lines that already look like
+// `#pragma <partial>` so we don't pollute other contexts.
+let pragmaCompletionRegistered = false;
+function setupPragmaCompletion() {
+    if (pragmaCompletionRegistered) return;
+    try {
+        monaco.languages.registerCompletionItemProvider("cpp", {
+            triggerCharacters: [" "],
+            provideCompletionItems(model, position) {
+                const upToCursor = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
+                const m = /^\s*#\s*pragma\s+(\w*)$/.exec(upToCursor);
+                if (!m) return { suggestions: [] };
+                // Replace the partial word the user typed after `#pragma `
+                // so picking a suggestion overwrites `re` with `region`
+                // rather than appending.
+                const wordLen = m[1].length;
+                const range: monaco.IRange = {
+                    startLineNumber: position.lineNumber,
+                    endLineNumber:   position.lineNumber,
+                    startColumn:     position.column - wordLen,
+                    endColumn:       position.column,
+                };
+                return {
+                    suggestions: [
+                        {
+                            label:       "region",
+                            kind:        monaco.languages.CompletionItemKind.Snippet,
+                            insertText:  "region ${1:name}\n$0\n#pragma endregion",
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            detail:      "Foldable region",
+                            documentation: "Inserts a `#pragma region` / `#pragma endregion` pair.",
+                            range,
+                        },
+                        {
+                            label:      "endregion",
+                            kind:       monaco.languages.CompletionItemKind.Keyword,
+                            insertText: "endregion",
+                            detail:     "End of foldable region",
+                            range,
+                        },
+                    ],
+                };
+            },
+        });
+        pragmaCompletionRegistered = true;
+    } catch (e) {
+        console.warn("[CodeEditor] pragma completion registration skipped:", e);
+    }
+}
+
 export type EditorFile = {
     /** workspace-relative path like "main.cpp" or "src/util.hpp" */
     path: string;
@@ -142,6 +241,13 @@ type Props = {
     onDiagnosticsChanged?: (diagnostics: ClangDiagnostic[]) => void;
     onActiveModelChanged?: (uri: string) => void;
     onUnresolvedDefinition?: (uri: string) => void;
+    /**
+     * Stable namespace for persisting per-URI view state (fold ranges,
+     * cursor, scroll) to localStorage. Each viewer gets their own snapshot
+     * — owners and link-share viewers don't share fold state, and it
+     * doesn't pollute the bundle itself. Omit / null disables persistence.
+     */
+    viewStateKey?: string | null;
 };
 
 function severityToLevel(s: monaco.MarkerSeverity): ClangDiagnostic["severity"] {
@@ -162,6 +268,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     onDiagnosticsChanged,
     onActiveModelChanged,
     onUnresolvedDefinition,
+    viewStateKey,
 }, ref) {
     const colorTheme = theme === "dark" ? "Default Dark Modern" : "Default Light Modern";
 
@@ -218,6 +325,75 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     // changes. We never dispose the active model directly — we swap the editor
     // to another model first.
     const modelOwnedPathsRef = useRef<Set<string>>(new Set());
+    // Per-URI view state cache. Monaco's setModel doesn't preserve fold
+    // state, cursor, or scroll across model swaps; we save before swap and
+    // restore after so #pragma region folds (and the rest of the view
+    // state) survive tab switching.
+    const viewStatesRef = useRef<Map<string, monaco.editor.ICodeEditorViewState>>(new Map());
+    const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // localStorage namespace for this editor's view-state map. Set once
+    // viewStateKey lands (CodeEditor remounts when the bundle's fileId
+    // changes, so this stays stable for the life of the component).
+    const storageKey = viewStateKey ? `simulizer-viewstate-${viewStateKey}` : null;
+
+    // Drop view state for URIs that aren't in the bundle anymore. Otherwise
+    // localStorage gets polluted by stale entries from deleted/renamed
+    // files. Called whenever we serialize.
+    const collectPersistableViewStates = useCallback((): Record<string, monaco.editor.ICodeEditorViewState> => {
+        const out: Record<string, monaco.editor.ICodeEditorViewState> = {};
+        for (const [uri, state] of viewStatesRef.current) {
+            // Only workspace URIs — `simulizer:/` system headers are
+            // ephemeral and re-fetched per session, restoring their state
+            // is wasted bytes.
+            if (uri.startsWith(WORKSPACE_URI_PREFIX)) out[uri] = state;
+        }
+        return out;
+    }, []);
+
+    const persistViewStates = useCallback(() => {
+        if (!storageKey || typeof localStorage === "undefined") return;
+        try {
+            localStorage.setItem(storageKey, JSON.stringify(collectPersistableViewStates()));
+        } catch {
+            // QuotaExceededError or storage disabled — silently drop.
+        }
+    }, [storageKey, collectPersistableViewStates]);
+
+    const schedulePersist = useCallback(() => {
+        if (!storageKey) return;
+        if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = setTimeout(() => {
+            persistTimerRef.current = null;
+            persistViewStates();
+        }, 500);
+    }, [storageKey, persistViewStates]);
+
+    const captureCurrentViewState = useCallback(() => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        const current = editor.getModel();
+        if (!current) return;
+        const state = editor.saveViewState();
+        if (state) {
+            viewStatesRef.current.set(current.uri.toString(), state);
+            schedulePersist();
+        }
+    }, [schedulePersist]);
+
+    const swapModelTo = useCallback((model: monaco.editor.ITextModel) => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        const current = editor.getModel();
+        if (current === model) return;
+        if (current) {
+            const state = editor.saveViewState();
+            if (state) viewStatesRef.current.set(current.uri.toString(), state);
+        }
+        editor.setModel(model);
+        const restored = viewStatesRef.current.get(model.uri.toString());
+        if (restored) editor.restoreViewState(restored);
+        schedulePersist();
+    }, [schedulePersist]);
     const contentChangeDisposablesRef = useRef<Map<string, monaco.IDisposable>>(new Map());
 
     const ensureModel = useCallback((path: string, initialContent: string): monaco.editor.ITextModel => {
@@ -277,7 +453,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                 const target = monaco.editor.getModel(monaco.Uri.parse(activeUri))
                     ?? monaco.editor.getModel(monaco.Uri.parse(pathToUri(entryPath)));
                 if (target && target !== model) {
-                    editor.setModel(target);
+                    swapModelTo(target);
                 }
             }
             contentChangeDisposablesRef.current.get(path)?.dispose();
@@ -295,13 +471,14 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         const target = monaco.editor.getModel(monaco.Uri.parse(activeUri))
             ?? monaco.editor.getModel(monaco.Uri.parse(pathToUri(entryPath)));
         if (target && editor.getModel() !== target) {
-            editor.setModel(target);
+            swapModelTo(target);
         }
-    }, [activeUri, entryPath]);
+    }, [activeUri, entryPath, swapModelTo]);
 
     const markersDisposableRef = useRef<monaco.IDisposable | null>(null);
     const modelChangeDisposableRef = useRef<monaco.IDisposable | null>(null);
     const mouseDownDisposableRef = useRef<monaco.IDisposable | null>(null);
+    const captureDisposablesRef = useRef<monaco.IDisposable[]>([]);
     useEffect(() => () => {
         markersDisposableRef.current?.dispose();
         modelChangeDisposableRef.current?.dispose();
@@ -309,10 +486,36 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         markersDisposableRef.current = null;
         modelChangeDisposableRef.current = null;
         mouseDownDisposableRef.current = null;
+        for (const d of captureDisposablesRef.current) d.dispose();
+        captureDisposablesRef.current = [];
         for (const d of contentChangeDisposablesRef.current.values()) d.dispose();
         contentChangeDisposablesRef.current.clear();
+        if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
         editorRef.current = null;
     }, []);
+
+    // Flush view state to localStorage when the page is about to unload —
+    // catches Ctrl+R, tab close, navigation. The debounced timer wouldn't
+    // get a chance to fire otherwise. Also flush on unmount (route change
+    // within the SPA).
+    useEffect(() => {
+        const onBeforeUnload = () => {
+            const editor = editorRef.current;
+            if (editor) {
+                const current = editor.getModel();
+                if (current) {
+                    const state = editor.saveViewState();
+                    if (state) viewStatesRef.current.set(current.uri.toString(), state);
+                }
+            }
+            persistViewStates();
+        };
+        window.addEventListener("beforeunload", onBeforeUnload);
+        return () => {
+            window.removeEventListener("beforeunload", onBeforeUnload);
+            onBeforeUnload(); // unmount path
+        };
+    }, [persistViewStates]);
 
     // Modifier+click gate (see CodeEditor history): hover and click both
     // invoke provideDefinition; we only want navigation on click.
@@ -327,7 +530,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             const editor = editorRef.current;
             if (!editor) return;
             const model = monaco.editor.getModel(monaco.Uri.parse(uri));
-            if (model && editor.getModel() !== model) editor.setModel(model);
+            if (model && editor.getModel() !== model) swapModelTo(model);
         },
         closeModel: (uri: string) => {
             const model = monaco.editor.getModel(monaco.Uri.parse(uri));
@@ -336,8 +539,12 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             if (editor && editor.getModel()?.uri.toString() === uri) {
                 const entryUri = entryUriRef.current;
                 const fallback = monaco.editor.getModel(monaco.Uri.parse(entryUri));
-                if (fallback) editor.setModel(fallback);
+                if (fallback) swapModelTo(fallback);
             }
+            // Drop any saved view state for the closed URI — system header
+            // tabs can come back later but with fresh state, which matches
+            // VS Code's behavior for ephemeral previews.
+            viewStatesRef.current.delete(uri);
             // Only dispose models we don't own (system headers etc.). Workspace
             // models are disposed by the files-sync effect.
             const path = uriToPath(uri);
@@ -350,13 +557,13 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             if (!editor) return;
             const model = monaco.editor.getModel(monaco.Uri.parse(uri));
             if (!model) return;
-            if (editor.getModel() !== model) editor.setModel(model);
+            if (editor.getModel() !== model) swapModelTo(model);
             editor.revealLineInCenter(line);
             editor.setPosition({ lineNumber: line, column });
             editor.focus();
         },
         focus: () => { editorRef.current?.focus(); },
-    }), []);
+    }), [swapModelTo]);
 
     const initialFilesRef = useRef(files);
     const initialActiveUriRef = useRef(activeUri);
@@ -367,6 +574,29 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         const editor = app.getEditor() ?? null;
         editorRef.current = editor;
         if (!editor) return;
+
+        // Safe to touch monaco.languages now — workbench services are up.
+        setupPragmaRegionFolding();
+        setupPragmaCompletion();
+
+        // Rehydrate view-state map from localStorage before any swap so the
+        // first restoreViewState in swapModelTo / handleEditorStartDone hits
+        // the cached fold + cursor state from the previous session.
+        if (storageKey && typeof localStorage !== "undefined") {
+            try {
+                const raw = localStorage.getItem(storageKey);
+                if (raw) {
+                    const parsed = JSON.parse(raw) as Record<string, monaco.editor.ICodeEditorViewState>;
+                    for (const [uri, state] of Object.entries(parsed)) {
+                        if (uri.startsWith(WORKSPACE_URI_PREFIX) && state) {
+                            viewStatesRef.current.set(uri, state);
+                        }
+                    }
+                }
+            } catch {
+                // Corrupt JSON or storage disabled — start fresh.
+            }
+        }
 
         // Bootstrap models for every bundle file so clangd's didOpen pipeline
         // sees the whole project at startup. The active file already has a
@@ -393,12 +623,21 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             }
         }
 
+        // The editor's INITIAL model was set by MonacoEditorReactComp before
+        // we rehydrated; if there's cached state for that URI, apply it now
+        // so the first paint already shows the previous fold/cursor.
+        const initialCurrent = editor.getModel();
+        if (initialCurrent) {
+            const cached = viewStatesRef.current.get(initialCurrent.uri.toString());
+            if (cached) editor.restoreViewState(cached);
+        }
+
         // Make sure the active model matches the prop (may differ from the
         // editor's auto-created initial model if `activeUri !== entryPath`).
         const wanted = initialActiveUriRef.current;
         const activeModel = monaco.editor.getModel(monaco.Uri.parse(wanted));
         if (activeModel && editor.getModel() !== activeModel) {
-            editor.setModel(activeModel);
+            swapModelTo(activeModel);
         }
         const currentUri = editor.getModel()?.uri.toString();
         syncReadOnlyForModel(currentUri);
@@ -411,6 +650,18 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             syncReadOnlyForModel(newUri);
             onActiveModelChangedRef.current?.(newUri);
         });
+
+        // Capture view state on user interaction so reload-time persistence
+        // sees the latest fold/cursor/scroll. Three signals cover the bases:
+        //   - cursor moves (typing, clicks)
+        //   - scroll changes (also fires when folding adjusts viewport)
+        //   - decorations change (catches gutter fold toggles that don't
+        //     move the cursor)
+        const cursorDisp  = editor.onDidChangeCursorPosition(captureCurrentViewState);
+        const scrollDisp  = editor.onDidScrollChange(captureCurrentViewState);
+        const decorDisp   = editor.onDidChangeHiddenAreas?.(captureCurrentViewState);
+        captureDisposablesRef.current.push(cursorDisp, scrollDisp);
+        if (decorDisp) captureDisposablesRef.current.push(decorDisp);
 
         mouseDownDisposableRef.current?.dispose();
         mouseDownDisposableRef.current = editor.onMouseDown((e) => {
@@ -447,7 +698,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         emit();
         markersDisposableRef.current?.dispose();
         markersDisposableRef.current = monaco.editor.onDidChangeMarkers(() => emit());
-    }, [ensureModel, syncReadOnlyForModel]);
+    }, [ensureModel, syncReadOnlyForModel, swapModelTo, captureCurrentViewState, storageKey]);
 
     // The seed for monaco-editor-react has to point at a workspace file (the
     // simulizer:/... scheme can't be used as a primary resource). Pick the
@@ -560,7 +811,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                                         return result;
                                     }
                                 }
-                                editor.setModel(model);
+                                swapModelTo(model);
                                 const line = range.start.line + 1;
                                 const col = range.start.character + 1;
                                 editor.revealLineInCenter(line);

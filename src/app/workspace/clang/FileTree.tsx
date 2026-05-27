@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/atoms/Icons";
 import { token } from "@/components/tokens";
@@ -29,8 +29,14 @@ const C = {
     menuBorder:      () => vscv("menu-border",                         token.color.border),
     menuSelectionBg: () => vscv("menu-selectionBackground",            token.color.bgSubtle),
     menuSelectionFg: () => vscv("menu-selectionForeground",            token.color.fg),
+    menuSeparator:   () => vscv("menu-separatorBackground",            token.color.border),
     focusBorder:     () => vscv("focusBorder",                         token.color.accent),
+    inputBg:         () => vscv("input-background",                    token.color.bg),
+    inputFg:         () => vscv("input-foreground",                    token.color.fg),
+    inputBorder:     () => vscv("input-border",                        token.color.border),
     danger:          () => vscv("errorForeground",                     token.color.danger),
+    validationErrBg: () => vscv("inputValidation-errorBackground",     token.color.dangerSoft),
+    validationErrBd: () => vscv("inputValidation-errorBorder",         token.color.danger),
 };
 
 type ContextMenuTarget =
@@ -44,30 +50,45 @@ type ContextMenuState = {
     y: number;
 } | null;
 
+// VS Code-style inline edit state. `rename` swaps the row's name span with
+// an input; `create-*` injects a "ghost" row at the top of the target
+// folder's child list (and auto-expands ancestors so it's visible).
+type EditingState =
+    | { mode: "rename"; path: string; initialValue: string; isFolder: boolean }
+    | { mode: "create-file"; parentPath: string }
+    | { mode: "create-folder"; parentPath: string };
+
 export type FileTreeProps = {
     tree: TreeNode[];
     entryPath: string;
     activePath: string;
     readOnly?: boolean;
     onOpenFile: (path: string) => void;
-    onCreateFile: (parentPath: string) => void;
-    onCreateFolder: (parentPath: string) => void;
+    /** Returns an error string to keep the inline input open, or null on success. */
+    onCreateFile: (parentPath: string, name: string) => string | null;
+    onCreateFolder: (parentPath: string, name: string) => string | null;
     onUploadFile: (parentPath: string) => void;
     onDownloadFile: (path: string) => void;
-    onRename: (path: string) => void;
+    onRename: (path: string, newName: string) => string | null;
     onDelete: (path: string) => void;
     onSetAsEntry: (path: string) => void;
-    /** Move `srcPath` into the folder at `destDir` ("" = project root). */
     onMove: (srcPath: string, destDir: string) => void;
 };
 
 const DRAG_MIME = "application/x-simulizer-path";
 
-// VS Code tree row metrics
-const ROW_HEIGHT      = 22;     // px, matches workbench listRow.height
-const INDENT_WIDTH    = 8;      // px per nesting level
-const ROOT_PADDING    = 8;      // px at depth=0
-const TWISTIE_WIDTH   = 16;     // px chevron column; file rows leave it empty
+// macOS Finder + VS Code on macOS use Enter to rename files; Windows/Linux
+// use F2. Detect at module load to match the host platform.
+const IS_MAC =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || "");
+const RENAME_SHORTCUT_KEY   = IS_MAC ? "Enter" : "F2";
+const RENAME_SHORTCUT_LABEL = IS_MAC ? "Enter" : "F2";
+
+const ROW_HEIGHT      = 22;
+const INDENT_WIDTH    = 8;
+const ROOT_PADDING    = 8;
+const TWISTIE_WIDTH   = 16;
 
 function FolderIcon({ open, size = 14 }: { open: boolean; size?: number }) {
     return open ? (
@@ -89,9 +110,6 @@ function StarIcon({ size = 11 }: { size?: number }) {
     );
 }
 
-// Vertical indent guides — one absolutely-positioned 1px line per ancestor
-// level, sitting at the column where its chevron would be. Mirrors how the
-// workbench renders `tree-indentGuidesStroke`.
 function IndentGuides({ depth }: { depth: number }) {
     if (depth === 0) return null;
     const guides: React.ReactNode[] = [];
@@ -114,6 +132,89 @@ function IndentGuides({ depth }: { depth: number }) {
         );
     }
     return <>{guides}</>;
+}
+
+/**
+ * Inline edit input shown either in place of a row's name (rename) or as a
+ * ghost row (create). VS Code semantics:
+ *   - Enter commits; if the parent rejects (returns an error), the input
+ *     stays open with the error tooltip below it.
+ *   - Escape cancels.
+ *   - Blur silently cancels — clicking elsewhere shouldn't surface a
+ *     validation message for an attempt the user already abandoned.
+ *   - Empty value is treated as cancel.
+ * For renames, the basename (text before the last `.`) is pre-selected so
+ * pressing a key replaces the name without losing the extension.
+ */
+type InlineEditInputProps = {
+    initialValue: string;
+    error: string | null;
+    onCommit: (value: string) => void;
+    onCancel: () => void;
+};
+
+function InlineEditInput({ initialValue, error, onCommit, onCancel }: InlineEditInputProps) {
+    const ref = useRef<HTMLInputElement | null>(null);
+    useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        el.focus();
+        const v = el.value;
+        const dot = v.lastIndexOf(".");
+        if (dot > 0) el.setSelectionRange(0, dot);
+        else el.select();
+    }, []);
+    return (
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+            <input
+                ref={ref}
+                defaultValue={initialValue}
+                onClick={e => e.stopPropagation()}
+                onKeyDown={e => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        onCommit(e.currentTarget.value);
+                    } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        onCancel();
+                    }
+                }}
+                onBlur={() => onCancel()}
+                style={{
+                    width: "100%",
+                    height: 18,
+                    padding: "0 4px",
+                    background: C.inputBg(),
+                    color: C.inputFg(),
+                    border: `1px solid ${error ? C.validationErrBd() : C.focusBorder()}`,
+                    outline: "none",
+                    fontFamily: "inherit",
+                    fontSize: token.font.size.fs12,
+                    boxSizing: "border-box",
+                }}
+            />
+            {error && (
+                <div style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: 0,
+                    right: 0,
+                    marginTop: 1,
+                    padding: "2px 6px",
+                    background: C.validationErrBg(),
+                    border: `1px solid ${C.validationErrBd()}`,
+                    color: C.menuFg(),
+                    fontSize: token.font.size.fs10,
+                    lineHeight: 1.4,
+                    zIndex: 60,
+                    whiteSpace: "normal",
+                }}>
+                    {error}
+                </div>
+            )}
+        </div>
+    );
 }
 
 const FileTree: React.FC<FileTreeProps> = ({
@@ -141,26 +242,103 @@ const FileTree: React.FC<FileTreeProps> = ({
         return open;
     });
     const [menu, setMenu] = useState<ContextMenuState>(null);
-    // dropTarget=""  means the root drop zone; otherwise it's a folder path.
-    // null means no active drag — the prop change toggles row highlighting.
     const [dropTarget, setDropTarget] = useState<string | null>(null);
-    // The HTML5 DnD spec hides `dataTransfer.getData()` until the `drop`
-    // event for security reasons — `dragover` only sees the type list. Since
-    // every drag happens inside this React tree, we track the source path
-    // out-of-band so `dragover` can compute drop validity without reading
-    // the payload.
     const draggingPathRef = useRef<string | null>(null);
+    const [editing, setEditing] = useState<EditingState | null>(null);
+    const [editError, setEditError] = useState<string | null>(null);
+    const menuRef = useRef<HTMLDivElement | null>(null);
 
     const toggleFolder = useCallback((path: string) => {
         setOpenFolders(prev => ({ ...prev, [path]: !prev[path] }));
     }, []);
 
+    const closeMenu = useCallback(() => setMenu(null), []);
+
+    const openMenu = useCallback((e: React.MouseEvent, target: ContextMenuTarget) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (readOnly) return;
+        setMenu({ target, x: e.clientX, y: e.clientY });
+    }, [readOnly]);
+
+    // Close the menu on outside interaction. We listen on `mousedown` rather
+    // than `click` because right-click only fires `mousedown` + `contextmenu`
+    // (no `click`) — using mousedown means the close happens *before* the
+    // next `contextmenu` opens its own menu, so right-clicking another row
+    // while a menu is already open correctly opens that row's menu instead
+    // of the original. `Escape` provides a keyboard escape hatch.
+    useEffect(() => {
+        if (!menu) return;
+        const onMouseDown = (e: MouseEvent) => {
+            if (menuRef.current?.contains(e.target as Node)) return;
+            setMenu(null);
+        };
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setMenu(null);
+        };
+        document.addEventListener("mousedown", onMouseDown, true);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("mousedown", onMouseDown, true);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [menu]);
+
+    const expandAncestors = useCallback((path: string) => {
+        if (!path) return;
+        const segs = path.split("/");
+        const updates: Record<string, boolean> = {};
+        for (let i = 0; i < segs.length; i++) {
+            updates[segs.slice(0, i + 1).join("/")] = true;
+        }
+        setOpenFolders(prev => ({ ...prev, ...updates }));
+    }, []);
+
+    const beginRename = useCallback((path: string, isFolder: boolean) => {
+        const name = path.split("/").pop() ?? "";
+        setEditError(null);
+        setEditing({ mode: "rename", path, initialValue: name, isFolder });
+        // Make sure the row is visible — expand all ancestors.
+        const slash = path.lastIndexOf("/");
+        if (slash >= 0) expandAncestors(path.slice(0, slash));
+    }, [expandAncestors]);
+
+    const beginCreate = useCallback((parentPath: string, kind: "file" | "folder") => {
+        setEditError(null);
+        setEditing({
+            mode: kind === "file" ? "create-file" : "create-folder",
+            parentPath,
+        });
+        expandAncestors(parentPath);
+    }, [expandAncestors]);
+
+    const cancelEdit = useCallback(() => {
+        setEditing(null);
+        setEditError(null);
+    }, []);
+
+    // Enter pathway: try to commit; on error keep the input open with the
+    // message. Empty trims to cancel so users can type-then-Enter to bail.
+    const commitEdit = useCallback((rawName: string) => {
+        if (!editing) return;
+        const name = rawName.trim();
+        if (!name) { cancelEdit(); return; }
+        let err: string | null = null;
+        if (editing.mode === "rename") {
+            if (name === editing.initialValue) { cancelEdit(); return; }
+            err = onRename(editing.path, name);
+        } else if (editing.mode === "create-file") {
+            err = onCreateFile(editing.parentPath, name);
+        } else {
+            err = onCreateFolder(editing.parentPath, name);
+        }
+        if (err) setEditError(err);
+        else cancelEdit();
+    }, [editing, onCreateFile, onCreateFolder, onRename, cancelEdit]);
+
     const handleRowDragStart = useCallback((e: React.DragEvent, srcPath: string) => {
         if (readOnly) { e.preventDefault(); return; }
         draggingPathRef.current = srcPath;
-        // Still populate the dataTransfer so the browser shows the drag image
-        // and external observers see *something*; the actual move dispatch
-        // reads from the ref.
         e.dataTransfer.setData(DRAG_MIME, srcPath);
         e.dataTransfer.setData("text/plain", srcPath);
         e.dataTransfer.effectAllowed = "move";
@@ -170,8 +348,8 @@ const FileTree: React.FC<FileTreeProps> = ({
         const srcPath = draggingPathRef.current;
         if (!srcPath) return null;
         const srcParent = srcPath.includes("/") ? srcPath.slice(0, srcPath.lastIndexOf("/")) : "";
-        if (srcParent === destDir) return null;                              // same parent → no-op
-        if (destDir === srcPath || destDir.startsWith(srcPath + "/")) return null; // cycle
+        if (srcParent === destDir) return null;
+        if (destDir === srcPath || destDir.startsWith(srcPath + "/")) return null;
         return srcPath;
     }, []);
 
@@ -200,14 +378,32 @@ const FileTree: React.FC<FileTreeProps> = ({
         setDropTarget(null);
     }, []);
 
-    const closeMenu = useCallback(() => setMenu(null), []);
-
-    const openMenu = useCallback((e: React.MouseEvent, target: ContextMenuTarget) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (readOnly) return;
-        setMenu({ target, x: e.clientX, y: e.clientY });
-    }, [readOnly]);
+    // Rename / Delete shortcuts. Each row button stashes its path/kind in
+    // data-attributes so we can pick up the focused row from the keydown
+    // target without wiring per-button handlers. Editor-side F2 still
+    // triggers clangd's rename-symbol because that keydown never bubbles
+    // out of Monaco.
+    //
+    // The rename key is platform-dependent (Enter on macOS, F2 elsewhere).
+    // For Enter we MUST preventDefault — the row is a <button>, so Enter
+    // would otherwise fire its implicit click and toggle the folder /
+    // re-open the file before our rename takes effect.
+    const handleTreeKeyDown = useCallback((e: React.KeyboardEvent) => {
+        if (readOnly || editing) return;
+        const targetEl = e.target as HTMLElement | null;
+        const path = targetEl?.dataset?.path;
+        const kind = targetEl?.dataset?.kind;
+        if (!path || (kind !== "file" && kind !== "folder")) return;
+        if (e.key === RENAME_SHORTCUT_KEY) {
+            e.preventDefault();
+            e.stopPropagation();
+            beginRename(path, kind === "folder");
+        } else if (e.key === "Delete") {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete(path);
+        }
+    }, [readOnly, editing, beginRename, onDelete]);
 
     const rowBase: React.CSSProperties = {
         position: "relative",
@@ -228,28 +424,61 @@ const FileTree: React.FC<FileTreeProps> = ({
         color: C.sideBarFg(),
     };
 
+    const renderGhostRow = (depth: number, isFolder: boolean) => {
+        const indentPx = ROOT_PADDING + depth * INDENT_WIDTH;
+        return (
+            <div key="__ghost" style={{ ...rowBase, cursor: "default", overflow: "visible" }}>
+                <IndentGuides depth={depth} />
+                <span style={{ display: "inline-block", width: TWISTIE_WIDTH, marginLeft: indentPx }} />
+                <span style={{ display: "inline-flex", alignItems: "center", marginRight: 6, color: C.iconFg() }}>
+                    {isFolder ? <FolderIcon open={false} size={14} /> : <Icon.File size={14} />}
+                </span>
+                <InlineEditInput
+                    initialValue=""
+                    error={editError}
+                    onCommit={commitEdit}
+                    onCancel={cancelEdit}
+                />
+            </div>
+        );
+    };
+
     const renderNodes = (nodes: TreeNode[], depth: number, parentPath: string): React.ReactNode[] => {
-        return nodes.map(node => {
+        const result: React.ReactNode[] = [];
+
+        // Ghost row at the top of this level when creating in this parent.
+        if (
+            editing && (editing.mode === "create-file" || editing.mode === "create-folder")
+            && editing.parentPath === parentPath
+        ) {
+            result.push(renderGhostRow(depth, editing.mode === "create-folder"));
+        }
+
+        for (const node of nodes) {
             const path = parentPath ? `${parentPath}/${node.name}` : node.name;
             const indentPx = ROOT_PADDING + depth * INDENT_WIDTH;
+            const isRenamingThis = editing?.mode === "rename" && editing.path === path;
+
             if (node.type === "folder") {
                 const isOpen = !!openFolders[path];
                 const isDropHere = dropTarget === path;
-                return (
+                result.push(
                     <React.Fragment key={path}>
                         <button
                             type="button"
-                            draggable={!readOnly}
+                            data-path={path}
+                            data-kind="folder"
+                            draggable={!readOnly && !isRenamingThis}
                             onDragStart={e => handleRowDragStart(e, path)}
                             onDragEnd={handleRowDragEnd}
                             onDragOver={e => handleRowDragOver(e, path)}
                             onDragLeave={() => { if (dropTarget === path) setDropTarget(null); }}
                             onDrop={e => handleRowDrop(e, path)}
-                            onClick={() => toggleFolder(path)}
+                            onClick={() => { if (!isRenamingThis) toggleFolder(path); }}
                             onContextMenu={e => openMenu(e, { kind: "folder", path })}
-                            style={{ ...rowBase, background: isDropHere ? C.activeBg() : "transparent" }}
-                            onMouseEnter={e => { if (!isDropHere) e.currentTarget.style.background = C.hoverBg(); }}
-                            onMouseLeave={e => { if (!isDropHere) e.currentTarget.style.background = "transparent"; }}
+                            style={{ ...rowBase, background: isDropHere ? C.activeBg() : "transparent", overflow: isRenamingThis ? "visible" : "hidden" }}
+                            onMouseEnter={e => { if (!isDropHere && !isRenamingThis) e.currentTarget.style.background = C.hoverBg(); }}
+                            onMouseLeave={e => { if (!isDropHere && !isRenamingThis) e.currentTarget.style.background = "transparent"; }}
                         >
                             <IndentGuides depth={depth} />
                             <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: TWISTIE_WIDTH, marginLeft: indentPx, color: C.iconFg() }}>
@@ -258,83 +487,120 @@ const FileTree: React.FC<FileTreeProps> = ({
                             <span style={{ display: "inline-flex", alignItems: "center", marginRight: 6, color: C.iconFg() }}>
                                 <FolderIcon open={isOpen} size={14} />
                             </span>
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                                {node.name}
-                            </span>
+                            {isRenamingThis ? (
+                                <InlineEditInput
+                                    initialValue={editing.initialValue}
+                                    error={editError}
+                                    onCommit={commitEdit}
+                                    onCancel={cancelEdit}
+                                />
+                            ) : (
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {node.name}
+                                </span>
+                            )}
                         </button>
                         {isOpen && renderNodes((node as FolderNode).contents, depth + 1, path)}
                     </React.Fragment>
                 );
+                continue;
             }
 
             const isActive = path === activePath;
             const isEntry  = path === entryPath;
-            return (
+            result.push(
                 <button
                     key={path}
                     type="button"
-                    draggable={!readOnly}
+                    data-path={path}
+                    data-kind="file"
+                    draggable={!readOnly && !isRenamingThis}
                     onDragStart={e => handleRowDragStart(e, path)}
                     onDragEnd={handleRowDragEnd}
-                    onClick={() => onOpenFile(path)}
+                    onClick={() => { if (!isRenamingThis) onOpenFile(path); }}
                     onContextMenu={e => openMenu(e, { kind: "file", path })}
                     style={{
                         ...rowBase,
                         background: isActive ? C.activeBg() : "transparent",
                         color:      isActive ? C.activeFg() : C.sideBarFg(),
+                        overflow:   isRenamingThis ? "visible" : "hidden",
                     }}
-                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = C.hoverBg(); }}
-                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                    onMouseEnter={e => { if (!isActive && !isRenamingThis) e.currentTarget.style.background = C.hoverBg(); }}
+                    onMouseLeave={e => { if (!isActive && !isRenamingThis) e.currentTarget.style.background = "transparent"; }}
                 >
                     <IndentGuides depth={depth} />
-                    {/* Empty twistie slot so file rows align with folder rows. */}
                     <span style={{ display: "inline-block", width: TWISTIE_WIDTH, marginLeft: indentPx }} />
                     <span style={{ display: "inline-flex", alignItems: "center", marginRight: 6, color: C.iconFg() }}>
                         <Icon.File size={14} />
                     </span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
-                        {node.name}
-                    </span>
-                    {isEntry && (
-                        <span title="Entry" style={{ display: "inline-flex", color: token.color.warning, marginRight: 8 }}>
-                            <StarIcon size={10} />
-                        </span>
+                    {isRenamingThis ? (
+                        <InlineEditInput
+                            initialValue={editing.initialValue}
+                            error={editError}
+                            onCommit={commitEdit}
+                            onCancel={cancelEdit}
+                        />
+                    ) : (
+                        <>
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
+                                {node.name}
+                            </span>
+                            {isEntry && (
+                                <span title="Entry" style={{ display: "inline-flex", color: token.color.warning, marginRight: 8 }}>
+                                    <StarIcon size={10} />
+                                </span>
+                            )}
+                        </>
                     )}
                 </button>
             );
-        });
+        }
+
+        return result;
     };
 
-    const menuItems = useMemo<{ label: string; onClick: () => void; danger?: boolean }[]>(() => {
+    type MenuItem = {
+        label: string;
+        /** Right-aligned shortcut text, e.g. `"F2"`, `"Del"`. Display-only — the
+         *  actual keybinding lives in handleTreeKeyDown / native editor handlers. */
+        shortcut?: string;
+        onClick: () => void;
+        danger?: boolean;
+        /** Render a separator line directly above this item. */
+        separatorBefore?: boolean;
+    };
+
+    const menuItems = useMemo<MenuItem[]>(() => {
         if (!menu) return [];
         const t = menu.target;
         if (t.kind === "file") {
             return [
                 { label: "다운로드", onClick: () => onDownloadFile(t.path) },
-                { label: "이름 변경", onClick: () => onRename(t.path) },
+                { label: "이름 변경", shortcut: RENAME_SHORTCUT_LABEL, onClick: () => beginRename(t.path, false), separatorBefore: true },
                 ...(t.path !== entryPath ? [{ label: "Entry 로 설정", onClick: () => onSetAsEntry(t.path) }] : []),
-                { label: "삭제", onClick: () => onDelete(t.path), danger: true },
+                { label: "삭제", shortcut: "Del", onClick: () => onDelete(t.path), danger: true, separatorBefore: true },
             ];
         }
         if (t.kind === "folder") {
             return [
-                { label: "새 파일", onClick: () => onCreateFile(t.path) },
-                { label: "새 폴더", onClick: () => onCreateFolder(t.path) },
+                { label: "새 파일", onClick: () => beginCreate(t.path, "file") },
+                { label: "새 폴더", onClick: () => beginCreate(t.path, "folder") },
                 { label: "파일 업로드…", onClick: () => onUploadFile(t.path) },
-                { label: "이름 변경", onClick: () => onRename(t.path) },
-                { label: "삭제", onClick: () => onDelete(t.path), danger: true },
+                { label: "이름 변경", shortcut: RENAME_SHORTCUT_LABEL, onClick: () => beginRename(t.path, true), separatorBefore: true },
+                { label: "삭제", shortcut: "Del", onClick: () => onDelete(t.path), danger: true, separatorBefore: true },
             ];
         }
         return [
-            { label: "새 파일", onClick: () => onCreateFile("") },
-            { label: "새 폴더", onClick: () => onCreateFolder("") },
+            { label: "새 파일", onClick: () => beginCreate("", "file") },
+            { label: "새 폴더", onClick: () => beginCreate("", "folder") },
             { label: "파일 업로드…", onClick: () => onUploadFile("") },
         ];
-    }, [menu, entryPath, onCreateFile, onCreateFolder, onUploadFile, onDownloadFile, onRename, onDelete, onSetAsEntry]);
+    }, [menu, entryPath, beginRename, beginCreate, onUploadFile, onDownloadFile, onDelete, onSetAsEntry]);
 
     return (
         <div
             onContextMenu={e => openMenu(e, { kind: "root" })}
+            onKeyDown={handleTreeKeyDown}
             style={{
                 display: "flex", flexDirection: "column",
                 width: 240, flexShrink: 0,
@@ -363,7 +629,7 @@ const FileTree: React.FC<FileTreeProps> = ({
                         <button
                             type="button"
                             title="새 파일"
-                            onClick={() => onCreateFile("")}
+                            onClick={() => beginCreate("", "file")}
                             style={{ background: "none", border: "none", cursor: "pointer", color: C.iconFg(), padding: 2, display: "inline-flex" }}
                         >
                             <Icon.Plus size={12} />
@@ -371,7 +637,7 @@ const FileTree: React.FC<FileTreeProps> = ({
                         <button
                             type="button"
                             title="새 폴더"
-                            onClick={() => onCreateFolder("")}
+                            onClick={() => beginCreate("", "folder")}
                             style={{ background: "none", border: "none", cursor: "pointer", color: C.iconFg(), padding: 2, display: "inline-flex" }}
                         >
                             <FolderIcon open={false} size={12} />
@@ -393,13 +659,11 @@ const FileTree: React.FC<FileTreeProps> = ({
                 onDrop={e => handleRowDrop(e, "")}
                 style={{
                     flex: 1, overflowY: "auto", padding: "2px 0",
-                    // Subtle outline on the entire scroll area when dragging
-                    // over empty root space so the drop zone is discoverable.
                     outline: dropTarget === "" ? `1px solid ${C.focusBorder()}` : "none",
                     outlineOffset: -1,
                 }}
             >
-                {tree.length === 0 ? (
+                {tree.length === 0 && !(editing && (editing.mode === "create-file" || editing.mode === "create-folder") && editing.parentPath === "") ? (
                     <div style={{ padding: "8px 20px", fontSize: token.font.size.fs12, color: C.sideBarFg(), opacity: 0.7 }}>
                         파일이 없습니다
                     </div>
@@ -407,53 +671,83 @@ const FileTree: React.FC<FileTreeProps> = ({
             </div>
 
             {menu && (
-                <>
-                    <div onClick={closeMenu} onContextMenu={e => { e.preventDefault(); closeMenu(); }} style={{ position: "fixed", inset: 0, zIndex: 49 }} />
-                    <div style={{
-                        position: "fixed",
-                        top: menu.y, left: menu.x,
-                        background: C.menuBg(),
-                        color: C.menuFg(),
-                        border: `1px solid ${C.menuBorder()}`,
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-                        zIndex: 50,
-                        minWidth: 160,
-                        padding: "4px 0",
-                        fontSize: token.font.size.fs12,
-                    }}>
+                <div
+                    ref={menuRef}
+                    onContextMenu={e => e.preventDefault()}
+                    style={{
+                            position: "fixed",
+                            top: menu.y, left: menu.x,
+                            background: C.menuBg(),
+                            color: C.menuFg(),
+                            border: `1px solid ${C.menuBorder()}`,
+                            boxShadow: "0 2px 8px rgba(0,0,0,0.36)",
+                            zIndex: 50,
+                            minWidth: 200,
+                            padding: "4px 0",
+                            fontSize: token.font.size.fs13,
+                        }}
+                    >
                         {menuItems.map((item, i) => (
-                            <button
-                                key={i}
-                                type="button"
-                                onClick={() => { item.onClick(); closeMenu(); }}
-                                style={{
-                                    display: "flex", alignItems: "center",
-                                    width: "100%",
-                                    padding: "4px 26px 4px 14px",
-                                    height: 22,
-                                    lineHeight: "22px",
-                                    background: "none",
-                                    border: "none",
-                                    textAlign: "left",
-                                    cursor: "pointer",
-                                    color: item.danger ? C.danger() : C.menuFg(),
-                                    fontFamily: "inherit",
-                                    fontSize: "inherit",
-                                }}
-                                onMouseEnter={e => {
-                                    e.currentTarget.style.background = C.menuSelectionBg();
-                                    if (!item.danger) e.currentTarget.style.color = C.menuSelectionFg();
-                                }}
-                                onMouseLeave={e => {
-                                    e.currentTarget.style.background = "transparent";
-                                    e.currentTarget.style.color = item.danger ? C.danger() : C.menuFg();
-                                }}
-                            >
-                                {item.label}
-                            </button>
+                            <React.Fragment key={i}>
+                                {item.separatorBefore && (
+                                    <div
+                                        aria-hidden
+                                        style={{
+                                            height: 1,
+                                            background: C.menuSeparator(),
+                                            margin: "4px 0",
+                                            opacity: 0.6,
+                                        }}
+                                    />
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => { item.onClick(); closeMenu(); }}
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        width: "100%",
+                                        // VS Code reserves a 22px icon slot on the
+                                        // left even when no icon is rendered, plus
+                                        // ~14px trailing padding for the shortcut.
+                                        padding: "0 14px 0 26px",
+                                        height: 22,
+                                        lineHeight: "22px",
+                                        background: "none",
+                                        border: "none",
+                                        textAlign: "left",
+                                        cursor: "pointer",
+                                        color: item.danger ? C.danger() : C.menuFg(),
+                                        fontFamily: "inherit",
+                                        fontSize: "inherit",
+                                        whiteSpace: "nowrap",
+                                    }}
+                                    onMouseEnter={e => {
+                                        e.currentTarget.style.background = C.menuSelectionBg();
+                                        if (!item.danger) e.currentTarget.style.color = C.menuSelectionFg();
+                                    }}
+                                    onMouseLeave={e => {
+                                        e.currentTarget.style.background = "transparent";
+                                        e.currentTarget.style.color = item.danger ? C.danger() : C.menuFg();
+                                    }}
+                                >
+                                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                        {item.label}
+                                    </span>
+                                    {item.shortcut && (
+                                        <span style={{
+                                            marginLeft: 28,
+                                            color: "inherit",
+                                            opacity: 0.7,
+                                            fontSize: token.font.size.fs11,
+                                        }}>
+                                            {item.shortcut}
+                                        </span>
+                                    )}
+                                </button>
+                            </React.Fragment>
                         ))}
-                    </div>
-                </>
+                </div>
             )}
         </div>
     );

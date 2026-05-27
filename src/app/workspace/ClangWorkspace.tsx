@@ -37,6 +37,7 @@ import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { token } from "@/components/tokens";
 import { duplicateFile, renameFile, saveFile, type FileDetail, type FileOut } from "@/lib/authapi";
 import { CppManagerModal } from "@/components/workspace-modals/CppManagerModal";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
 import { ShareControl } from "@/components/share/ShareControl";
 import useLanguagePack from "@/hooks/useLanguagePack";
 import { useTheme } from "@/hooks/useTheme";
@@ -335,34 +336,32 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // ─── File-tree operations ─────────────────────────────────────────────
     // Apply a pure transformation to the bundle, persist immediately, and
     // update React state. Returning null from `transform` is the "do nothing"
-    // signal (e.g., the user-facing alert was already raised). The transform
-    // must NOT itself call setBundle/setActiveUri — those happen here.
+    // signal. The transform must NOT itself call setBundle/setActiveUri —
+    // those happen here.
     const applyBundleChange = useCallback((transform: (prev: CppBundle) => CppBundle | null) => {
         const prev = pendingBundleRef.current;
         const next = transform(prev);
         if (!next) return;
         pendingBundleRef.current = next;
         setBundle(next);
-        // Only sync activeUri when the bundle's active file actually changed
-        // — otherwise we'd yank the user away from a system header they're
-        // viewing whenever they rename a sibling file or change the entry.
         if (next.ui.activeFile !== prev.ui.activeFile) {
             setActiveUri(pathToUri(next.ui.activeFile));
         }
         flushSave();
     }, [flushSave]);
 
-    const handleCreateFile = useCallback((parentPath: string) => {
-        if (!isOwnerRef.current) return;
-        const raw = window.prompt(`새 파일 이름 (확장자 포함, ${parentPath ? `${parentPath}/` : ""}…):`, "");
-        if (raw === null) return;
-        const name = raw.trim();
-        const err = validateFileName(name);
-        if (err) { window.alert(err); return; }
+    // FileTree-driven create/rename use inline inputs (VS Code style) and
+    // surface errors back into the input via a return value: returning a
+    // string keeps the input open with that message, null commits.
+    const handleCreateFile = useCallback((parentPath: string, name: string): string | null => {
+        if (!isOwnerRef.current) return "권한이 없습니다.";
+        const validationErr = validateFileName(name);
+        if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
+        let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleAddFile(prev.tree, path, "");
-            if (!nextTree) { window.alert("같은 이름의 파일이 이미 있습니다."); return null; }
+            if (!nextTree) { resultErr = "같은 이름의 파일이 이미 있습니다."; return null; }
             return {
                 ...prev,
                 tree: nextTree,
@@ -373,39 +372,35 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 },
             };
         });
+        return resultErr;
     }, [applyBundleChange]);
 
-    const handleCreateFolder = useCallback((parentPath: string) => {
-        if (!isOwnerRef.current) return;
-        const raw = window.prompt(`새 폴더 이름 (${parentPath ? `${parentPath}/` : ""}…):`, "");
-        if (raw === null) return;
-        const name = raw.trim();
-        const err = validateFolderName(name);
-        if (err) { window.alert(err); return; }
+    const handleCreateFolder = useCallback((parentPath: string, name: string): string | null => {
+        if (!isOwnerRef.current) return "권한이 없습니다.";
+        const validationErr = validateFolderName(name);
+        if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
+        let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleAddFolder(prev.tree, path);
-            if (!nextTree) { window.alert("같은 이름의 폴더가 이미 있습니다."); return null; }
+            if (!nextTree) { resultErr = "같은 이름의 폴더가 이미 있습니다."; return null; }
             return { ...prev, tree: nextTree };
         });
+        return resultErr;
     }, [applyBundleChange]);
 
-    const handleRenameNode = useCallback((path: string) => {
-        if (!isOwnerRef.current) return;
+    const handleRenameNode = useCallback((path: string, newName: string): string | null => {
+        if (!isOwnerRef.current) return "권한이 없습니다.";
         const { base, dir } = splitPath(path);
-        const raw = window.prompt("새 이름:", base);
-        if (raw === null) return;
-        const newName = raw.trim();
-        if (!newName || newName === base) return;
+        if (newName === base) return null; // no-op
         const isFile = listBundleFiles(pendingBundleRef.current.tree).some(f => f.path === path);
-        const err = isFile ? validateFileName(newName) : validateFolderName(newName);
-        if (err) { window.alert(err); return; }
-        const newPath = dir ? `${dir}/${newName}` : newName;
+        const validationErr = isFile ? validateFileName(newName) : validateFolderName(newName);
+        if (validationErr) return validationErr;
+        let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleRenameNode(prev.tree, path, newName);
-            if (!nextTree) { window.alert("같은 이름이 이미 있습니다."); return null; }
-            // A rename affects every descendant path, so prefix-swap path
-            // references in entry / activeFile / openTabs.
+            if (!nextTree) { resultErr = "같은 이름이 이미 있습니다."; return null; }
+            const newPath = dir ? `${dir}/${newName}` : newName;
             const rewrite = (p: string) =>
                 p === path ? newPath
                 : p.startsWith(path + "/") ? newPath + p.slice(path.length)
@@ -421,21 +416,34 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 },
             };
         });
+        return resultErr;
     }, [applyBundleChange]);
+
+    // Confirmation modal state for delete. The FileTree fires
+    // `onDelete(path)` synchronously; we don't actually delete until the
+    // user confirms (or dismiss-via-Escape/click-outside cancels).
+    // `kind: "entry-block"` is shown when the path being deleted contains
+    // the project entry — that case is informational only.
+    const [deleteConfirm, setDeleteConfirm] = useState<
+        | { kind: "entry-block"; path: string }
+        | { kind: "confirm"; path: string; affected: string[] }
+        | null
+    >(null);
 
     const handleDeleteNode = useCallback((path: string) => {
         if (!isOwnerRef.current) return;
         const affected = descendantFilePaths(pendingBundleRef.current.tree, path);
         if (affected.includes(pendingBundleRef.current.entry)) {
-            window.alert("Entry 파일은 삭제할 수 없습니다. 다른 파일을 Entry로 지정한 뒤 다시 시도해주세요.");
+            setDeleteConfirm({ kind: "entry-block", path });
             return;
         }
-        const ok = window.confirm(
-            affected.length > 1
-                ? `${path} 와 그 하위 ${affected.length}개 파일을 삭제할까요?`
-                : `${path} 를 삭제할까요?`,
-        );
-        if (!ok) return;
+        setDeleteConfirm({ kind: "confirm", path, affected });
+    }, []);
+
+    const confirmDelete = useCallback(() => {
+        const pending = deleteConfirm;
+        if (!pending || pending.kind !== "confirm") return;
+        const { path, affected } = pending;
         applyBundleChange(prev => {
             const nextTree = bundleRemoveNode(prev.tree, path);
             const removed = new Set(affected);
@@ -451,7 +459,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 ui: { ...prev.ui, openTabs: newOpenTabs, activeFile },
             };
         });
-    }, [applyBundleChange]);
+        setDeleteConfirm(null);
+    }, [applyBundleChange, deleteConfirm]);
 
     const handleMoveNode = useCallback((srcPath: string, destDir: string) => {
         if (!isOwnerRef.current) return;
@@ -1132,6 +1141,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 onDiagnosticsChanged={handleDiagnosticsChanged}
                                 onActiveModelChanged={handleActiveModelChanged}
                                 onUnresolvedDefinition={handleUnresolvedDefinition}
+                                viewStateKey={fileId}
                             />
                             {editorNotice && (
                                 <div
@@ -1424,6 +1434,55 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
                 onDownload={handleDownloadCpp}
             />}
+
+            {deleteConfirm && (
+                <Modal width={420} onClose={() => setDeleteConfirm(null)}>
+                    <ModalHeader onClose={() => setDeleteConfirm(null)}>
+                        {deleteConfirm.kind === "entry-block" ? "Entry 파일은 삭제할 수 없어요" : "삭제 확인"}
+                    </ModalHeader>
+                    <ModalBody>
+                        {deleteConfirm.kind === "entry-block" ? (
+                            <div style={{ fontSize: token.font.size.fs13, color: token.color.fg, lineHeight: 1.6 }}>
+                                <div>
+                                    <span style={{ fontFamily: token.font.family.mono }}>{deleteConfirm.path}</span>
+                                    {" "}은(는) 현재 Entry 파일을 포함하고 있어 삭제할 수 없어요.
+                                </div>
+                                <div style={{ marginTop: 8, color: token.color.fgMuted }}>
+                                    다른 파일을 Entry 로 지정한 뒤 다시 시도해주세요.
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ fontSize: token.font.size.fs13, color: token.color.fg, lineHeight: 1.6 }}>
+                                <div>
+                                    <span style={{ fontFamily: token.font.family.mono }}>{deleteConfirm.path}</span>
+                                    {deleteConfirm.affected.length > 1
+                                        ? ` 와 그 하위 ${deleteConfirm.affected.length}개 파일을 삭제할까요?`
+                                        : " 를 삭제할까요?"}
+                                </div>
+                                <div style={{ marginTop: 8, color: token.color.fgMuted, fontSize: token.font.size.fs11 }}>
+                                    이 동작은 되돌릴 수 없어요.
+                                </div>
+                            </div>
+                        )}
+                    </ModalBody>
+                    <ModalFooter>
+                        {deleteConfirm.kind === "entry-block" ? (
+                            <Button variant="primary" size="sm" onClick={() => setDeleteConfirm(null)}>
+                                확인
+                            </Button>
+                        ) : (
+                            <>
+                                <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>
+                                    취소
+                                </Button>
+                                <Button variant="danger" size="sm" onClick={confirmDelete}>
+                                    삭제
+                                </Button>
+                            </>
+                        )}
+                    </ModalFooter>
+                </Modal>
+            )}
         </div>
     );
 };
