@@ -1,7 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
@@ -90,6 +90,7 @@ type Props = {
 
 const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [, , pack] = useLanguagePack();
     const { theme } = useTheme();
     const isMobile = useIsMobile();
@@ -749,6 +750,24 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setRunState("error");
         }
     }, [bundle.tree, bundle.entry, runState, clearLog, isMobile]);
+
+    // ── Auto-run on URL ?autorun=1 ────────────────────────────────────────
+    // Used by the landing-page iframes to show a workspace that already
+    // produced a result instead of an empty console.
+    const autorunFiredRef = useRef(false);
+    const handleRunLatestRef = useRef<typeof handleRun>(handleRun);
+    useEffect(() => { handleRunLatestRef.current = handleRun; }, [handleRun]);
+    useEffect(() => {
+        if (autorunFiredRef.current) return;
+        if (searchParams.get("autorun") !== "1") return;
+        if (!workerRef.current) return;
+        const t = setTimeout(() => {
+            if (autorunFiredRef.current) return;
+            autorunFiredRef.current = true;
+            handleRunLatestRef.current?.();
+        }, 1200);
+        return () => clearTimeout(t);
+    }, [searchParams]);
 
     const handleBuild = useCallback(async () => {
         if (buildState === "building" || buildState === "downloading") return;

@@ -6,19 +6,27 @@ import "blockly/blocks";
 import * as BlocklyEn from "blockly/msg/en";
 
 import { type BlockDef, unpack } from "@/utils/blockly/$base";
-import { I32_BLOCKS } from "@/utils/blockly/i32";
-import { LOCAL_BLOCKS } from "@/utils/blockly/locals";
-import { FLOW_BLOCKS } from "@/utils/blockly/flow";
-import { BOOL_BLOCKS } from "@/utils/blockly/bool";
+import { CUSTOM_BLOCKS } from "@/utils/blockly/$blocks";
+import { registerDynamicArrayBlocks } from "@/utils/blockly/array";
+import { registerDynamicTensorBlocks } from "@/utils/blockly/tensor";
+import { registerFoldRegionBlock } from "@/utils/blockly/flow";
+
+// JSON examples are too deeply nested for Turbopack's JSON parser, so we
+// fetch them at runtime instead of importing.
+const EXAMPLE_URL: Record<string, string> = {
+    heat:   "/landing/heat-diffusion.json?v=2",
+    em:     "/landing/em-wave-packet.json?v=2",
+    basics: "/landing/basics.json?v=5",
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 Blockly.setLocale(BlocklyEn as { [key: string]: any });
 
+// All real workspace blocks (DEBUG · BOOL · I32 · F64 · LOCAL · FLOW · ARRAY ·
+// TENSOR · VECTOR · BOUNDARY · UTIL) plus the few entry-point blocks the IDE
+// registers separately in workspace/page.tsx.
 const PREVIEW_BLOCK_DEFS: BlockDef[] = [
-    ...unpack(I32_BLOCKS),
-    ...unpack(LOCAL_BLOCKS),
-    ...unpack(FLOW_BLOCKS),
-    ...unpack(BOOL_BLOCKS),
+    ...unpack(CUSTOM_BLOCKS),
     {
         type: "wasm_func_main",
         message0: "함수 main → %1",
@@ -34,9 +42,15 @@ const PREVIEW_BLOCK_DEFS: BlockDef[] = [
         args0: [{ type: "input_value", name: "VALUE", check: "i32" }],
         previousStatement: null, nextStatement: null, colour: 0, tooltip: "i32 반환",
     },
+    {
+        type: "wasm_return_f64",
+        message0: "반환 f64 %1",
+        args0: [{ type: "input_value", name: "VALUE", check: "f64" }],
+        previousStatement: null, nextStatement: null, colour: 0, tooltip: "f64 반환",
+    },
 ];
 
-const PREVIEW_XML = `
+const SUM_XML = `
 <xml xmlns="https://developers.google.com/blockly/xml">
     <block type="wasm_func_main" x="20" y="20">
         <field name="RET_TYPE">i32</field>
@@ -83,9 +97,7 @@ const PREVIEW_XML = `
                                 </statement>
                                 <next>
                                     <block type="wasm_return_i32">
-                                        <value name="VALUE">
-                                            <block type="local_get_i32"><field name="NAME">sum</field></block>
-                                        </value>
+                                        <value name="VALUE"><block type="local_get_i32"><field name="NAME">sum</field></block></value>
                                     </block>
                                 </next>
                             </block>
@@ -99,10 +111,15 @@ const PREVIEW_XML = `
 `;
 
 let _registered = false;
-
 function ensureRegistered() {
     if (_registered) return;
     _registered = true;
+    // Mutator-based blocks (array_literal_i32/_f64, tensor_new/_get_by_index/
+    // _set_by_index, flow_fold_region) need custom init functions, not the
+    // JSON template. Register them first so the jsonInit loop below skips them.
+    registerDynamicArrayBlocks();
+    registerDynamicTensorBlocks();
+    registerFoldRegionBlock();
     PREVIEW_BLOCK_DEFS.forEach((def) => {
         const d = def as { type: string };
         if (!Blockly.Blocks[d.type]) {
@@ -113,12 +130,33 @@ function ensureRegistered() {
     });
 }
 
+export type BlocklyPreviewExample = "sum" | "heat" | "em" | "basics";
+
 export interface BlocklyPreviewProps {
     height?: number;
+    example?: BlocklyPreviewExample;
+    /**
+     * "fit" (default): scale so every block fits inside the viewport.
+     * "scale": apply a fixed scale and centre on `focus`; anything outside
+     *   the viewport is clipped by the container's overflow:hidden.
+     */
+    mode?: "fit" | "scale";
+    /** Only used when mode="scale". Defaults to 1. */
+    scale?: number;
+    /** Only used when mode="scale". A Blockly block id to centre on, or
+     *  "center" (default — uses the bounding-box centre of all blocks). */
+    focus?: string | "center";
     style?: React.CSSProperties;
 }
 
-export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
+export function BlocklyPreview({
+    height = 420,
+    example = "sum",
+    mode = "fit",
+    scale: fixedScale = 1,
+    focus = "center",
+    style,
+}: BlocklyPreviewProps) {
     const divRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -136,7 +174,6 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
             },
         });
 
-        // Blockly Classic 기본 테마가 `.blocklyMainBackground`에 흰색 stroke를 줌 — 제거
         const styleId = "blockly-preview-override";
         if (!document.getElementById(styleId)) {
             const s = document.createElement("style");
@@ -149,36 +186,86 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
         const ws = Blockly.inject(container, {
             readOnly: true,
             scrollbars: false,
-            zoom: { controls: false, wheel: false, startScale: 0.85 },
-            move: { scrollbars: false, drag: true, wheel: false },
+            zoom: {
+                controls: false,
+                wheel: false,
+                pinch: false,
+                startScale: 1,
+                maxScale: 2,
+                minScale: 0.15,
+                scaleSpeed: 1,
+            },
+            move: { scrollbars: false, drag: false, wheel: false },
             renderer: "zelos",
             theme,
         });
 
-        Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(PREVIEW_XML), ws);
-
-        // Custom fit-and-center: compute scale from block bounds, then offset
-        // the canvas so blocks sit at the viewport center. Re-runs on container resize.
+        // ── Place + scale the canvas. On a read-only workspace Blockly
+        //    silently ignores `ws.scroll(x, y)`, so we set the SVG transform
+        //    directly. Two modes:
+        //      "fit"   — scale so every block fits with uniform padding.
+        //      "scale" — apply a fixed scale and centre on the focus block
+        //                (or bounding-box centre); content overflowing the
+        //                viewport is clipped by the container.
         let cancelled = false;
         const PADDING = 24;
+        const MAX_SCALE = 2;
+        const MIN_SCALE = 0.15;
         const fitAndCenter = () => {
             if (cancelled) return;
             const rect = container.getBoundingClientRect();
             if (rect.width < 2 || rect.height < 2) return;
+
+            // Measure at scale 1 so block bounds are in raw workspace units.
+            ws.setScale(1);
             Blockly.svgResize(ws);
-            const metrics = ws.getMetrics();
-            const vw = metrics.viewWidth;
-            const vh = metrics.viewHeight;
-            if (vw < 2 || vh < 2) return;
-            const blockBox = ws.getBlocksBoundingBox();
-            const bw = blockBox.right - blockBox.left;
-            const bh = blockBox.bottom - blockBox.top;
+            const m1 = ws.getMetrics();
+            if (m1.viewWidth < 2 || m1.viewHeight < 2) return;
+            const bb = ws.getBlocksBoundingBox();
+            const bw = bb.right - bb.left;
+            const bh = bb.bottom - bb.top;
             if (bw <= 0 || bh <= 0) return;
-            const scaleX = (vw - PADDING * 2) / bw;
-            const scaleY = (vh - PADDING * 2) / bh;
-            const scale = Math.max(0.3, Math.min(scaleX, scaleY, 2.0));
+
+            let scale: number;
+            let focusX: number;
+            let focusY: number;
+
+            if (mode === "scale") {
+                scale = fixedScale;
+                if (focus === "center") {
+                    focusX = (bb.left + bb.right) / 2;
+                    focusY = (bb.top + bb.bottom) / 2;
+                } else {
+                    const block = ws.getBlockById(focus);
+                    if (block) {
+                        const xy = block.getRelativeToSurfaceXY();
+                        const heightWidth = (block as unknown as { getHeightWidth?: () => { height: number; width: number } }).getHeightWidth?.();
+                        focusX = xy.x + (heightWidth?.width ?? 0) / 2;
+                        focusY = xy.y + (heightWidth?.height ?? 0) / 2;
+                    } else {
+                        focusX = (bb.left + bb.right) / 2;
+                        focusY = (bb.top + bb.bottom) / 2;
+                    }
+                }
+            } else {
+                const scaleX = (m1.viewWidth - PADDING * 2) / bw;
+                const scaleY = (m1.viewHeight - PADDING * 2) / bh;
+                scale = Math.max(MIN_SCALE, Math.min(scaleX, scaleY, MAX_SCALE));
+                focusX = (bb.left + bb.right) / 2;
+                focusY = (bb.top + bb.bottom) / 2;
+            }
+
+            const tx = m1.viewWidth / 2 - focusX * scale;
+            const ty = m1.viewHeight / 2 - focusY * scale;
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const wsAny = ws as any;
+            const canvas: SVGGElement | undefined = wsAny.getCanvas?.() ?? wsAny.svgBlockCanvas_;
+            const bubbles: SVGGElement | undefined = wsAny.getBubbleCanvas?.() ?? wsAny.svgBubbleCanvas_;
+            const t = `translate(${tx}, ${ty}) scale(${scale})`;
+            canvas?.setAttribute("transform", t);
+            bubbles?.setAttribute("transform", t);
             ws.setScale(scale);
-            ws.scrollCenter();
         };
         const tryFit = () => {
             if (cancelled) return;
@@ -189,7 +276,23 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
             }
             fitAndCenter();
         };
-        requestAnimationFrame(tryFit);
+
+        // Load the requested example, then fit. JSON examples load via fetch
+        // (Turbopack's JSON parser chokes on the deeply nested workspace data).
+        const url = EXAMPLE_URL[example];
+        if (url) {
+            fetch(url)
+                .then(r => r.json())
+                .then(json => {
+                    if (cancelled) return;
+                    Blockly.serialization.workspaces.load(json, ws);
+                    requestAnimationFrame(tryFit);
+                })
+                .catch(err => console.error("[BlocklyPreview] load failed:", err));
+        } else {
+            Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(SUM_XML), ws);
+            requestAnimationFrame(tryFit);
+        }
 
         const ro = new ResizeObserver(() => fitAndCenter());
         ro.observe(container);
@@ -199,7 +302,7 @@ export function BlocklyPreview({ height = 420, style }: BlocklyPreviewProps) {
             ro.disconnect();
             ws.dispose();
         };
-    }, []);
+    }, [example, mode, fixedScale, focus]);
 
     return (
         <div

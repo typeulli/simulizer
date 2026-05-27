@@ -2020,6 +2020,25 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         addLog("info", "실행이 중단되었습니다.");
     }, [addLog, createWasmWorker]);
 
+    // ── Auto-run on URL ?autorun=1 ───────────────────────────────────────
+    // Used by the landing-page iframes to show a workspace that already
+    // produced a result instead of an empty console.
+    const autorunFiredRef = useRef(false);
+    const handleRunLatestRef = useRef<typeof handleRun>(handleRun);
+    useEffect(() => { handleRunLatestRef.current = handleRun; }, [handleRun]);
+    useEffect(() => {
+        if (autorunFiredRef.current) return;
+        if (searchParams.get("autorun") !== "1") return;
+        if (!fileMeta) return;
+        if (!workspaceRef.current) return;
+        const t = setTimeout(() => {
+            if (autorunFiredRef.current) return;
+            autorunFiredRef.current = true;
+            handleRunLatestRef.current?.();
+        }, 1200);
+        return () => clearTimeout(t);
+    }, [fileMeta, searchParams]);
+
     const handleCompile = useCallback(async () => {
         const ws = workspaceRef.current;
         if (!ws || compiling) return;

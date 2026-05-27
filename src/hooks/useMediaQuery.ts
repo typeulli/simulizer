@@ -3,6 +3,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 const MOBILE_QUERY = "(max-width: 768px)";
+const COMPACT_QUERY = "(max-width: 1023px)";
 
 function subscribe(query: string) {
     return (callback: () => void) => {
@@ -26,4 +27,8 @@ export function useMediaQuery(query: string): boolean {
 
 export function useIsMobile(): boolean {
     return useMediaQuery(MOBILE_QUERY);
+}
+
+export function useIsCompact(): boolean {
+    return useMediaQuery(COMPACT_QUERY);
 }

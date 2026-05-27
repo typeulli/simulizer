@@ -1,0 +1,41 @@
+{
+  "blocks": {
+    "languageVersion": 0,
+    "blocks": [
+      {
+        "type": "wasm_func_main",
+        "x": 30,
+        "y": 20,
+        "fields": { "RET_TYPE": "void" }
+      },
+      {
+        "type": "local_decl_i32",
+        "x": 30,
+        "y": 170,
+        "fields": { "NAME": "count" },
+        "inputs": {
+          "INIT": { "block": { "type": "i32_const", "fields": { "VALUE": 0 } } }
+        }
+      },
+      {
+        "type": "local_decl_f64",
+        "x": 30,
+        "y": 250,
+        "fields": { "NAME": "dt" },
+        "inputs": {
+          "INIT": { "block": { "type": "f64_const", "fields": { "VALUE": 0.001 } } }
+        }
+      },
+      {
+        "type": "i32_binop",
+        "x": 30,
+        "y": 330,
+        "fields": { "OP": "add" },
+        "inputs": {
+          "LHS": { "block": { "type": "i32_const", "fields": { "VALUE": 2 } } },
+          "RHS": { "block": { "type": "i32_const", "fields": { "VALUE": 3 } } }
+        }
+      }
+    ]
+  }
+}

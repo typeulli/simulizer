@@ -1,0 +1,87 @@
+{
+  "blocks": {
+    "languageVersion": 0,
+    "blocks": [{
+      "type": "wasm_func_main",
+      "x": 10, "y": 10,
+      "fields": { "RET_TYPE": "void" },
+      "inputs": {
+        "BODY": {
+          "block": {
+            "type": "local_decl_f64",
+            "fields": { "NAME": "VC" },
+            "inputs": {
+              "INIT": { "block": { "type": "f64_const", "fields": { "VALUE": 299792458 } } }
+            },
+            "next": {
+              "block": {
+                "type": "local_decl_f64",
+                "fields": { "NAME": "dx3" },
+                "inputs": {
+                  "INIT": { "block": { "type": "f64_const", "fields": { "VALUE": 4e-8 } } }
+                },
+                "next": {
+                  "block": {
+                    "type": "local_decl_f64",
+                    "fields": { "NAME": "MU" },
+                    "inputs": {
+                      "INIT": { "block": { "type": "f64_const", "fields": { "VALUE": 0.000001257 } } }
+                    },
+                    "next": {
+                      "block": {
+                        "type": "latex_expr",
+                        "fields": { "LATEX": "t = dt \\cdot i" },
+                        "next": {
+                          "block": {
+                            "type": "latex_expr",
+                            "fields": { "LATEX": "J1_k = \\frac{4.0}{MU \\cdot VC \\cdot dx3} \\cdot \\cos\\left(\\frac{2\\pi}{per}t\\right)" },
+                            "next": {
+                              "block": {
+                                "type": "latex_expr",
+                                "fields": { "LATEX": "E1p_p = \\frac{(x3p_p - x3c) E1_{k+1} + (x3c + dx3 - x3p_p) E1_k}{dx3}" },
+                                "next": {
+                                  "block": {
+                                    "type": "latex_expr",
+                                    "fields": { "LATEX": "E2p_p = \\frac{(x3p_p - x3c) E2_{k+1} + (x3c + dx3 - x3p_p) E2_k}{dx3}" },
+                                    "next": {
+                                      "block": {
+                                        "type": "latex_expr",
+                                        "fields": { "LATEX": "B3p_p = \\frac{(x3p_p - x3c) B3avg_{k+1} + (x3c + dx3 - x3p_p) B3avg_k}{dx3}" },
+                                        "next": {
+                                          "block": {
+                                            "type": "latex_expr",
+                                            "fields": { "LATEX": "V_1 = v1p_p + Th \\cdot E1p_p" },
+                                            "next": {
+                                              "block": {
+                                                "type": "latex_expr",
+                                                "fields": { "LATEX": "W_1 = \\frac{V_1}{Th} + V_2 B3p_p - V_3 B2p_p" },
+                                                "next": {
+                                                  "block": {
+                                                    "type": "latex_expr",
+                                                    "fields": { "LATEX": "BBGG = B1p_p^2 + B2p_p^2 + B3p_p^2 + \\frac{1}{Th^2}" }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }]
+  }
+}

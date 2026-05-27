@@ -47,6 +47,14 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: `
           (function(){
             try {
+              // 1) URL ?theme=light|dark wins (used by landing iframes)
+              var u = new URLSearchParams(window.location.search).get('theme');
+              if (u === 'light' || u === 'dark') {
+                document.documentElement.setAttribute('data-theme', u);
+                document.cookie = 'theme=' + u + '; path=/; max-age=' + (60*60*24*365);
+                return;
+              }
+              // 2) fall back to cookie
               var m = document.cookie.match(/(?:^|;\\s*)theme=([^;]+)/);
               if (m) document.documentElement.setAttribute('data-theme', m[1]);
             } catch(e) {}
