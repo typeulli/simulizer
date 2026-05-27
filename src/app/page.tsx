@@ -122,22 +122,6 @@ const CLANG_STEPS: ScrollyStep[] = [
         ),
     },
     {
-        id: "lsp",
-        tag: "clangd LSP",
-        name: "Hover for the type.",
-        desc: <>세션별 격리 워크스페이스에 clangd가 WebSocket으로 연결됩니다. 식별자 위에 호버하면 타입·시그니처가 뜨고, 정의 점프·실시간 진단까지 데스크탑 IDE와 동일하게 작동합니다.</>,
-        viz: (
-            <VizImage
-                src="/landing/screen-hover.png"
-                alt="clangd hover tooltip showing type hint"
-                title="hover · i32"
-                sub="ClangWorkspace · clangd"
-                pill={{ label: "clangd", tone: "lsp" }}
-                fit="contain"
-            />
-        ),
-    },
-    {
         id: "simstd",
         tag: "simstd.hpp",
         name: "Three lines, three plots.",
@@ -689,7 +673,51 @@ export default function Home() {
                                     <span className="ld-case-viz-sub">· ClangWorkspace</span>
                                     <span className="ld-case-viz-pill"><span className="ld-case-viz-pill-dot ld-case-viz-pill-dot-info" />clangd</span>
                                 </div>
-                                <div className="ld-case-viz-body ld-case-clang ld-case-clang-empty" aria-label="C++ 코드 자리" />
+                                <div className="ld-case-viz-body ld-case-clang">
+                                    <pre className="ld-clang-code"><code>{`#include "simstd.hpp"
+
+constexpr int    N3  = 500, Nt = 1000, Np = 30;
+constexpr double dt  = 1e-16, dx = 4e-8;
+constexpr double c   = 3e8,   mu = 1.257e-6;
+constexpr double per = 2.5e-15;
+
+int worker() {
+    std::vector<double> E1(N3), E2(N3), B1(N3), B2(N3), J1(N3);
+    std::vector<double> x3p(Np), v3p(Np);
+
+    for (int p = 0; p < Np; ++p)
+        x3p[p] = dx * (N3 / 2 + p);
+
+    auto trail = simstd::series<double>();
+
+    for (int i = 0; i < Nt; ++i) {
+        double t = dt * i;
+        J1[1] = 4.0 / (mu * c * dx)
+              * std::cos(2 * M_PI / per * t)
+              * std::exp(-std::pow((t - 6 * per) / per, 2));
+
+        // Faraday: ∂B/∂t = −∇×E
+        for (int k = 0; k < N3 - 1; ++k) {
+            B1[k] += (E2[k + 1] - E2[k]) * dt / dx;
+            B2[k] -= (E1[k + 1] - E1[k]) * dt / dx;
+        }
+
+        // Ampère: ∂E/∂t = c²(∇×B − μJ)
+        for (int k = 1; k < N3; ++k) {
+            E1[k] -= (B2[k] - B2[k - 1]) * c*c*dt/dx + J1[k]*mu*c*c*dt;
+            E2[k] += (B1[k] - B1[k - 1]) * c*c*dt/dx;
+        }
+
+        // Boris pusher (half-accel → rotate → half-accel)
+        push_particles(x3p, v3p, E1, B2, dt);
+
+        simstd::push(trail, E1);
+    }
+
+    simstd::show_graph(trail);
+    return 0;
+}`}</code></pre>
+                                </div>
                             </div>
                         </div>
                     </div>
