@@ -12,6 +12,7 @@ import getFilesServiceOverride, {
     registerCustomProvider,
 } from "@codingame/monaco-vscode-files-service-override";
 import { URI as VscodeURI } from "@codingame/monaco-vscode-api/vscode/vs/base/common/uri";
+import { writeFile as vscodeWriteFile, deleteFile as vscodeDeleteFile } from "@codingame/monaco-vscode-api/monaco";
 import { getEnhancedMonacoEnvironment } from "monaco-languageclient/vscodeApiWrapper";
 import { MonacoEditorReactComp } from "@typefox/monaco-editor-react";
 import type { EditorApp, TextContents } from "monaco-languageclient/editorApp";
@@ -400,6 +401,12 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         const uri = monaco.Uri.parse(pathToUri(path));
         let model = monaco.editor.getModel(uri);
         if (!model) {
+            // Seed the file service so non-entry workspace files can be
+            // resolved by monaco-vscode flows that go through fileService
+            // (e.g., textModelResolverService when opening a definition
+            // target). The entry file gets this for free via MonacoEditor-
+            // ReactComp's createModelReference; we mirror that here.
+            void vscodeWriteFile(uri, initialContent).catch(() => { /* best-effort */ });
             model = monaco.editor.createModel(initialContent, "cpp", uri);
             const disp = model.onDidChangeContent(() => {
                 const m = monaco.editor.getModel(uri);
@@ -459,6 +466,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             contentChangeDisposablesRef.current.get(path)?.dispose();
             contentChangeDisposablesRef.current.delete(path);
             model.dispose();
+            void vscodeDeleteFile(uri).catch(() => { /* best-effort */ });
             modelOwnedPathsRef.current.delete(path);
         }
     }, [files, activeUri, entryPath, ensureModel]);
@@ -820,11 +828,45 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                                 return [];
                             }
 
-                            const allWorkspace = locations.every(loc => {
+                            // Workspace target — same problem as the simulizer
+                            // scheme: monaco-vscode's EditorService mode with a
+                            // single editor never actually swaps the current
+                            // editor's model on navigation, so simstd.hpp works
+                            // (we drive it manually above) but `src/util.hpp`
+                            // silently no-ops. Drive workspace navigation the
+                            // same way here.
+                            const targetWorkspace = locations.find(loc => {
                                 const u = (loc.uri ?? loc.targetUri)?.toString() ?? "";
                                 return u.startsWith(WORKSPACE_URI_PREFIX);
                             });
-                            if (allWorkspace) return result;
+                            if (targetWorkspace) {
+                                if (!definitionClickAllowedRef.current) return result;
+                                definitionClickAllowedRef.current = false;
+                                if (definitionClickTimerRef.current) {
+                                    clearTimeout(definitionClickTimerRef.current);
+                                    definitionClickTimerRef.current = null;
+                                }
+                                const editor = editorRef.current;
+                                if (!editor) return result;
+                                const uriStr = (targetWorkspace.uri ?? targetWorkspace.targetUri)!.toString();
+                                const range = targetWorkspace.targetSelectionRange ?? targetWorkspace.targetRange ?? targetWorkspace.range;
+                                if (!range) return result;
+                                const monacoUri = monaco.Uri.parse(uriStr);
+                                const model = monaco.editor.getModel(monacoUri);
+                                // No model means the target isn't part of the
+                                // current bundle (shouldn't normally happen for
+                                // workspace URIs the LSP already accepted).
+                                // Fall through to monaco-vscode's default
+                                // handling as a last resort.
+                                if (!model) return result;
+                                swapModelTo(model);
+                                const line = range.start.line + 1;
+                                const col = range.start.character + 1;
+                                editor.revealLineInCenter(line);
+                                editor.setPosition({ lineNumber: line, column: col });
+                                editor.focus();
+                                return [];
+                            }
 
                             const external = locations.find(loc => {
                                 const u = (loc.uri ?? loc.targetUri)?.toString() ?? "";

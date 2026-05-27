@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback, type CSSProperties } from "react";
+import * as XLSX from "xlsx";
 import { token } from "@/components/tokens";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
@@ -12,9 +13,107 @@ import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 type Mode = 1 | 2 | 3 | 4;
 type MaskMap = Map<number, ImageData>;
 
+interface MaskStats {
+    area: number;
+    bboxMinX: number;
+    bboxMinY: number;
+    bboxMaxX: number;
+    bboxMaxY: number;
+    bboxW: number;
+    bboxH: number;
+    centroidX: number;
+    centroidY: number;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MASK_COLOR = { r: 255, g: 100, b: 0, a: 120 };
+
+// ─── Mask export ──────────────────────────────────────────────────────────────
+
+function computeMaskStats(img: ImageData): MaskStats | null {
+    const { data, width, height } = img;
+    let area = 0;
+    let minX = width, minY = height, maxX = -1, maxY = -1;
+    let sumX = 0, sumY = 0;
+    // Iterate scanline-first; alpha is at byte 3 of every 4-byte pixel.
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            if (data[(y * width + x) * 4 + 3] > 0) {
+                area++;
+                sumX += x;
+                sumY += y;
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    if (area === 0) return null;
+    return {
+        area,
+        bboxMinX: minX, bboxMinY: minY, bboxMaxX: maxX, bboxMaxY: maxY,
+        bboxW: maxX - minX + 1,
+        bboxH: maxY - minY + 1,
+        centroidX: sumX / area,
+        centroidY: sumY / area,
+    };
+}
+
+function downloadMaskXlsx(masks: MaskMap, fps: number, videoName: string) {
+    const rows = [...masks.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([frame, img]) => {
+            const s = computeMaskStats(img);
+            if (!s) return null;
+            return {
+                frame_index: frame,
+                timestamp_sec: Number((frame / fps).toFixed(4)),
+                image_width: img.width,
+                image_height: img.height,
+                pixel_area: s.area,
+                bbox_min_x: s.bboxMinX,
+                bbox_min_y: s.bboxMinY,
+                bbox_max_x: s.bboxMaxX,
+                bbox_max_y: s.bboxMaxY,
+                bbox_width: s.bboxW,
+                bbox_height: s.bboxH,
+                centroid_x: Number(s.centroidX.toFixed(2)),
+                centroid_y: Number(s.centroidY.toFixed(2)),
+            };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // Set column widths so the header text isn't truncated.
+    ws["!cols"] = [
+        { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 13 },
+        { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 },
+        { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Masks");
+    const base = videoName.replace(/\.[^./\\]+$/, "") || "mask_stats";
+
+    // next.config.ts aliases `fs` to an empty stub for browser bundling.
+    // XLSX.writeFile detects that stub as "Node available" and silently
+    // no-ops on fs.writeFileSync, so the file never reaches the user.
+    // Build the XLSX as an ArrayBuffer instead and trigger a download via
+    // an anchor — works in every browser without touching fs.
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+    const blob = new Blob([buf], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${base}_masks.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
 
 const STEPS: { id: Mode; label: string; hint: string }[] = [
     { id: 1, label: "업로드",   hint: "동영상 선택" },
@@ -190,6 +289,7 @@ export default function TrackPage() {
                 {mode === 2 && (
                     <Mode2
                         videoUrl={videoUrl}
+                        videoName={videoFile?.name ?? ""}
                         totalFrames={totalFrames}
                         fps={fps}
                         masks={masks}
@@ -412,8 +512,9 @@ function Mode1({ onUpload }: {
 
 // ─── Mode 2: Browse ───────────────────────────────────────────────────────────
 
-function Mode2({ videoUrl, totalFrames, fps, masks, onSelectFrame, onBack }: {
+function Mode2({ videoUrl, videoName, totalFrames, fps, masks, onSelectFrame, onBack }: {
     videoUrl: string;
+    videoName: string;
     totalFrames: number;
     fps: number;
     masks: MaskMap;
@@ -565,6 +666,16 @@ function Mode2({ videoUrl, totalFrames, fps, masks, onSelectFrame, onBack }: {
                 <Chip mono tone={masks.size > 0 ? "accent" : "default"}>
                     마스크 {masks.size}
                 </Chip>
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    leading={<Icon.Download size={12} />}
+                    onClick={() => downloadMaskXlsx(masks, fps, videoName)}
+                    disabled={masks.size === 0}
+                    title={masks.size === 0 ? "추적된 마스크가 없습니다" : "프레임별 마스크 통계를 .xlsx로 저장"}
+                >
+                    엑셀로 저장
+                </Button>
 
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: token.space.sp1 }}>
                     <ZoomGroup

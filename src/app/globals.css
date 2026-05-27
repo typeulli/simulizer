@@ -268,6 +268,30 @@ input, textarea, select { font-family: inherit; color: inherit; }
 
 svg[display=none] { display: none; }
 
+/* ── Scrollbars (theme-aware) ─────────────────────────────────────────
+ * Firefox uses the standard scrollbar-color / scrollbar-width;
+ * Chromium/WebKit uses the ::-webkit-scrollbar pseudo-elements.
+ * Both branches read from the same --border tokens so light/dark switch
+ * automatically. Monaco and Blockly draw their own synthetic scrollbars
+ * (HTML/SVG widgets, not native), so this doesn't reach them. */
+* {
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar       { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner { background: transparent; }
+
 /* ── Block Rendering ─────────────────────────────────────────────────── */
 
 .b-stack {

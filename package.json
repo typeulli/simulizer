@@ -43,7 +43,8 @@
     "remark-gfm": "^4.0.1",
     "vscode-languageclient": "^9.0.1",
     "vscode-ws-jsonrpc": "^3.5.0",
-    "wabt": "^1.0.39"
+    "wabt": "^1.0.39",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

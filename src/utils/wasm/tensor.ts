@@ -35,6 +35,33 @@ export function js_tensor_create_with_shape(varid: number, shape: number[]): num
     return varid;
 }
 
+// Deep-clones src's tensor into dst's slot. Any prior tensor at dst is disposed
+// first. Source's bufferSpace edits are flushed so the clone sees current data.
+export function js_tensor_clone(dstVarId: number, srcVarId: number): number {
+    flushBuffer(srcVarId);
+    const src = tfSpace[srcVarId];
+    if (!src) {
+        console.warn(`js_tensor_clone: src tensor not found: ${srcVarId}`);
+        return 0;
+    }
+    if (tfSpace[dstVarId]) {
+        try { tfSpace[dstVarId].dispose(); } catch { /* ignore */ }
+    }
+    delete bufferSpace[dstVarId];
+    tfSpace[dstVarId] = src.clone();
+    return dstVarId;
+}
+
+// Frees both the mutable buffer (if any) and the TF tensor at varid.
+export function js_tensor_dispose(varid: number): number {
+    delete bufferSpace[varid];
+    if (tfSpace[varid]) {
+        try { tfSpace[varid].dispose(); } catch { /* ignore */ }
+        delete tfSpace[varid];
+    }
+    return varid;
+}
+
 export function js_tensor_random_with_shape(
     varid: number,
     distType: number,
