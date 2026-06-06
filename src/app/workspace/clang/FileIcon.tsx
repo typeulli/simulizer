@@ -3,6 +3,7 @@ import React from "react";
 
 import { Icon } from "@/components/atoms/Icons";
 import { CONFIG_FILENAME } from "@/lib/compileConfig";
+import { isBinaryName } from "@/lib/cppBundle";
 
 // Real VS Code Material Icon Theme icons, imported straight from the installed
 // `material-icon-theme` package's SVG assets (the package IS the source — no
@@ -15,6 +16,7 @@ import hppIcon from "material-icon-theme/icons/hpp.svg";
 import jsonIcon from "material-icon-theme/icons/json.svg";
 import settingsIcon from "material-icon-theme/icons/settings.svg";
 import rocketIcon from "material-icon-theme/icons/rocket.svg";
+import imageIcon from "material-icon-theme/icons/image.svg";
 
 // The bundler's SVG import is returned as either a bare URL string (Turbopack)
 // or a StaticImageData `{ src }` (webpack). Normalize to a URL either way —
@@ -37,6 +39,7 @@ const ICONS = {
     json: toSrc(jsonIcon as unknown as SvgModule),
     settings: toSrc(settingsIcon as unknown as SvgModule),
     rocket: toSrc(rocketIcon as unknown as SvgModule),
+    image: toSrc(imageIcon as unknown as SvgModule),
 };
 
 type Props = {
@@ -54,6 +57,7 @@ function iconSrcFor(name: string, isEntry?: boolean): string | null {
     if (lower.endsWith(".cpp")) return ICONS.cpp;
     if (lower.endsWith(".hpp")) return ICONS.hpp;
     if (lower.endsWith(".json")) return ICONS.json;
+    if (isBinaryName(lower)) return ICONS.image; // any image (.ico/.png/.jpg/…)
     return null;
 }
 

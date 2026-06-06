@@ -110,13 +110,15 @@ function toMonacoHover(h: LspHover): monaco.languages.Hover {
 }
 
 // The JSON service inserts object-valued properties collapsed onto one line
-// (e.g. `"compile": {}`). For `compile` — which we know is an object — rewrite
-// the completion to a formatted, multi-line block with the cursor inside.
+// (e.g. `"compile": {}`). For our top-level sections — which we know are
+// objects — rewrite the completion to a formatted, multi-line block with the
+// cursor inside.
+const OBJECT_SECTIONS = new Set(["build", "compile", "environment"]);
 function expandObjectSnippet(item: LspCompletionItem): void {
-    if (item.label !== "compile") return;
+    if (!OBJECT_SECTIONS.has(item.label)) return;
     const existing = item.textEdit?.newText ?? item.insertText ?? "";
     const trailingComma = existing.trimEnd().endsWith(",") ? "," : "";
-    const newText = `"compile": {\n\t$0\n}${trailingComma}`;
+    const newText = `"${item.label}": {\n\t$0\n}${trailingComma}`;
     if (item.textEdit) {
         item.textEdit = { ...item.textEdit, newText };
     } else {

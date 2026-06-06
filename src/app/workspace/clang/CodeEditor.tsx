@@ -228,6 +228,23 @@ function setupPragmaCompletion() {
     }
 }
 
+// Debugger gutter/line decoration styles, injected once. Monaco places the
+// glyphMarginClassName element in the glyph margin; we paint a red dot for
+// breakpoints, a yellow arrow + line highlight for the current stop location.
+let debugStylesInjected = false;
+function injectDebugStyles() {
+    if (debugStylesInjected || typeof document === "undefined") return;
+    debugStylesInjected = true;
+    const style = document.createElement("style");
+    style.textContent = `
+.sim-bp-glyph::before{content:"";display:block;width:11px;height:11px;margin:6px 0 0 5px;border-radius:50%;background:#e51400;box-shadow:0 0 0 1px rgba(0,0,0,.25);}
+.sim-stopped-glyph::before{content:"\\25B6";display:block;color:#ffc000;font-size:12px;line-height:18px;margin-left:5px;}
+.sim-stopped-line{background:rgba(255,192,0,.16);}
+.sim-stopped-line-margin{background:rgba(255,192,0,.16);}
+`;
+    document.head.appendChild(style);
+}
+
 export type EditorFile = {
     /** workspace-relative path like "main.cpp" or "src/util.hpp" */
     path: string;
@@ -266,6 +283,10 @@ export type CodeEditorRef = {
     closeModel: (uri: string) => void;
     revealAt: (uri: string, line: number, column?: number) => void;
     focus: () => void;
+    /** Render breakpoint glyphs for `path`'s model at the given 1-based lines. */
+    renderBreakpoints: (path: string, lines: number[]) => void;
+    /** Highlight the current debug execution line (null clears all). */
+    renderStoppedLine: (path: string | null, line: number | null) => void;
     /**
      * Push external content into an open model. The files-sync effect never
      * overwrites an existing model (to protect in-flight edits), so callers
@@ -302,6 +323,8 @@ type Props = {
     onLspStatusChange?: (status: LspStatus) => void;
     /** Fired once the Monaco editor has booted (post first paint). */
     onEditorReady?: () => void;
+    /** User clicked the glyph margin to toggle a breakpoint at `path:line`. */
+    onToggleBreakpoint?: (path: string, line: number) => void;
     /** Workspace commands to expose in the editor command palette (F1). */
     editorCommands?: EditorCommand[];
     /**
@@ -333,6 +356,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     onUnresolvedDefinition,
     onLspStatusChange,
     onEditorReady,
+    onToggleBreakpoint,
     editorCommands,
     viewStateKey,
 }, ref) {
@@ -374,6 +398,13 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     useEffect(() => { onLspStatusChangeRef.current = onLspStatusChange; }, [onLspStatusChange]);
     const onEditorReadyRef = useRef(onEditorReady);
     useEffect(() => { onEditorReadyRef.current = onEditorReady; }, [onEditorReady]);
+    const onToggleBreakpointRef = useRef(onToggleBreakpoint);
+    useEffect(() => { onToggleBreakpointRef.current = onToggleBreakpoint; }, [onToggleBreakpoint]);
+
+    // Debug decorations. Breakpoint glyphs are per-model (persist across tab
+    // switches); the stopped-line highlight is a single decoration we move.
+    const bpDecorationsRef = useRef<Map<string, string[]>>(new Map());
+    const stoppedDecoRef = useRef<{ path: string; ids: string[] } | null>(null);
 
     // Latest files / commands for the palette actions (registered once, read
     // through these refs so updates don't require re-registration).
@@ -769,6 +800,38 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             editor.focus();
         },
         focus: () => { editorRef.current?.focus(); },
+        renderBreakpoints: (path: string, lines: number[]) => {
+            const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));
+            if (!model) return;
+            const old = bpDecorationsRef.current.get(path) ?? [];
+            const next = model.deltaDecorations(old, lines.map(line => ({
+                range: new monaco.Range(line, 1, line, 1),
+                options: { glyphMarginClassName: "sim-bp-glyph", stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
+            })));
+            bpDecorationsRef.current.set(path, next);
+        },
+        renderStoppedLine: (path: string | null, line: number | null) => {
+            // Clear any prior stopped-line decoration first.
+            const prev = stoppedDecoRef.current;
+            if (prev) {
+                const prevModel = monaco.editor.getModel(monaco.Uri.parse(pathToUri(prev.path)));
+                if (prevModel) prevModel.deltaDecorations(prev.ids, []);
+                stoppedDecoRef.current = null;
+            }
+            if (!path || line == null) return;
+            const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));
+            if (!model) return;
+            const ids = model.deltaDecorations([], [{
+                range: new monaco.Range(line, 1, line, 1),
+                options: {
+                    isWholeLine: true,
+                    className: "sim-stopped-line",
+                    marginClassName: "sim-stopped-line-margin",
+                    glyphMarginClassName: "sim-stopped-glyph",
+                },
+            }]);
+            stoppedDecoRef.current = { path, ids };
+        },
         syncModelContent: (path: string, content: string) => {
             const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));
             if (!model || model.getValue() === content) return;
@@ -814,6 +877,8 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         setupPragmaCompletion();
         setupJsonLanguageService();
         registerEditorCommands();
+        injectDebugStyles();
+        editor.updateOptions({ glyphMargin: true });
 
         // Rehydrate view-state map from localStorage before any swap so the
         // first restoreViewState in swapModelTo / handleEditorStartDone hits
@@ -902,6 +967,15 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         mouseDownDisposableRef.current?.dispose();
         mouseDownDisposableRef.current = editor.onMouseDown((e) => {
             const ev = e.event;
+            // Glyph-margin click toggles a breakpoint on the clicked line of the
+            // current (workspace) file.
+            if (ev.leftButton && e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+                const line = e.target.position?.lineNumber;
+                const uri = editor.getModel()?.uri.toString();
+                const path = uri ? uriToPath(uri) : null;
+                if (line && path) onToggleBreakpointRef.current?.(path, line);
+                return;
+            }
             if (!ev.leftButton) return;
             if (!ev.ctrlKey && !ev.metaKey) return;
             definitionClickAllowedRef.current = true;
@@ -1124,6 +1198,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                 editorOptions: {
                     automaticLayout: true,
                     scrollBeyondLastLine: false,
+                    glyphMargin: true,
                     readOnly,
                 },
             }}

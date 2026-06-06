@@ -408,6 +408,31 @@ export function js_tensor_toString(varid: number): string {
     return `Tensor(shape: [${shape.join(", ")}], dtype: ${tensor.dtype})\n${JSON.stringify(reshaped, null, 2)}`;
 }
 
+// Debugger-facing snapshot of a live JS-side tensor: shape + flat data + dtype.
+// Used by the in-app debugger's Tensor pretty-printer (the wasm only stores a
+// varid; the real values live here in TF.js). Returns null if the varid is
+// unknown/disposed.
+// Cheap shape-only peek (no dataSync read-back) for the debugger's tensor
+// value summary in the variables list.
+export function js_tensor_shape(varid: number): { shape: number[]; dtype: string } | null {
+    const tensor = tfSpace[varid];
+    if (!tensor) return null;
+    return { shape: tensor.shape.slice(), dtype: tensor.dtype };
+}
+
+export function js_tensor_debug(
+    varid: number,
+): { shape: number[]; data: number[]; dtype: string } | null {
+    flushBuffer(varid);
+    const tensor = tfSpace[varid];
+    if (!tensor) return null;
+    return {
+        shape: tensor.shape.slice(),
+        data: Array.from(tensor.dataSync() as Float32Array),
+        dtype: tensor.dtype,
+    };
+}
+
 export function js_tensor_get_mat_data(
     tensorId: number,
 ): { data: Float32Array; rows: number; cols: number } | null {

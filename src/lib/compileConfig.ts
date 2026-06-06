@@ -1,12 +1,12 @@
 // Project configuration for a C++ project.
 //
 // Lives as an optional `config.json` file at the project root (a normal file in
-// the bundle tree — created/edited/deleted like any .cpp/.hpp). Build/compile
-// options are namespaced under a top-level `"compile"` object so the file can
-// grow other sections later. When absent or empty, defaults apply. The frontend
-// is the source of truth: it parses and validates this file, then sends the
-// resolved options to the compile backend (the file itself is never shipped into
-// the build sandbox).
+// the bundle tree). Settings are namespaced under top-level sections:
+//   build:       target OS + exe icon          (Build only)
+//   compile:     optimization / std / defines   (Build and Run)
+//   environment: TensorFlow.js device           (Run only)
+// When absent or empty, defaults apply. config.json ships inside the bundle
+// tree; the backend parses it server-side as the source of truth.
 
 import type { TreeNode, FileNode } from "./cppBundle";
 
@@ -16,9 +16,29 @@ export type TargetSystem = "auto" | "windows" | "linux" | "macos";
 export type OptLevel = "O0" | "O1" | "O2" | "O3" | "Os";
 export type CppStd = "c++17" | "c++20" | "c++23";
 
-export type CompileOptions = {
+// ─── build (config["build"]) — Build-only: target OS + exe icon ────────────
+export type BuildOptions = {
     /** Build target OS — Build only, ignored by Run (emcc). */
     system: TargetSystem;
+    /**
+     * Relative path (anywhere in the project) to an image used as the Windows
+     * exe icon. Empty = default icon. Non-.ico images are converted to .ico
+     * server-side. Build-only and Windows-only.
+     */
+    icon: string;
+};
+
+export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
+    system: "auto",
+    icon: "",
+};
+
+// Default folder the settings window's "이미지 업로드" button drops new icons
+// into. The icon path itself may point anywhere in the project.
+export const ICON_DIR = "build/icon";
+
+// ─── compile (config["compile"]) — applies to both Build and Run ───────────
+export type CompileOptions = {
     optimization: OptLevel;
     std: CppStd;
     /** Preprocessor defines, e.g. ["FOO", "BAR=1"] → -DFOO -DBAR=1 */
@@ -26,7 +46,6 @@ export type CompileOptions = {
 };
 
 export const DEFAULT_COMPILE_OPTIONS: CompileOptions = {
-    system: "auto",
     optimization: "O3",
     std: "c++17",
     defines: [],
@@ -70,73 +89,88 @@ const STDS: CppStd[] = ["c++17", "c++20", "c++23"];
 export const DEFINE_PATTERN = "^[A-Za-z_][A-Za-z0-9_]*(=[A-Za-z0-9_.]+)?$";
 const DEFINE_RE = new RegExp(DEFINE_PATTERN);
 
-export type ParsedCompileConfig = {
-    options: CompileOptions;
-    /** Non-null only when the file couldn't be parsed as a JSON object at all. */
-    error: string | null;
-};
+// ─── Shared section reader ─────────────────────────────────────────────────
+// Parse config.json once and pull out a named top-level object section. `verb`
+// ("빌드"/"실행") tailors the fall-back-to-defaults warning. Unknown/out-of-range
+// field values are left for each caller to drop silently; only a hard JSON/shape
+// failure yields an `error` worth a build-time warning.
+type SectionResult = { section: Record<string, unknown>; error: string | null };
 
-// Parse + validate config.json content, returning the resolved compile options
-// from its `compile` section. Unknown / out-of-range field values fall back to
-// their default silently (the editor surfaces schema errors live); only a hard
-// JSON/shape failure yields an `error` worth a build-time warning.
-export function parseCompileConfig(raw: string | undefined | null): ParsedCompileConfig {
-    if (raw == null || raw.trim() === "") {
-        return { options: { ...DEFAULT_COMPILE_OPTIONS }, error: null };
-    }
+function readConfigSection(raw: string | undefined | null, name: string, verb: string): SectionResult {
+    if (raw == null || raw.trim() === "") return { section: {}, error: null };
     let data: unknown;
     try {
         data = JSON.parse(raw);
     } catch {
-        return {
-            options: { ...DEFAULT_COMPILE_OPTIONS },
-            error: "config.json 을 읽을 수 없어요 (JSON 형식 오류). 기본 설정으로 빌드합니다.",
-        };
+        return { section: {}, error: `config.json 을 읽을 수 없어요 (JSON 형식 오류). 기본 설정으로 ${verb}합니다.` };
     }
     if (typeof data !== "object" || data === null || Array.isArray(data)) {
-        return {
-            options: { ...DEFAULT_COMPILE_OPTIONS },
-            error: "config.json 은 객체(object)여야 해요. 기본 설정으로 빌드합니다.",
-        };
+        return { section: {}, error: `config.json 은 객체(object)여야 해요. 기본 설정으로 ${verb}합니다.` };
     }
-    const compileRaw = (data as Record<string, unknown>).compile;
-    // No "compile" section → defaults (a config.json may hold only other sections).
-    if (compileRaw === undefined) {
-        return { options: { ...DEFAULT_COMPILE_OPTIONS }, error: null };
+    const raw2 = (data as Record<string, unknown>)[name];
+    if (raw2 === undefined) return { section: {}, error: null };
+    if (typeof raw2 !== "object" || raw2 === null || Array.isArray(raw2)) {
+        return { section: {}, error: `config.json 의 "${name}" 은 객체여야 해요. 기본 설정으로 ${verb}합니다.` };
     }
-    if (typeof compileRaw !== "object" || compileRaw === null || Array.isArray(compileRaw)) {
-        return {
-            options: { ...DEFAULT_COMPILE_OPTIONS },
-            error: 'config.json 의 "compile" 은 객체여야 해요. 기본 설정으로 빌드합니다.',
-        };
+    return { section: raw2 as Record<string, unknown>, error: null };
+}
+
+function configContent(tree: TreeNode[]): string | undefined {
+    const node = tree.find((n): n is FileNode => n.type === "file" && n.name === CONFIG_FILENAME);
+    return node?.content;
+}
+
+// ─── build parser ──────────────────────────────────────────────────────────
+export type ParsedBuildConfig = {
+    options: BuildOptions;
+    /** Non-null only when config.json couldn't be parsed as a JSON object. */
+    error: string | null;
+};
+
+export function parseBuildConfig(raw: string | undefined | null): ParsedBuildConfig {
+    const { section, error } = readConfigSection(raw, "build", "빌드");
+    const options: BuildOptions = { ...DEFAULT_BUILD_OPTIONS };
+    if (typeof section.system === "string" && SYSTEMS.includes(section.system as TargetSystem)) {
+        options.system = section.system as TargetSystem;
     }
-    const c = compileRaw as Record<string, unknown>;
+    if (typeof section.icon === "string") {
+        options.icon = section.icon.trim();
+    }
+    return { options, error };
+}
+
+export function readBuildConfig(tree: TreeNode[]): ParsedBuildConfig {
+    return parseBuildConfig(configContent(tree));
+}
+
+// ─── compile parser ────────────────────────────────────────────────────────
+export type ParsedCompileConfig = {
+    options: CompileOptions;
+    error: string | null;
+};
+
+export function parseCompileConfig(raw: string | undefined | null): ParsedCompileConfig {
+    const { section, error } = readConfigSection(raw, "compile", "빌드");
     const options: CompileOptions = { ...DEFAULT_COMPILE_OPTIONS };
-    if (typeof c.system === "string" && SYSTEMS.includes(c.system as TargetSystem)) {
-        options.system = c.system as TargetSystem;
+    if (typeof section.optimization === "string" && OPT_LEVELS.includes(section.optimization as OptLevel)) {
+        options.optimization = section.optimization as OptLevel;
     }
-    if (typeof c.optimization === "string" && OPT_LEVELS.includes(c.optimization as OptLevel)) {
-        options.optimization = c.optimization as OptLevel;
+    if (typeof section.std === "string" && STDS.includes(section.std as CppStd)) {
+        options.std = section.std as CppStd;
     }
-    if (typeof c.std === "string" && STDS.includes(c.std as CppStd)) {
-        options.std = c.std as CppStd;
-    }
-    if (Array.isArray(c.defines)) {
-        options.defines = c.defines.filter(
+    if (Array.isArray(section.defines)) {
+        options.defines = section.defines.filter(
             (d): d is string => typeof d === "string" && DEFINE_RE.test(d),
         );
     }
-    return { options, error: null };
+    return { options, error };
 }
 
-// Read + parse the root `config.json` from a bundle tree (if present).
 export function readCompileConfig(tree: TreeNode[]): ParsedCompileConfig {
-    const node = tree.find(
-        (n): n is FileNode => n.type === "file" && n.name === CONFIG_FILENAME,
-    );
-    return parseCompileConfig(node?.content);
+    return parseCompileConfig(configContent(tree));
 }
 
+// ─── environment parser ──────────────────────────────────────────────────
 export type ParsedEnvironmentConfig = {
     environment: EnvironmentOptions;
     /** Whether `environment.device` was explicitly present (vs defaulted). */
@@ -144,72 +178,31 @@ export type ParsedEnvironmentConfig = {
     error: string | null;
 };
 
-// Parse + validate the `environment` section of config.json. Like the compile
-// parser, unknown/out-of-range values fall back to defaults silently; only a
-// hard JSON/shape failure yields an `error`.
 export function parseEnvironmentConfig(raw: string | undefined | null): ParsedEnvironmentConfig {
-    if (raw == null || raw.trim() === "") {
-        return { environment: { ...DEFAULT_ENVIRONMENT }, deviceExplicit: false, error: null };
-    }
-    let data: unknown;
-    try {
-        data = JSON.parse(raw);
-    } catch {
-        return { environment: { ...DEFAULT_ENVIRONMENT }, deviceExplicit: false, error: "config.json 을 읽을 수 없어요 (JSON 형식 오류). 기본 설정으로 실행합니다." };
-    }
-    if (typeof data !== "object" || data === null || Array.isArray(data)) {
-        return { environment: { ...DEFAULT_ENVIRONMENT }, deviceExplicit: false, error: "config.json 은 객체(object)여야 해요. 기본 설정으로 실행합니다." };
-    }
-    const envRaw = (data as Record<string, unknown>).environment;
-    if (envRaw === undefined) {
-        return { environment: { ...DEFAULT_ENVIRONMENT }, deviceExplicit: false, error: null };
-    }
-    if (typeof envRaw !== "object" || envRaw === null || Array.isArray(envRaw)) {
-        return { environment: { ...DEFAULT_ENVIRONMENT }, deviceExplicit: false, error: 'config.json 의 "environment" 은 객체여야 해요. 기본 설정으로 실행합니다.' };
-    }
-    const e = envRaw as Record<string, unknown>;
+    const { section, error } = readConfigSection(raw, "environment", "실행");
     const environment: EnvironmentOptions = { ...DEFAULT_ENVIRONMENT };
     let deviceExplicit = false;
-    if (typeof e.device === "string" && DEVICES.includes(e.device as DeviceKind)) {
-        environment.device = e.device as DeviceKind;
+    if (typeof section.device === "string" && DEVICES.includes(section.device as DeviceKind)) {
+        environment.device = section.device as DeviceKind;
         deviceExplicit = true;
     }
-    return { environment, deviceExplicit, error: null };
+    return { environment, deviceExplicit, error };
 }
 
 export function readEnvironmentConfig(tree: TreeNode[]): ParsedEnvironmentConfig {
-    const node = tree.find(
-        (n): n is FileNode => n.type === "file" && n.name === CONFIG_FILENAME,
-    );
-    return parseEnvironmentConfig(node?.content);
-}
-
-// Drop every `.json` file from the tree (recursively). The compile backend
-// only accepts .cpp/.hpp sources, and config/data JSON has no place in the
-// build sandbox — so we strip it before shipping the tree to /build or /emcc.
-export function stripJsonFiles(tree: TreeNode[]): TreeNode[] {
-    const out: TreeNode[] = [];
-    for (const n of tree) {
-        if (n.type === "file") {
-            if (n.name.toLowerCase().endsWith(".json")) continue;
-            out.push(n);
-        } else {
-            out.push({ ...n, contents: stripJsonFiles(n.contents) });
-        }
-    }
-    return out;
+    return parseEnvironmentConfig(configContent(tree));
 }
 
 // JSON Schema used by the editor for `config.json` autocomplete + validation.
-// Build options live under the top-level `compile` object; the top level itself
-// stays open so future config sections don't trip validation.
+// Each top-level section is closed (additionalProperties:false); the top level
+// itself stays open so future sections don't trip validation.
 export const CONFIG_SCHEMA = {
     type: "object",
     properties: {
-        compile: {
+        build: {
             type: "object",
             additionalProperties: false,
-            description: "C++ 빌드/실행 설정.",
+            description: "빌드(실행 파일 생성) 설정. Build 전용.",
             properties: {
                 system: {
                     type: "string",
@@ -217,6 +210,18 @@ export const CONFIG_SCHEMA = {
                     default: "auto",
                     description: "빌드 대상 OS. Build 전용이며 Run(브라우저 실행)에서는 무시됩니다.",
                 },
+                icon: {
+                    type: "string",
+                    default: "",
+                    description: "Windows exe 아이콘으로 쓸 이미지 파일의 상대 경로 (예: build/icon/app.png). 프로젝트 어디든 가능하며, .ico 가 아니면 서버에서 .ico 로 변환됩니다. Build(Windows)에서만 적용됩니다.",
+                },
+            },
+        },
+        compile: {
+            type: "object",
+            additionalProperties: false,
+            description: "컴파일 설정. Build·Run 모두에 적용됩니다.",
+            properties: {
                 optimization: {
                     type: "string",
                     enum: OPT_LEVELS,
@@ -254,18 +259,17 @@ export const CONFIG_SCHEMA = {
 } as const;
 
 // ─── Settings-window form model ───────────────────────────────────────────
-// The VS Code-style settings modal renders one control per `compile` field.
-// Descriptions are sourced from CONFIG_SCHEMA so the GUI and the JSON schema
-// stay in sync (single source of truth).
+// The VS Code-style settings modal renders one control per field. Descriptions
+// are sourced from CONFIG_SCHEMA so the GUI and the JSON schema stay in sync.
+const BUILD_PROPS = CONFIG_SCHEMA.properties.build.properties;
 const COMPILE_PROPS = CONFIG_SCHEMA.properties.compile.properties;
 
 export type EnumCompileField = {
-    key: "system" | "optimization" | "std";
+    key: "optimization" | "std";
     kind: "enum";
     label: string;
     description: string;
     options: readonly string[];
-    /** Optional human labels for option values (e.g. auto → "Auto"). */
     optionLabels?: Record<string, string>;
 };
 export type ListCompileField = {
@@ -279,17 +283,36 @@ export type ListCompileField = {
 export type CompileField = EnumCompileField | ListCompileField;
 
 export const COMPILE_FIELDS: CompileField[] = [
-    { key: "system", kind: "enum", label: "Target System", description: COMPILE_PROPS.system.description, options: SYSTEMS, optionLabels: SYSTEM_LABEL },
     { key: "optimization", kind: "enum", label: "Optimization", description: COMPILE_PROPS.optimization.description, options: OPT_LEVELS },
     { key: "std", kind: "enum", label: "C++ Standard", description: COMPILE_PROPS.std.description, options: STDS },
     { key: "defines", kind: "list", label: "Defines", description: COMPILE_PROPS.defines.description, itemPattern: DEFINE_PATTERN, placeholder: "예: DEBUG 또는 VERSION=2" },
 ];
 
+// Build fields rendered generically in the settings window's 빌드 tab (the icon
+// control is rendered manually alongside these).
+export type BuildField = {
+    key: "system";
+    kind: "enum";
+    label: string;
+    description: string;
+    options: readonly string[];
+    optionLabels?: Record<string, string>;
+};
+
+export const BUILD_FIELDS: BuildField[] = [
+    { key: "system", kind: "enum", label: "Target System", description: BUILD_PROPS.system.description, options: SYSTEMS, optionLabels: SYSTEM_LABEL },
+];
+
 // Only the fields that differ from their defaults — we never write defaults to
 // config.json (a default-valued project keeps an empty, or absent, section).
+function nonDefaultBuild(b: BuildOptions): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (b.system !== DEFAULT_BUILD_OPTIONS.system) out.system = b.system;
+    if (b.icon && b.icon.trim() !== "") out.icon = b.icon.trim();
+    return out;
+}
 function nonDefaultCompile(o: CompileOptions): Record<string, unknown> {
     const out: Record<string, unknown> = {};
-    if (o.system !== DEFAULT_COMPILE_OPTIONS.system) out.system = o.system;
     if (o.optimization !== DEFAULT_COMPILE_OPTIONS.optimization) out.optimization = o.optimization;
     if (o.std !== DEFAULT_COMPILE_OPTIONS.std) out.std = o.std;
     if (o.defines.length > 0) out.defines = o.defines;
@@ -308,7 +331,7 @@ function nonDefaultEnvironment(e: EnvironmentOptions): Record<string, unknown> {
 // content untouched) when the existing file can't be parsed.
 export function serializeProjectConfig(
     rawConfig: string | undefined | null,
-    next: { compile: CompileOptions; environment: EnvironmentOptions },
+    next: { build: BuildOptions; compile: CompileOptions; environment: EnvironmentOptions },
 ): { content: string; error: string | null } {
     let base: Record<string, unknown> = {};
     if (rawConfig != null && rawConfig.trim() !== "") {
@@ -325,6 +348,8 @@ export function serializeProjectConfig(
             base = data as Record<string, unknown>;
         }
     }
+    const build = nonDefaultBuild(next.build);
+    if (Object.keys(build).length > 0) base.build = build; else delete base.build;
     const compile = nonDefaultCompile(next.compile);
     if (Object.keys(compile).length > 0) base.compile = compile; else delete base.compile;
     const environment = nonDefaultEnvironment(next.environment);
@@ -336,6 +361,7 @@ export function serializeProjectConfig(
 // written, so a fresh config is just an empty object.
 export function defaultConfigJson(): string {
     return serializeProjectConfig(null, {
+        build: DEFAULT_BUILD_OPTIONS,
         compile: DEFAULT_COMPILE_OPTIONS,
         environment: DEFAULT_ENVIRONMENT,
     }).content;

@@ -8,8 +8,11 @@ import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { useConsolePanel } from "@/components/console";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import type { ClangWorkerInMsg } from "@/utils/wasm/clang-worker";
+import type { DebugOutMsg } from "@/utils/wasm/debug-protocol";
 import { vec_field_to_image_url, mat_data_to_image_url } from "@/utils/wasm/tensor";
 import type { ClangDiagnostic, CodeEditorRef, EditorCommand, EditorFile, LspStatus } from "./clang/CodeEditor";
+import { useClangDebug } from "./clang/useClangDebug";
+import DebugPanel from "./clang/DebugPanel";
 import { pathToUri, uriToPath } from "./clang/uri";
 import FileTree from "./clang/FileTree";
 import { FileIcon } from "./clang/FileIcon";
@@ -28,6 +31,7 @@ import {
     validateFileName,
     validateFolderName,
     splitPath,
+    isBinaryName,
     type CppBundle,
 } from "@/lib/cppBundle";
 
@@ -43,13 +47,15 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organis
 import { AlertModal, type AlertVariant } from "@/components/organisms/AlertModal";
 import { CompileSettingsModal } from "@/components/workspace-modals/CompileSettingsModal";
 import {
+    readBuildConfig,
     readCompileConfig,
     readEnvironmentConfig,
-    stripJsonFiles,
     serializeProjectConfig,
     defaultConfigJson,
     SYSTEM_LABEL,
     CONFIG_FILENAME,
+    ICON_DIR,
+    type BuildOptions,
     type CompileOptions,
     type EnvironmentOptions,
     type DeviceKind,
@@ -108,6 +114,44 @@ type RunState = "idle" | "loading" | "compiling" | "running" | "done" | "error";
 type BuildState = "idle" | "building" | "downloading" | "done" | "error";
 type BuildProgress = { step: number; total: number; message: string };
 
+// ─── Binary (base64) file helpers ─────────────────────────────────────────
+// Uploaded images (icons) are stored as base64 in the bundle. Read a File into
+// raw base64 (no `data:` prefix) and decode base64 back to bytes for download.
+function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const res = reader.result as string;
+            const comma = res.indexOf(",");
+            resolve(comma >= 0 ? res.slice(comma + 1) : res);
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
+}
+
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(new ArrayBuffer(bin.length));
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+}
+
+// MIME for an image data: URL, by extension (used for the preview overlay).
+function imageMimeFor(name: string): string {
+    const dot = name.lastIndexOf(".");
+    switch (dot >= 0 ? name.slice(dot).toLowerCase() : "") {
+        case ".png": return "image/png";
+        case ".jpg":
+        case ".jpeg": return "image/jpeg";
+        case ".gif": return "image/gif";
+        case ".bmp": return "image/bmp";
+        case ".webp": return "image/webp";
+        case ".ico": return "image/x-icon";
+        default: return "application/octet-stream";
+    }
+}
+
 type Props = {
     initialFile: FileDetail;
     initialOwner: boolean;
@@ -151,11 +195,23 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // `compile` section). When malformed we fall back to defaults and warn.
     const [configAlert, setConfigAlert] = useState<{ variant: AlertVariant; title: string; message: string } | null>(null);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    // Path of a binary (image) bundle file shown in the preview overlay — these
+    // aren't editable, so clicking one opens a preview instead of an editor tab.
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
     const compileCfg = useMemo(() => readCompileConfig(bundle.tree), [bundle.tree]);
+    // Build options (target OS + exe icon) live under config["build"].
+    const buildCfg = useMemo(() => readBuildConfig(bundle.tree), [bundle.tree]);
     // Runtime environment (TF.js device) lives under config["environment"].
     const envCfg = useMemo(() => readEnvironmentConfig(bundle.tree), [bundle.tree]);
+    // Every image file in the project — the choices offered by the settings
+    // window's icon-path autocomplete. The icon may live anywhere; .ico is used
+    // as-is and other formats are converted to .ico server-side at build time.
+    const iconChoices = useMemo(
+        () => listBundleFiles(bundle.tree).map(f => f.path).filter(p => isBinaryName(p)),
+        [bundle.tree],
+    );
 
-    const [rightTab, setRightTab] = useState<"console" | "infos">("console");
+    const [rightTab, setRightTab] = useState<"console" | "infos" | "debug">("console");
     const [infos, setInfos] = useState<ClangDiagnostic[]>([]);
     const codeEditorRef = useRef<CodeEditorRef | null>(null);
 
@@ -219,7 +275,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // Editor finished booting → open the initial connect prompt (once).
     // Skipped on mobile, where the editor is read-only and the command
     // palette (the only way to re-open it) isn't available.
+    const [editorReady, setEditorReady] = useState(false);
     const handleEditorReady = useCallback(() => {
+        setEditorReady(true);  // models now exist → restored breakpoint glyphs can render
         if (initialLspPromptDoneRef.current) return;
         initialLspPromptDoneRef.current = true;
         if (isMobile || lspConnectedRef.current) return;
@@ -269,9 +327,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         return [...bundleTabs, ...systemTabs];
     }, [bundle.tree, bundle.ui.openTabs, bundle.entry, isOwner, systemTabs]);
 
-    // ─── Files passed to the editor (all bundle files) ────────────────────
+    // ─── Files passed to the editor (text bundle files) ───────────────────
+    // Binary assets (icons) are excluded — Monaco only ever sees source text.
     const editorFiles: EditorFile[] = useMemo(
-        () => listBundleFiles(bundle.tree).map(({ path, file }) => ({ path, content: file.content })),
+        () => listBundleFiles(bundle.tree)
+            .filter(({ path }) => !isBinaryName(path))
+            .map(({ path, file }) => ({ path, content: file.content })),
         [bundle.tree],
     );
 
@@ -630,6 +691,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // upload invocation.
     const uploadInputRef = useRef<HTMLInputElement | null>(null);
     const uploadParentRef = useRef<string>("");
+    // Dedicated hidden input for the settings window's ".ico 업로드" button —
+    // always targets build/icon and sets compile.icon on success.
+    const iconUploadInputRef = useRef<HTMLInputElement | null>(null);
 
     const handleUploadFile = useCallback((parentPath: string) => {
         if (!isOwnerRef.current) return;
@@ -656,10 +720,14 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         }
         const parentPath = uploadParentRef.current;
         const path = parentPath ? `${parentPath}/${name}` : name;
-        const content = await file.text();
+        const binary = isBinaryName(name);
+        const content = binary ? await fileToBase64(file) : await file.text();
         applyBundleChange(prev => {
-            const nextTree = bundleAddFile(prev.tree, path, content);
+            const nextTree = bundleAddFile(prev.tree, path, content, binary ? "base64" : undefined);
             if (!nextTree) { window.alert("같은 이름의 파일이 이미 있습니다."); return null; }
+            // Binary assets (icons) aren't editable — add them to the tree
+            // without opening an editor tab. Text files open as before.
+            if (binary) return { ...prev, tree: nextTree };
             return {
                 ...prev,
                 tree: nextTree,
@@ -672,11 +740,61 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         });
     }, [applyBundleChange]);
 
+    // Settings window ".ico 업로드": pick a .ico, store it under build/icon,
+    // and point compile.icon at it — all in one persisted change.
+    const handleUploadIcon = useCallback(() => {
+        if (!isOwnerRef.current) return;
+        if (iconUploadInputRef.current) {
+            iconUploadInputRef.current.value = "";
+            iconUploadInputRef.current.click();
+        }
+    }, []);
+
+    const handleIconUploadChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file || !isOwnerRef.current) return;
+        const name = file.name;
+        if (!isBinaryName(name)) { window.alert("이미지 파일만 올릴 수 있어요 (.ico / .png / .jpg / .gif / .bmp / .webp)."); return; }
+        const nameErr = validateFileName(name);
+        if (nameErr) { window.alert(nameErr); return; }
+        // Source images can be larger than a finished .ico (the server converts).
+        if (file.size > 4 * 1024 * 1024) { window.alert("파일이 너무 큽니다 (4MB 이하)"); return; }
+        const base64 = await fileToBase64(file);
+        const path = `${ICON_DIR}/${name}`;
+        // Serialize config.json up front so a parse error aborts before we touch
+        // the tree (writeProjectConfig has the same guard).
+        const existingCfg = findBundleFile(pendingBundleRef.current.tree, CONFIG_FILENAME);
+        const cfg = serializeProjectConfig(existingCfg?.content ?? null, {
+            build: { ...buildCfg.options, icon: path },
+            compile: compileCfg.options,
+            environment: envCfg.environment,
+        });
+        if (cfg.error) { window.alert("config.json 형식 오류로 아이콘을 설정할 수 없어요. JSON 으로 열어 먼저 고쳐주세요."); return; }
+        applyBundleChange(prev => {
+            // 1) add (replacing any existing file at the path) the icon under
+            //    build/icon — remove+add guarantees base64 encoding even if a
+            //    stray text file already sat at that path.
+            const base = findBundleFile(prev.tree, path) ? bundleRemoveNode(prev.tree, path) : prev.tree;
+            let tree = bundleAddFile(base, path, base64, "base64");
+            if (!tree) return null;
+            // 2) point compile.icon at it in config.json
+            tree = findBundleFile(tree, CONFIG_FILENAME)
+                ? setFileContent(tree, CONFIG_FILENAME, cfg.content)
+                : bundleAddFile(tree, CONFIG_FILENAME, cfg.content);
+            if (!tree) return null;
+            return { ...prev, tree };
+        });
+        // Mirror into the open config.json model, matching writeProjectConfig.
+        codeEditorRef.current?.syncModelContent(CONFIG_FILENAME, cfg.content);
+    }, [applyBundleChange, buildCfg, compileCfg, envCfg]);
+
     const handleDownloadTreeFile = useCallback((path: string) => {
         const file = findBundleFile(pendingBundleRef.current.tree, path);
         if (!file) return;
-        const ext = path.toLowerCase().endsWith(".hpp") ? "text/x-c++hdr" : "text/x-c++src";
-        const blob = new Blob([file.content], { type: `${ext};charset=utf-8` });
+        const blob = file.encoding === "base64"
+            ? new Blob([base64ToBytes(file.content)], { type: "application/octet-stream" })
+            : new Blob([file.content], { type: `${path.toLowerCase().endsWith(".hpp") ? "text/x-c++hdr" : "text/x-c++src"};charset=utf-8` });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -691,6 +809,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, []);
 
     const handleOpenFile = useCallback((path: string) => {
+        // Binary assets (icons) can't be edited — show a preview overlay
+        // instead of routing them through the (text-only) editor.
+        if (isBinaryName(path)) { setImagePreview(path); return; }
         const prev = pendingBundleRef.current;
         const openTabs = prev.ui.openTabs.includes(path)
             ? prev.ui.openTabs
@@ -786,8 +907,18 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         editorNoticeTimerRef.current = setTimeout(() => setEditorNotice(null), 4500);
     }, []);
 
-    const handleWorkerMessage = useCallback((e: MessageEvent<WorkerOutMsg>) => {
+    // Set each render to the latest debug-message handler (the worker handler
+    // below is stable, so it routes debug events through this ref).
+    const debugHandlerRef = useRef<((m: DebugOutMsg) => boolean) | null>(null);
+
+    const handleWorkerMessage = useCallback((e: MessageEvent<WorkerOutMsg | DebugOutMsg>) => {
         const msg = e.data;
+
+        // Debug events ("dbg-*") are owned by the useClangDebug hook.
+        if (typeof msg.type === "string" && msg.type.startsWith("dbg-")) {
+            debugHandlerRef.current?.(msg as DebugOutMsg);
+            return;
+        }
         const b = bindingsRef.current;
 
         if (msg.type === "ready") { setRunState("idle"); return; }
@@ -830,7 +961,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         }
     }, []);
 
-    useEffect(() => {
+    const createWorker = useCallback(() => {
         const worker = new Worker(
             new URL("@/utils/wasm/clang-worker.ts", import.meta.url),
             { type: "module" }
@@ -838,11 +969,76 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         worker.addEventListener("message", handleWorkerMessage);
         workerRef.current = worker;
         worker.postMessage({ type: "init" } satisfies ClangWorkerInMsg);
+        return worker;
+    }, [handleWorkerMessage]);
+
+    useEffect(() => {
+        const worker = createWorker();
         return () => {
             worker.terminate();
             workerRef.current = null;
         };
-    }, [handleWorkerMessage]);
+    }, [createWorker]);
+
+    // Hard-stop for a runaway debug session: kill the worker and respawn it.
+    const recreateWorker = useCallback(() => {
+        workerRef.current?.terminate();
+        createWorker();
+    }, [createWorker]);
+
+    // Persist breakpoint changes into the project bundle (autosaved like other
+    // ui state). Defined before the hook so it can be passed in.
+    const handleBreakpointsChange = useCallback((bps: Record<string, number[]>) => {
+        const prev = pendingBundleRef.current;
+        const next: CppBundle = { ...prev, ui: { ...prev.ui, breakpoints: bps } };
+        pendingBundleRef.current = next;
+        setBundle(next);
+        scheduleAutosave();
+    }, [scheduleAutosave]);
+
+    const debug = useClangDebug({
+        apiBase: API_BASE,
+        workerRef,
+        codeEditorRef,
+        getBundle: useCallback(() => ({ tree: bundle.tree, entry: bundle.entry }), [bundle.tree, bundle.entry]),
+        recreateWorker,
+        onLog: useCallback((kind: "info" | "error" | "success", text: string) => {
+            bindingsRef.current.addLog(kind, text);
+        }, []),
+        clearConsole: clearLog,
+        initialBreakpoints: bundle.ui.breakpoints,
+        onBreakpointsChange: handleBreakpointsChange,
+    });
+    debugHandlerRef.current = debug.handleDebugMessage;
+
+    // Surface the debug panel while a session is compiling/running/paused.
+    const debugActive = debug.status === "compiling" || debug.status === "running" || debug.status === "stopped";
+    useEffect(() => {
+        if (debugActive) setRightTab("debug");
+    }, [debugActive]);
+
+    // Re-apply breakpoint glyphs + the stop line when the active model changes
+    // (a freshly-opened file's model starts with no decorations).
+    const reapplyDecorations = debug.reapplyDecorations;
+    useEffect(() => { reapplyDecorations(); }, [activeUri, editorReady, reapplyDecorations]);
+
+    // Mirror the debug session into the shared run-state + top "output" area so
+    // it behaves exactly like Run: cleared on start, the return value shown at
+    // the end (the worker posts the same "result"/"done" messages on finish).
+    useEffect(() => {
+        switch (debug.status) {
+            case "compiling": setResultValue(null); setErrorMsg(null); setRunState("compiling"); break;
+            case "running":
+            case "stopped":   setRunState("running"); break;
+            case "error":     setRunState("error"); break;
+            case "terminated":
+                // Session over — surface the result like Run (value/"done" come
+                // via the worker's result/done messages); jump back to console.
+                setRightTab("console");
+                break;
+            // "idle": leave the run UI untouched.
+        }
+    }, [debug.status]);
 
     useEffect(() => {
         if (!isMobile) return;
@@ -871,7 +1067,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             const res = await fetch(`${API_BASE}/compile/emcc`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ tree: stripJsonFiles(bundle.tree), entry: bundle.entry, options: compileCfg.options }),
+                // Send the whole bundle (incl. config.json + .ico as files); the
+                // server reads compile options from config.json itself.
+                body: JSON.stringify({ tree: bundle.tree, entry: bundle.entry }),
             });
             if (!res.ok) {
                 const errText = await res.text();
@@ -931,7 +1129,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 fetchEventSource(buildUrl, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ tree: stripJsonFiles(bundle.tree), entry: bundle.entry, lang: "cpp", options: compileCfg.options }),
+                    // Send the whole bundle (incl. config.json + .ico as files);
+                    // the server reads compile options + resolves the exe icon
+                    // from config.json's compile.icon relative path itself.
+                    body: JSON.stringify({ tree: bundle.tree, entry: bundle.entry, lang: "cpp" }),
                     signal: ctrl.signal,
                     openWhenHidden: true,
                     async onopen(res) {
@@ -1021,14 +1222,14 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         });
     }, [applyBundleChange, handleOpenFile]);
 
-    // Write the project config (compile + environment) back into config.json,
-    // creating the file on the first change. Only non-default values are
-    // persisted; other top-level keys are preserved. Returns false if the
-    // existing file couldn't be parsed (we won't clobber it). Owner-only.
-    const writeProjectConfig = useCallback((compile: CompileOptions, environment: EnvironmentOptions): boolean => {
+    // Write the project config (build + compile + environment) back into
+    // config.json, creating the file on the first change. Only non-default
+    // values are persisted; other top-level keys are preserved. Returns false
+    // if the existing file couldn't be parsed (we won't clobber it). Owner-only.
+    const writeProjectConfig = useCallback((build: BuildOptions, compile: CompileOptions, environment: EnvironmentOptions): boolean => {
         if (!isOwnerRef.current) return false;
         const existing = findBundleFile(pendingBundleRef.current.tree, CONFIG_FILENAME);
-        const { content, error } = serializeProjectConfig(existing?.content ?? null, { compile, environment });
+        const { content, error } = serializeProjectConfig(existing?.content ?? null, { build, compile, environment });
         if (error) return false;
         applyBundleChange(prev => {
             const ex = findBundleFile(prev.tree, CONFIG_FILENAME);
@@ -1044,18 +1245,22 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         return true;
     }, [applyBundleChange]);
 
-    // "$config" opens the VS Code-style settings window. Compile-field changes
-    // write the `compile` section (keeping the current device).
-    const handleSettingsChange = useCallback((next: CompileOptions) => {
-        writeProjectConfig(next, envCfg.environment);
-    }, [writeProjectConfig, envCfg]);
+    // "$config" opens the VS Code-style settings window. Each section's changes
+    // are written while keeping the other sections as-is.
+    const handleCompileChange = useCallback((next: CompileOptions) => {
+        writeProjectConfig(buildCfg.options, next, envCfg.environment);
+    }, [writeProjectConfig, buildCfg, envCfg]);
+
+    const handleBuildChange = useCallback((next: BuildOptions) => {
+        writeProjectConfig(next, compileCfg.options, envCfg.environment);
+    }, [writeProjectConfig, compileCfg, envCfg]);
 
     // Device change: switch the runtime backend live (for everyone), and for
     // owners also persist it to config["environment"]["device"].
     const handleDeviceChange = useCallback((device: DeviceKind) => {
         handleSwitchBackend(device);
-        writeProjectConfig(compileCfg.options, { device });
-    }, [handleSwitchBackend, writeProjectConfig, compileCfg]);
+        writeProjectConfig(buildCfg.options, compileCfg.options, { device });
+    }, [handleSwitchBackend, writeProjectConfig, buildCfg, compileCfg]);
 
     const runDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
     const buildDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
@@ -1067,8 +1272,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const buildLabel =
         buildState === "building"    ? "빌드 중…" :
         buildState === "downloading" ? "다운로드 중…" :
-        compileCfg.options.system === "auto" ? "Build" :
-        `Build (${SYSTEM_LABEL[compileCfg.options.system]})`;
+        buildCfg.options.system === "auto" ? "Build" :
+        `Build (${SYSTEM_LABEL[buildCfg.options.system]})`;
 
     const runStatusLabel =
         runState === "loading"   ? "런타임 로드 중"   :
@@ -1094,11 +1299,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // Workspace commands, surfaced in the editor's command palette (F1).
     const editorCommands = useMemo<EditorCommand[]>(() => [
         { id: "run", label: "Run", disabled: runDisabled, run: handleRun },
+        { id: "debug", label: "Run (Debug)", disabled: debug.status === "compiling" || debug.status === "running", run: debug.handleDebug },
         { id: "build", label: "Build", disabled: buildDisabled, run: handleBuild },
         { id: "lsp", label: "Restart Language Server (LSP)", run: handleLspCommand },
-        { id: "config", label: "Open Build Settings", run: () => setSettingsOpen(true) },
-        { id: "config-json", label: "Open Build Settings (JSON)", run: handleOpenConfigJson },
-    ], [runDisabled, buildDisabled, handleRun, handleBuild, handleLspCommand, handleOpenConfigJson]);
+        { id: "config", label: "Open Settings", run: () => setSettingsOpen(true) },
+        { id: "config-json", label: "Open Settings (JSON)", run: handleOpenConfigJson },
+    ], [runDisabled, buildDisabled, handleRun, handleBuild, handleLspCommand, handleOpenConfigJson, debug.status, debug.handleDebug]);
 
     const entryFile = useMemo(() => listBundleFiles(bundle.tree).find(f => f.path === bundle.entry), [bundle.tree, bundle.entry]);
     const entryCode = entryFile?.file.content ?? "";
@@ -1197,6 +1403,19 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         {buildLabel}
                     </Button>
                     </>}
+
+                    <Button
+                        variant="secondary"
+                        size="sm"
+                        leading={debug.status === "compiling" || debug.status === "running"
+                            ? <Spinner size="sm" />
+                            : <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="9" r="4" /><path d="M8 5V3M5 6 3.5 4.5M11 6l1.5-1.5M4 9H2M14 9h-2M5 12l-1.5 1.5M11 12l1.5 1.5" /></svg>}
+                        onClick={debug.handleDebug}
+                        disabled={debug.status === "compiling" || debug.status === "running"}
+                        title="사용자 C++ 코드를 디버깅합니다 (중단점·단계 실행·변수 검사)"
+                    >
+                        디버그
+                    </Button>
 
                     <button
                         onClick={handleRun}
@@ -1351,6 +1570,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 onUnresolvedDefinition={handleUnresolvedDefinition}
                                 onLspStatusChange={handleLspStatusChange}
                                 onEditorReady={handleEditorReady}
+                                onToggleBreakpoint={debug.toggleBreakpoint}
                                 editorCommands={editorCommands}
                                 viewStateKey={fileId}
                             />
@@ -1443,6 +1663,14 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 </span>
                             )}
                         </button>
+                        <button onClick={() => setRightTab("debug")}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "debug" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "debug" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
+                        >
+                            디버그
+                            {debugActive && (
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: debug.status === "stopped" ? token.color.warning : token.color.success, display: "inline-block" }} />
+                            )}
+                        </button>
                     </div>
 
                     <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
@@ -1530,6 +1758,31 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 );
                             })}
                         </div>
+                    )}
+
+                    {rightTab === "debug" && (
+                        <DebugPanel
+                            status={debug.status}
+                            errorMsg={debug.errorMsg}
+                            callStack={debug.callStack}
+                            activeFrameId={debug.activeFrameId}
+                            setActiveFrameId={debug.setActiveFrameId}
+                            watches={debug.watches}
+                            addWatch={debug.addWatch}
+                            removeWatch={debug.removeWatch}
+                            onContinue={debug.continue}
+                            onStepOver={debug.stepOver}
+                            onStepInto={debug.stepInto}
+                            onStepOut={debug.stepOut}
+                            onStop={debug.stop}
+                            requestVariables={debug.requestVariables}
+                            requestEvaluate={debug.requestEvaluate}
+                            requestSetVariable={debug.requestSetVariable}
+                            onRevealFrame={(file, line) => {
+                                codeEditorRef.current?.renderStoppedLine(file, line);
+                                codeEditorRef.current?.revealAt(pathToUri(file), line);
+                            }}
+                        />
                     )}
                 </aside>
             </div>
@@ -1635,8 +1888,15 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             <input
                 ref={uploadInputRef}
                 type="file"
-                accept=".cpp,.hpp"
+                accept=".cpp,.hpp,.ico,.png,.jpg,.jpeg,.gif,.bmp,.webp"
                 onChange={handleUploadInputChange}
+                style={{ display: "none" }}
+            />
+            <input
+                ref={iconUploadInputRef}
+                type="file"
+                accept=".ico,.png,.jpg,.jpeg,.gif,.bmp,.webp"
+                onChange={handleIconUploadChange}
                 style={{ display: "none" }}
             />
 
@@ -1700,16 +1960,56 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
             <CompileSettingsModal
                 open={settingsOpen}
-                options={compileCfg.options}
+                build={buildCfg.options}
+                compile={compileCfg.options}
                 device={envCfg.environment.device}
                 runtimeBackend={tfBackend}
                 deviceBusy={tfBackend === "initializing"}
-                parseError={compileCfg.error}
-                onChange={handleSettingsChange}
+                parseError={compileCfg.error ?? buildCfg.error}
+                iconChoices={iconChoices}
+                onBuildChange={handleBuildChange}
+                onCompileChange={handleCompileChange}
                 onDeviceChange={handleDeviceChange}
+                onUploadIcon={handleUploadIcon}
                 onOpenRaw={() => { setSettingsOpen(false); handleOpenConfigJson(); }}
                 onClose={() => setSettingsOpen(false)}
             />
+
+            {imagePreview && (() => {
+                const f = findBundleFile(bundle.tree, imagePreview);
+                const name = imagePreview.split("/").pop() ?? imagePreview;
+                const src = f?.encoding === "base64" ? `data:${imageMimeFor(name)};base64,${f.content}` : null;
+                return (
+                    <Modal width={360} onClose={() => setImagePreview(null)}>
+                        <ModalHeader onClose={() => setImagePreview(null)}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                <FileIcon name={name} size={14} />
+                                <span style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs12, overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+                            </span>
+                        </ModalHeader>
+                        <ModalBody>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                                {src ? (
+                                    <div style={{
+                                        padding: 16,
+                                        borderRadius: token.radius.md,
+                                        border: `1px solid ${token.color.border}`,
+                                        // Checkerboard so transparent icons read clearly.
+                                        backgroundImage: "linear-gradient(45deg,#0003 25%,transparent 25%),linear-gradient(-45deg,#0003 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#0003 75%),linear-gradient(-45deg,transparent 75%,#0003 75%)",
+                                        backgroundSize: "16px 16px",
+                                        backgroundPosition: "0 0,0 8px,8px -8px,-8px 0",
+                                    }}>
+                                        <img src={src} alt={name} width={128} height={128} style={{ display: "block", objectFit: "contain" }} />
+                                    </div>
+                                ) : (
+                                    <span style={{ color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>미리보기를 표시할 수 없습니다.</span>
+                                )}
+                                <span style={{ color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>{imagePreview}</span>
+                            </div>
+                        </ModalBody>
+                    </Modal>
+                );
+            })()}
 
             {deleteConfirm && (
                 <Modal width={420} onClose={() => setDeleteConfirm(null)}>

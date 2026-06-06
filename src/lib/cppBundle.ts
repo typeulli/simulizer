@@ -6,13 +6,22 @@
 
 export const BUNDLE_VERSION = 1;
 
-export const ALLOWED_EXTENSIONS = [".cpp", ".hpp", ".json"] as const;
+export const ALLOWED_EXTENSIONS = [".cpp", ".hpp", ".json", ".ico", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"] as const;
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number];
+
+// Image extensions stored as base64 binary rather than utf-8 text. These bypass
+// the code editor and are handled/shipped as bytes. Any of them can be used as
+// the exe icon — the server converts non-.ico images to .ico at build time.
+// Kept in sync with the backend's _IMAGE_EXTENSIONS.
+export const BINARY_EXTENSIONS = [".ico", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"] as const;
 
 export type FileNode = {
     type: "file";
     name: string;
+    /** utf-8 source text, or base64-encoded bytes when `encoding === "base64"`. */
     content: string;
+    /** Present (= "base64") for binary files like .ico; absent means utf-8 text. */
+    encoding?: "base64";
 };
 
 export type FolderNode = {
@@ -27,6 +36,9 @@ export type BundleUI = {
     activeFile: string;
     openTabs: string[];
     treeOpen: boolean;
+    /** Debugger breakpoints, persisted with the project: file path -> sorted
+     *  1-based line numbers. Omitted when there are none. */
+    breakpoints?: Record<string, number[]>;
 };
 
 export type CppBundle = {
@@ -101,6 +113,18 @@ function normalizeBundle(b: any): CppBundle {
         ? (ui.openTabs as string[]).filter(p => allPaths.has(p))
         : [activeFile];
     if (!openTabs.includes(activeFile)) openTabs.push(activeFile);
+    // Breakpoints: keep only entries for files still in the project, dedupe and
+    // sort the line numbers, drop empties.
+    const breakpoints: Record<string, number[]> = {};
+    if (ui.breakpoints && typeof ui.breakpoints === "object") {
+        for (const [p, lines] of Object.entries(ui.breakpoints)) {
+            if (!allPaths.has(p) || !Array.isArray(lines)) continue;
+            const valid = Array.from(new Set(
+                (lines as unknown[]).filter((n): n is number => typeof n === "number" && n > 0),
+            )).sort((a, b) => a - b);
+            if (valid.length) breakpoints[p] = valid;
+        }
+    }
     return {
         version: BUNDLE_VERSION,
         entry,
@@ -109,6 +133,7 @@ function normalizeBundle(b: any): CppBundle {
             activeFile,
             openTabs,
             treeOpen: !!ui.treeOpen,
+            ...(Object.keys(breakpoints).length ? { breakpoints } : {}),
         },
     };
 }
@@ -173,6 +198,12 @@ export function getExtension(name: string): string {
     return name.slice(dot).toLowerCase();
 }
 
+// True for files whose `content` is base64 binary (images), which must bypass
+// the text editor and be shipped/handled as bytes rather than source.
+export function isBinaryName(name: string): boolean {
+    return (BINARY_EXTENSIONS as readonly string[]).includes(getExtension(name));
+}
+
 export function validateFileName(name: string): string | null {
     if (!name) return "이름이 비어 있습니다";
     if (name.includes("/") || name.includes("\\")) return "이름에 슬래시를 쓸 수 없습니다";
@@ -196,7 +227,7 @@ export function validateFolderName(name: string): string | null {
 
 function cloneTree(tree: TreeNode[]): TreeNode[] {
     return tree.map(n => n.type === "file"
-        ? { type: "file", name: n.name, content: n.content }
+        ? { type: "file", name: n.name, content: n.content, ...(n.encoding ? { encoding: n.encoding } : {}) }
         : { type: "folder", name: n.name, contents: cloneTree(n.contents) });
 }
 
@@ -237,8 +268,9 @@ export function setFileContent(tree: TreeNode[], path: string, content: string):
 }
 
 // Creates a file at `path`. Intermediate folders are created automatically.
-// Returns the new tree, or null if the path already exists.
-export function addFile(tree: TreeNode[], path: string, content: string): TreeNode[] | null {
+// Returns the new tree, or null if the path already exists. Pass
+// `encoding: "base64"` for binary files (e.g. uploaded .ico icons).
+export function addFile(tree: TreeNode[], path: string, content: string, encoding?: "base64"): TreeNode[] | null {
     if (pathExists(tree, path)) return null;
     const parts = path.split("/");
     const next = cloneTree(tree);
@@ -253,7 +285,7 @@ export function addFile(tree: TreeNode[], path: string, content: string): TreeNo
         }
         nodes = folder.contents;
     }
-    nodes.push({ type: "file", name: parts[parts.length - 1], content });
+    nodes.push({ type: "file", name: parts[parts.length - 1], content, ...(encoding ? { encoding } : {}) });
     return next;
 }
 
