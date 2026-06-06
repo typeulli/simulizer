@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Icon } from "@/components/atoms/Icons";
 import { token } from "@/components/tokens";
 import type { TreeNode, FolderNode } from "@/lib/cppBundle";
+import { FileIcon } from "./FileIcon";
 
 // VS Code workbench colors. monaco-vscode injects these CSS variables onto
 // document.body once the workbench/theme service initializes — which has
@@ -530,8 +531,8 @@ const FileTree: React.FC<FileTreeProps> = ({
                 >
                     <IndentGuides depth={depth} />
                     <span style={{ display: "inline-block", width: TWISTIE_WIDTH, marginLeft: indentPx }} />
-                    <span style={{ display: "inline-flex", alignItems: "center", marginRight: 6, color: C.iconFg() }}>
-                        <Icon.File size={14} />
+                    <span style={{ display: "inline-flex", alignItems: "center", marginRight: 6 }}>
+                        <FileIcon name={node.name} isEntry={isEntry} size={16} />
                     </span>
                     {isRenamingThis ? (
                         <InlineEditInput

@@ -9,9 +9,10 @@ import { useConsolePanel } from "@/components/console";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import type { ClangWorkerInMsg } from "@/utils/wasm/clang-worker";
 import { vec_field_to_image_url, mat_data_to_image_url } from "@/utils/wasm/tensor";
-import type { ClangDiagnostic, CodeEditorRef, EditorFile } from "./clang/CodeEditor";
+import type { ClangDiagnostic, CodeEditorRef, EditorCommand, EditorFile, LspStatus } from "./clang/CodeEditor";
 import { pathToUri, uriToPath } from "./clang/uri";
 import FileTree from "./clang/FileTree";
+import { FileIcon } from "./clang/FileIcon";
 import {
     parseBundle,
     serializeBundle,
@@ -33,11 +34,26 @@ import {
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
 import { Spinner } from "@/components/atoms/Spinner";
+import { BuildSnackbar } from "@/components/molecules/BuildSnackbar";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { token } from "@/components/tokens";
 import { duplicateFile, renameFile, saveFile, type FileDetail, type FileOut } from "@/lib/authapi";
 import { CppManagerModal } from "@/components/workspace-modals/CppManagerModal";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
+import { AlertModal, type AlertVariant } from "@/components/organisms/AlertModal";
+import { CompileSettingsModal } from "@/components/workspace-modals/CompileSettingsModal";
+import {
+    readCompileConfig,
+    readEnvironmentConfig,
+    stripJsonFiles,
+    serializeProjectConfig,
+    defaultConfigJson,
+    SYSTEM_LABEL,
+    CONFIG_FILENAME,
+    type CompileOptions,
+    type EnvironmentOptions,
+    type DeviceKind,
+} from "@/lib/compileConfig";
 import { ShareControl } from "@/components/share/ShareControl";
 import useLanguagePack from "@/hooks/useLanguagePack";
 import { useTheme } from "@/hooks/useTheme";
@@ -54,6 +70,15 @@ const LSP_WS_URL = (() => {
     const base = API_BASE || (typeof window !== "undefined" ? window.location.origin : "");
     return base.replace(/^http/, "ws") + "/lsp/cpp";
 })();
+
+// How long the connect modal waits before declaring the LSP unreachable.
+const LSP_CONNECT_TIMEOUT_MS = 20000;
+const LSP_FAIL_MESSAGE =
+    "C++ 언어 서버(clangd)에 연결하지 못했어요.\nLSP 기능 없이 편집은 계속할 수 있어요. 명령 팔레트에서 \"$lsp\" 로 다시 시도할 수 있어요.";
+
+type LspModalState =
+    | { kind: "connecting" }
+    | { kind: "alert"; variant: AlertVariant; title: string; message: string };
 
 type EditorTab = {
     /** Full URI (workspace `file:///workspace/...` or system `simulizer:/...`) */
@@ -122,10 +147,106 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [tfBackend, setTfBackend] = useState<string>("initializing");
     const [buildState, setBuildState] = useState<BuildState>("idle");
     const [buildProgress, setBuildProgress] = useState<BuildProgress | null>(null);
+    // Compile/build options come from the optional root `config.json` (under its
+    // `compile` section). When malformed we fall back to defaults and warn.
+    const [configAlert, setConfigAlert] = useState<{ variant: AlertVariant; title: string; message: string } | null>(null);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const compileCfg = useMemo(() => readCompileConfig(bundle.tree), [bundle.tree]);
+    // Runtime environment (TF.js device) lives under config["environment"].
+    const envCfg = useMemo(() => readEnvironmentConfig(bundle.tree), [bundle.tree]);
 
     const [rightTab, setRightTab] = useState<"console" | "infos">("console");
     const [infos, setInfos] = useState<ClangDiagnostic[]>([]);
     const codeEditorRef = useRef<CodeEditorRef | null>(null);
+
+    // ─── LSP connection prompt ────────────────────────────────────────────
+    // On first load we surface a VS Code-style modal while clangd connects.
+    // Cancelling tears the client down (edit without LSP); "$lsp" re-opens it.
+    const [lspConnected, setLspConnected] = useState(false);
+    const [lspModal, setLspModal] = useState<LspModalState | null>(null);
+    const lspConnectedRef = useRef(false);
+    // True while the connect modal is up and we're still waiting for a verdict.
+    const lspConnectingRef = useRef(false);
+    const lspConnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const initialLspPromptDoneRef = useRef(false);
+
+    const clearLspTimer = useCallback(() => {
+        if (lspConnectTimerRef.current) {
+            clearTimeout(lspConnectTimerRef.current);
+            lspConnectTimerRef.current = null;
+        }
+    }, []);
+
+    const showLspFailed = useCallback(() => {
+        lspConnectingRef.current = false;
+        clearLspTimer();
+        codeEditorRef.current?.disposeLsp(); // tear down the stalled attempt → work without LSP
+        setLspModal({ kind: "alert", variant: "warning", title: "LSP 연결 실패", message: LSP_FAIL_MESSAGE });
+    }, [clearLspTimer]);
+
+    const beginLspConnecting = useCallback(() => {
+        lspConnectingRef.current = true;
+        setLspModal({ kind: "connecting" });
+        clearLspTimer();
+        lspConnectTimerRef.current = setTimeout(() => {
+            lspConnectTimerRef.current = null;
+            if (!lspConnectingRef.current) return;
+            showLspFailed();
+        }, LSP_CONNECT_TIMEOUT_MS);
+    }, [clearLspTimer, showLspFailed]);
+
+    const handleLspStatusChange = useCallback((status: LspStatus) => {
+        if (status === "running") {
+            lspConnectedRef.current = true;
+            setLspConnected(true);
+            if (lspConnectingRef.current) {
+                lspConnectingRef.current = false;
+                clearLspTimer();
+                // Close the connecting modal; leave any other modal untouched.
+                setLspModal(prev => (prev?.kind === "connecting" ? null : prev));
+            }
+        } else if (status === "stopped") {
+            lspConnectedRef.current = false;
+            setLspConnected(false);
+            // A drop while still connecting is left to the connect timeout to
+            // resolve (avoids a spurious warning from the transient teardown a
+            // reconnect performs). A drop after a healthy session stays silent
+            // per spec; the user re-opens the prompt via "$lsp".
+        }
+        // "starting": no UI change.
+    }, [clearLspTimer]);
+
+    // Editor finished booting → open the initial connect prompt (once).
+    // Skipped on mobile, where the editor is read-only and the command
+    // palette (the only way to re-open it) isn't available.
+    const handleEditorReady = useCallback(() => {
+        if (initialLspPromptDoneRef.current) return;
+        initialLspPromptDoneRef.current = true;
+        if (isMobile || lspConnectedRef.current) return;
+        beginLspConnecting();
+    }, [isMobile, beginLspConnecting]);
+
+    const handleLspCancel = useCallback(() => {
+        lspConnectingRef.current = false;
+        clearLspTimer();
+        setLspModal(null);
+        lspConnectedRef.current = false;
+        setLspConnected(false);
+        codeEditorRef.current?.disposeLsp();
+    }, [clearLspTimer]);
+
+    // "$lsp" command: show status if already connected, otherwise open the
+    // connect prompt and trigger a fresh connection attempt.
+    const handleLspCommand = useCallback(() => {
+        if (lspConnectedRef.current) {
+            setLspModal({ kind: "alert", variant: "info", title: "LSP 연결됨", message: "C++ 언어 서버가 이미 연결되어 있어요." });
+            return;
+        }
+        beginLspConnecting();
+        codeEditorRef.current?.reconnectLsp();
+    }, [beginLspConnecting]);
+
+    useEffect(() => () => { clearLspTimer(); }, [clearLspTimer]);
 
     // System-header tabs (simulizer:/simstd.hpp etc.) live outside the bundle
     // because they're not user code — they appear/disappear via go-to-definition
@@ -628,6 +749,20 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setTfBackend("initializing");
         worker.postMessage({ type: "switch-backend", backend } satisfies ClangWorkerInMsg);
     }, []);
+
+    // Apply config's pinned device once the worker has reported its initial
+    // (fallback-chosen) backend. Only when explicitly set and different — the
+    // default (webgpu) already matches the worker's own preference, so a
+    // default-valued project never forces a switch.
+    const initialDeviceAppliedRef = useRef(false);
+    useEffect(() => {
+        if (initialDeviceAppliedRef.current) return;
+        if (tfBackend === "initializing") return;
+        initialDeviceAppliedRef.current = true;
+        if (envCfg.deviceExplicit && envCfg.environment.device !== tfBackend) {
+            handleSwitchBackend(envCfg.environment.device);
+        }
+    }, [tfBackend, envCfg, handleSwitchBackend]);
     const {
         logAreaRef, addLog, addBar, setBar,
         addSeries, logToHolder, visualToHolder, graphToHolder,
@@ -728,11 +863,15 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setResultValue(null);
         setRunState("compiling");
 
+        if (compileCfg.error) {
+            setConfigAlert({ variant: "warning", title: "config.json 오류", message: compileCfg.error });
+        }
+
         try {
             const res = await fetch(`${API_BASE}/compile/emcc`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ tree: bundle.tree, entry: bundle.entry }),
+                body: JSON.stringify({ tree: stripJsonFiles(bundle.tree), entry: bundle.entry, options: compileCfg.options }),
             });
             if (!res.ok) {
                 const errText = await res.text();
@@ -749,7 +888,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setErrorMsg(err instanceof Error ? err.message : String(err));
             setRunState("error");
         }
-    }, [bundle.tree, bundle.entry, runState, clearLog, isMobile]);
+    }, [bundle.tree, bundle.entry, runState, clearLog, isMobile, compileCfg]);
 
     // ── Auto-run on URL ?autorun=1 ────────────────────────────────────────
     // Used by the landing-page iframes to show a workspace that already
@@ -775,15 +914,24 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setBuildState("building");
         setBuildProgress({ step: 0, total: 0, message: "요청 전송 중…" });
 
+        if (compileCfg.error) {
+            setConfigAlert({ variant: "warning", title: "config.json 오류", message: compileCfg.error });
+        }
+
+        // Target OS (and the rest of the options) come from config.json; "auto"
+        // lets the backend fall back to User-Agent sniffing.
+        const buildUrl = `${API_BASE}/compile/build`;
+
         const ctrl = new AbortController();
         let uuid: string | null = null;
+        let downloadName = "output";
 
         try {
             const doneUuid = await new Promise<string>((resolve, reject) => {
-                fetchEventSource(`${API_BASE}/compile/build`, {
+                fetchEventSource(buildUrl, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ tree: bundle.tree, entry: bundle.entry, lang: "cpp" }),
+                    body: JSON.stringify({ tree: stripJsonFiles(bundle.tree), entry: bundle.entry, lang: "cpp", options: compileCfg.options }),
                     signal: ctrl.signal,
                     openWhenHidden: true,
                     async onopen(res) {
@@ -793,7 +941,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         }
                     },
                     onmessage(e) {
-                        let payload: { uuid?: string; step?: number; total?: number; message?: string; detail?: string };
+                        let payload: { uuid?: string; name?: string; step?: number; total?: number; message?: string; detail?: string };
                         try { payload = JSON.parse(e.data); } catch { return; }
                         if (e.event === "error") {
                             throw new Error(payload.detail ?? "Build failed");
@@ -801,6 +949,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         if (e.event === "done") {
                             const finalUuid = payload.uuid ?? uuid;
                             if (!finalUuid) throw new Error("Build stream ended without uuid");
+                            if (payload.name) downloadName = payload.name;
                             ctrl.abort();
                             resolve(finalUuid);
                             return;
@@ -838,7 +987,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = "output.exe";
+            a.download = downloadName;
             a.click();
             URL.revokeObjectURL(url);
 
@@ -848,7 +997,65 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setBuildState("error");
             setErrorMsg(e instanceof Error ? e.message : String(e));
         }
-    }, [bundle.tree, bundle.entry, buildState]);
+    }, [bundle.tree, bundle.entry, buildState, compileCfg]);
+
+    // ─── Build config (config.json) ───────────────────────────────────────
+    // "$config-json" opens the raw file (materializing it with defaults the
+    // first time — invoking the command IS the explicit create action).
+    const handleOpenConfigJson = useCallback(() => {
+        const exists = !!findBundleFile(pendingBundleRef.current.tree, CONFIG_FILENAME);
+        if (exists) { handleOpenFile(CONFIG_FILENAME); return; }
+        if (!isOwnerRef.current) return;
+        applyBundleChange(prev => {
+            const nextTree = bundleAddFile(prev.tree, CONFIG_FILENAME, defaultConfigJson());
+            if (!nextTree) return null;
+            return {
+                ...prev,
+                tree: nextTree,
+                ui: {
+                    ...prev.ui,
+                    activeFile: CONFIG_FILENAME,
+                    openTabs: prev.ui.openTabs.includes(CONFIG_FILENAME) ? prev.ui.openTabs : [...prev.ui.openTabs, CONFIG_FILENAME],
+                },
+            };
+        });
+    }, [applyBundleChange, handleOpenFile]);
+
+    // Write the project config (compile + environment) back into config.json,
+    // creating the file on the first change. Only non-default values are
+    // persisted; other top-level keys are preserved. Returns false if the
+    // existing file couldn't be parsed (we won't clobber it). Owner-only.
+    const writeProjectConfig = useCallback((compile: CompileOptions, environment: EnvironmentOptions): boolean => {
+        if (!isOwnerRef.current) return false;
+        const existing = findBundleFile(pendingBundleRef.current.tree, CONFIG_FILENAME);
+        const { content, error } = serializeProjectConfig(existing?.content ?? null, { compile, environment });
+        if (error) return false;
+        applyBundleChange(prev => {
+            const ex = findBundleFile(prev.tree, CONFIG_FILENAME);
+            const nextTree = ex
+                ? setFileContent(prev.tree, CONFIG_FILENAME, content)
+                : bundleAddFile(prev.tree, CONFIG_FILENAME, content);
+            if (!nextTree) return null;
+            return { ...prev, tree: nextTree };
+        });
+        // If config.json is open in a tab, mirror the change into its model so
+        // the raw view updates live alongside the settings window.
+        codeEditorRef.current?.syncModelContent(CONFIG_FILENAME, content);
+        return true;
+    }, [applyBundleChange]);
+
+    // "$config" opens the VS Code-style settings window. Compile-field changes
+    // write the `compile` section (keeping the current device).
+    const handleSettingsChange = useCallback((next: CompileOptions) => {
+        writeProjectConfig(next, envCfg.environment);
+    }, [writeProjectConfig, envCfg]);
+
+    // Device change: switch the runtime backend live (for everyone), and for
+    // owners also persist it to config["environment"]["device"].
+    const handleDeviceChange = useCallback((device: DeviceKind) => {
+        handleSwitchBackend(device);
+        writeProjectConfig(compileCfg.options, { device });
+    }, [handleSwitchBackend, writeProjectConfig, compileCfg]);
 
     const runDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
     const buildDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
@@ -860,7 +1067,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const buildLabel =
         buildState === "building"    ? "빌드 중…" :
         buildState === "downloading" ? "다운로드 중…" :
-        "Build .exe";
+        compileCfg.options.system === "auto" ? "Build" :
+        `Build (${SYSTEM_LABEL[compileCfg.options.system]})`;
 
     const runStatusLabel =
         runState === "loading"   ? "런타임 로드 중"   :
@@ -879,6 +1087,18 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     const runSpinning = runState === "loading" || runState === "compiling" || runState === "running";
     const buildSpinning = buildState === "building" || buildState === "downloading";
+    // Build-progress snackbar: visible while building/downloading and after a successful build.
+    const buildSnackVisible = !!buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done");
+    const buildSnackStatus: "progress" | "done" = buildState === "done" ? "done" : "progress";
+
+    // Workspace commands, surfaced in the editor's command palette (F1).
+    const editorCommands = useMemo<EditorCommand[]>(() => [
+        { id: "run", label: "Run", disabled: runDisabled, run: handleRun },
+        { id: "build", label: "Build", disabled: buildDisabled, run: handleBuild },
+        { id: "lsp", label: "Restart Language Server (LSP)", run: handleLspCommand },
+        { id: "config", label: "Open Build Settings", run: () => setSettingsOpen(true) },
+        { id: "config-json", label: "Open Build Settings (JSON)", run: handleOpenConfigJson },
+    ], [runDisabled, buildDisabled, handleRun, handleBuild, handleLspCommand, handleOpenConfigJson]);
 
     const entryFile = useMemo(() => listBundleFiles(bundle.tree).find(f => f.path === bundle.entry), [bundle.tree, bundle.entry]);
     const entryCode = entryFile?.file.content ?? "";
@@ -933,18 +1153,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     )}
                 </div>
 
-                {!isMobile && <div style={{ display: "flex", justifyContent: "center" }}>
-                    {buildProgress && (buildState === "building" || buildState === "downloading" || buildState === "done") && (
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, color: token.color.fgMuted, fontSize: token.font.size.fs12, minWidth: 340, fontFamily: token.font.family.mono }}>
-                            {buildSpinning ? <Spinner size="sm" /> : <Icon.Check size={12} />}
-                            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
-                                {buildProgress.total > 0
-                                    ? `${buildProgress.step}/${buildProgress.total} · ${buildProgress.message}`
-                                    : buildProgress.message}
-                            </span>
-                        </div>
-                    )}
-                </div>}
+                {/* center grid cell — reserved (commands live in the editor's F1 palette) */}
+                {!isMobile && <div />}
 
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
                     {!isMobile && <>
@@ -976,40 +1186,13 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             {pack.workspace.ui.share_duplicate_button}
                         </Button>
                     )}
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: "4px 8px", background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: 999, fontSize: token.font.size.fs10, color: token.color.fgMuted, fontFamily: token.font.family.mono }}>
-                        {(["webgpu", "webgl", "cpu"] as const).map((b, i, arr) => {
-                            const isSelected = tfBackend === b;
-                            const label = b === "webgpu" ? "WebGPU" : b === "webgl" ? "WebGL" : "CPU";
-                            return (
-                                <React.Fragment key={b}>
-                                    <button
-                                        onClick={() => tfBackend !== "initializing" && handleSwitchBackend(b)}
-                                        style={{
-                                            background: "none",
-                                            border: "none",
-                                            cursor: tfBackend === "initializing" ? "default" : "pointer",
-                                            color: isSelected ? token.color.accent : token.color.fgSubtle,
-                                            fontSize: token.font.size.fs10,
-                                            padding: "0 4px",
-                                            fontWeight: isSelected ? 700 : 500,
-                                            opacity: tfBackend === "initializing" ? 0.4 : 1,
-                                            transition: "all 0.1s",
-                                        }}
-                                    >
-                                        {label}
-                                    </button>
-                                    {i < arr.length - 1 && <span style={{ color: token.color.border, opacity: 0.5 }}>|</span>}
-                                </React.Fragment>
-                            );
-                        })}
-                    </div>
-
                     <Button
                         variant="secondary"
                         size="sm"
                         leading={buildSpinning ? <Spinner size="sm" /> : <Icon.Download size={11} />}
                         onClick={handleBuild}
                         disabled={buildDisabled}
+                        title="빌드 설정은 config.json 에서 변경할 수 있어요"
                     >
                         {buildLabel}
                     </Button>
@@ -1083,7 +1266,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                             whiteSpace: "nowrap",
                                         }}
                                     >
-                                        <Icon.File size={11} />
+                                        <FileIcon name={tab.path ? tab.path.split("/").pop()! : tab.label} isEntry={isEntry} size={14} />
                                         <span>{tab.label}</span>
                                         {isEntry && (
                                             <span title="Entry" style={{ display: "inline-flex", color: token.color.warning }}>
@@ -1123,9 +1306,15 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 );
                             })}
                         </div>
-                        <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}>
-                            <Icon.Globe size={11} /> LSP: cpp
-                        </div>
+                        <button
+                            type="button"
+                            onClick={handleLspCommand}
+                            title={lspConnected ? "LSP 연결됨" : "LSP 연결 안됨 · 클릭하여 재연결"}
+                            style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 4px", border: "none", background: "transparent", cursor: "pointer", color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}
+                        >
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
+                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : "연결 안됨"}
+                        </button>
                     </div>
 
                     {/* Tree + editor */}
@@ -1160,6 +1349,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 onDiagnosticsChanged={handleDiagnosticsChanged}
                                 onActiveModelChanged={handleActiveModelChanged}
                                 onUnresolvedDefinition={handleUnresolvedDefinition}
+                                onLspStatusChange={handleLspStatusChange}
+                                onEditorReady={handleEditorReady}
+                                editorCommands={editorCommands}
                                 viewStateKey={fileId}
                             />
                             {editorNotice && (
@@ -1428,6 +1620,18 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </div>
             )}
 
+            {buildSnackVisible && buildProgress && (
+                <BuildSnackbar
+                    status={buildSnackStatus}
+                    message={buildProgress.message}
+                    step={buildProgress.step}
+                    total={buildProgress.total}
+                    onDismiss={() => setBuildProgress(null)}
+                    position="fixed"
+                    zIndex={50}
+                />
+            )}
+
             <input
                 ref={uploadInputRef}
                 type="file"
@@ -1453,6 +1657,59 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
                 onDownload={handleDownloadCpp}
             />}
+
+            {lspModal?.kind === "connecting" && (
+                <Modal width={420}>
+                    <ModalHeader>C++ 언어 서버 연결 중</ModalHeader>
+                    <ModalBody>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <Spinner size="lg" />
+                            <div style={{ fontSize: token.font.size.fs13, color: token.color.fg, lineHeight: 1.6 }}>
+                                <div>C++ 언어 서버(clangd)에 연결하고 있어요…</div>
+                                <div style={{ marginTop: 4, color: token.color.fgMuted, fontSize: token.font.size.fs11 }}>
+                                    취소하면 LSP 기능 없이 편집을 계속할 수 있어요.
+                                </div>
+                            </div>
+                        </div>
+                    </ModalBody>
+                    <ModalFooter>
+                        <Button variant="ghost" size="sm" onClick={handleLspCancel}>
+                            취소
+                        </Button>
+                    </ModalFooter>
+                </Modal>
+            )}
+
+            {lspModal?.kind === "alert" && (
+                <AlertModal
+                    variant={lspModal.variant}
+                    title={lspModal.title}
+                    message={lspModal.message}
+                    onClose={() => setLspModal(null)}
+                />
+            )}
+
+            {configAlert && (
+                <AlertModal
+                    variant={configAlert.variant}
+                    title={configAlert.title}
+                    message={configAlert.message}
+                    onClose={() => setConfigAlert(null)}
+                />
+            )}
+
+            <CompileSettingsModal
+                open={settingsOpen}
+                options={compileCfg.options}
+                device={envCfg.environment.device}
+                runtimeBackend={tfBackend}
+                deviceBusy={tfBackend === "initializing"}
+                parseError={compileCfg.error}
+                onChange={handleSettingsChange}
+                onDeviceChange={handleDeviceChange}
+                onOpenRaw={() => { setSettingsOpen(false); handleOpenConfigJson(); }}
+                onClose={() => setSettingsOpen(false)}
+            />
 
             {deleteConfirm && (
                 <Modal width={420} onClose={() => setDeleteConfirm(null)}>

@@ -1,11 +1,15 @@
 "use client";
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { LogLevel } from "@codingame/monaco-vscode-api";
 import getKeybindingsServiceOverride from "@codingame/monaco-vscode-keybindings-service-override";
 import getThemeServiceOverride from "@codingame/monaco-vscode-theme-service-override";
 import getTextmateServiceOverride from "@codingame/monaco-vscode-textmate-service-override";
 import getConfigurationServiceOverride, { updateUserConfiguration } from "@codingame/monaco-vscode-configuration-service-override";
 import getLanguagesServiceOverride from "@codingame/monaco-vscode-languages-service-override";
+import getQuickAccessServiceOverride from "@codingame/monaco-vscode-quickaccess-service-override";
+import { getService, IQuickInputService } from "@codingame/monaco-vscode-api/services";
+import { registerAction2, Action2 } from "@codingame/monaco-vscode-api/vscode/vs/platform/actions/common/actions";
+import { KeybindingWeight } from "@codingame/monaco-vscode-api/vscode/vs/platform/keybinding/common/keybindingsRegistry";
 import getFilesServiceOverride, {
     RegisteredFileSystemProvider,
     RegisteredUriFile,
@@ -16,6 +20,8 @@ import { writeFile as vscodeWriteFile, deleteFile as vscodeDeleteFile } from "@c
 import { getEnhancedMonacoEnvironment } from "monaco-languageclient/vscodeApiWrapper";
 import { MonacoEditorReactComp } from "@typefox/monaco-editor-react";
 import type { EditorApp, TextContents } from "monaco-languageclient/editorApp";
+import type { LanguageClientConfig, LanguageClientManager } from "monaco-languageclient/lcwrapper";
+import { State } from "vscode-languageclient/browser.js";
 import * as monaco from "@codingame/monaco-vscode-editor-api";
 
 // Custom worker factory: monaco-languageclient's default loaders use bare
@@ -56,8 +62,19 @@ const installMonacoWorkerEnvironment = () => {
 };
 
 // Side-effect imports register the bundled VS Code extensions (themes + cpp grammar).
+// The json default extension adds `json` syntax highlighting (grammar + language
+// config). For schema-based completion/hover/validation we run
+// vscode-json-languageservice in-process (see setupJsonLanguageService) instead
+// of the json-language-features extension, whose language-server worker the dev
+// bundler can't serve ("Failed to fetch").
 import "@codingame/monaco-vscode-theme-defaults-default-extension";
 import "@codingame/monaco-vscode-cpp-default-extension";
+import "@codingame/monaco-vscode-json-default-extension";
+
+import { setupJsonLanguageService } from "./jsonLanguageService";
+
+/** Connection state of the C++ language client, mirrored from vscode-languageclient's `State`. */
+export type LspStatus = "starting" | "running" | "stopped";
 
 export type ClangDiagnostic = {
     severity: "error" | "warn" | "info" | "hint";
@@ -217,11 +234,50 @@ export type EditorFile = {
     content: string;
 };
 
+// A workspace command surfaced in the editor's command palette (F1). Run
+// callbacks live in the host (ClangWorkspace); CodeEditor registers them as
+// monaco editor actions and reads the latest list via a ref so dynamic
+// `disabled`/`run` are honored without re-registering.
+export type EditorCommand = {
+    /** Stable id; the registered action id is `simulizer.${id}`. */
+    id: string;
+    label: string;
+    /** Running is a no-op when true (e.g. build already in progress). */
+    disabled?: boolean;
+    run: () => void;
+};
+
+// Keybindings for select commands, keyed by EditorCommand.id. Defined here
+// (the monaco layer) so the host stays free of monaco key-code imports.
+// Commands without an entry are palette-only.
+const COMMAND_KEYBINDINGS: Record<string, number[]> = {
+    run:   [monaco.KeyCode.F5],
+    build: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyB],
+};
+
+// Monaco language id for a workspace file, by extension. `.json` files (e.g.
+// compile.json) get JSON tooling; everything else is treated as C++.
+function languageForPath(path: string): string {
+    return path.toLowerCase().endsWith(".json") ? "json" : "cpp";
+}
+
 export type CodeEditorRef = {
     setActiveModel: (uri: string) => void;
     closeModel: (uri: string) => void;
     revealAt: (uri: string, line: number, column?: number) => void;
     focus: () => void;
+    /**
+     * Push external content into an open model. The files-sync effect never
+     * overwrites an existing model (to protect in-flight edits), so callers
+     * that change a file out-of-band — e.g. the settings GUI writing
+     * config.json — use this to keep an open raw tab live. No-op if no model
+     * exists for `path` or the content is already identical.
+     */
+    syncModelContent: (path: string, content: string) => void;
+    /** Tear down the language client — editor keeps working without LSP. */
+    disposeLsp: () => void;
+    /** (Re)start the language client connection. */
+    reconnectLsp: () => void;
 };
 
 type Props = {
@@ -242,6 +298,12 @@ type Props = {
     onDiagnosticsChanged?: (diagnostics: ClangDiagnostic[]) => void;
     onActiveModelChanged?: (uri: string) => void;
     onUnresolvedDefinition?: (uri: string) => void;
+    /** Notified whenever the language client's connection state changes. */
+    onLspStatusChange?: (status: LspStatus) => void;
+    /** Fired once the Monaco editor has booted (post first paint). */
+    onEditorReady?: () => void;
+    /** Workspace commands to expose in the editor command palette (F1). */
+    editorCommands?: EditorCommand[];
     /**
      * Stable namespace for persisting per-URI view state (fold ranges,
      * cursor, scroll) to localStorage. Each viewer gets their own snapshot
@@ -269,6 +331,9 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     onDiagnosticsChanged,
     onActiveModelChanged,
     onUnresolvedDefinition,
+    onLspStatusChange,
+    onEditorReady,
+    editorCommands,
     viewStateKey,
 }, ref) {
     const colorTheme = theme === "dark" ? "Default Dark Modern" : "Default Light Modern";
@@ -298,6 +363,82 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     useEffect(() => { onActiveModelChangedRef.current = onActiveModelChanged; }, [onActiveModelChanged]);
     useEffect(() => { onUnresolvedDefinitionRef.current = onUnresolvedDefinition; }, [onUnresolvedDefinition]);
     useEffect(() => { onTextChangedRef.current = onTextChanged; }, [onTextChanged]);
+
+    // ─── Language-client connection status ────────────────────────────────
+    // The connection is started/stopped declaratively via `lspDisabled`
+    // (wired to enforceLanguageClientDispose below). We only OBSERVE state
+    // here and forward it up, plus tear down a connection that finishes after
+    // the user already opted out (the enforce-dispose effect doesn't re-fire
+    // on a late connect).
+    const onLspStatusChangeRef = useRef(onLspStatusChange);
+    useEffect(() => { onLspStatusChangeRef.current = onLspStatusChange; }, [onLspStatusChange]);
+    const onEditorReadyRef = useRef(onEditorReady);
+    useEffect(() => { onEditorReadyRef.current = onEditorReady; }, [onEditorReady]);
+
+    // Latest files / commands for the palette actions (registered once, read
+    // through these refs so updates don't require re-registration).
+    const filesRef = useRef(files);
+    useEffect(() => { filesRef.current = files; }, [files]);
+    const editorCommandsRef = useRef<EditorCommand[]>(editorCommands ?? []);
+    useEffect(() => { editorCommandsRef.current = editorCommands ?? []; }, [editorCommands]);
+    const editorActionDisposablesRef = useRef<monaco.IDisposable[]>([]);
+
+    // `enforceLanguageClientDispose` controls the connection lifecycle.
+    //   - It MUST be `true` at mount: the underlying component always kicks one
+    //     start from its config effect, and a `false` value here would queue a
+    //     *second* start (the queue doesn't dedup) → clangd registers
+    //     `clangd.applyFix` twice → "command already exists" + init failure.
+    //   - After the first successful connect we flip it to `false`, which is a
+    //     no-op for an already-running client but arms the false→true edge that
+    //     disposeLsp() needs.
+    //   - disposeLsp()/reconnectLsp() then drive it via state edges.
+    const [efd, setEfd] = useState(true);
+    // A dispose requested before the (in-flight) connection finished — honored
+    // once the connection lands (the edge above can't catch a late connect).
+    const lspDisposeRequestedRef = useRef(false);
+
+    const lcManagerRef = useRef<LanguageClientManager | null>(null);
+    const lcStateDisposableRef = useRef<{ dispose(): void } | null>(null);
+
+    const emitLspStatus = useCallback((s: LspStatus) => {
+        onLspStatusChangeRef.current?.(s);
+    }, []);
+
+    const stateToStatus = (st: State): LspStatus =>
+        st === State.Running ? "running" : st === State.Starting ? "starting" : "stopped";
+
+    const attachLspStateListener = useCallback(() => {
+        lcStateDisposableRef.current?.dispose();
+        lcStateDisposableRef.current = null;
+        const client = lcManagerRef.current?.getLanguageClient("cpp");
+        if (!client) { emitLspStatus("stopped"); return; }
+        emitLspStatus(stateToStatus(client.state));
+        // onDidChangeState returns a vscode Disposable.
+        lcStateDisposableRef.current = client.onDidChangeState(e => emitLspStatus(stateToStatus(e.newState)));
+    }, [emitLspStatus]);
+
+    // Fires after every successful (re)start of the language clients, so this
+    // is also where we re-subscribe to a freshly-created client on reconnect.
+    const handleLanguageClientsStartDone = useCallback((mgr: LanguageClientManager) => {
+        lcManagerRef.current = mgr;
+        if (lspDisposeRequestedRef.current) {
+            // User chose "work without LSP" before this connection landed —
+            // honor it by disposing the just-started client.
+            lcStateDisposableRef.current?.dispose();
+            lcStateDisposableRef.current = null;
+            void mgr.dispose().catch(() => { /* best-effort */ });
+            emitLspStatus("stopped");
+            return;
+        }
+        attachLspStateListener();
+        // Arm the dispose edge for a subsequent cancel/teardown.
+        setEfd(false);
+    }, [attachLspStateListener, emitLspStatus]);
+
+    useEffect(() => () => {
+        lcStateDisposableRef.current?.dispose();
+        lcStateDisposableRef.current = null;
+    }, []);
 
     const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
     const entryUriRef = useRef(pathToUri(entryPath));
@@ -397,6 +538,61 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     }, [schedulePersist]);
     const contentChangeDisposablesRef = useRef<Map<string, monaco.IDisposable>>(new Map());
 
+    // "Go to File…" — a quick-pick over bundle files. Native Ctrl+P quick-open
+    // doesn't enumerate our virtual (RegisteredFileSystemProvider) files in
+    // EditorService mode, so we drive the editor's own quick input ourselves.
+    const openFilePicker = useCallback(async () => {
+        try {
+            const svc = await getService(IQuickInputService);
+            const items = filesRef.current.map(f => ({ label: f.path }));
+            const picked = await svc.pick(items, { placeHolder: "파일 열기" });
+            const path = (picked as { label: string } | undefined)?.label;
+            if (!path) return;
+            const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));
+            // Swapping the model fires onDidChangeModel → onActiveModelChanged,
+            // which adds the file to the host's open tabs / active file.
+            if (model) swapModelTo(model);
+        } catch (e) {
+            console.warn("[CodeEditor] file picker failed:", e);
+        }
+    }, [swapModelTo]);
+
+    // Register the host's commands (+ Go to File) so they appear in the
+    // workbench command palette (Ctrl+Shift+P / F1). We use registerAction2
+    // with `f1: true` — NOT monaco.editor.addEditorAction, whose standalone
+    // actions don't surface in monaco-vscode's workbench palette. Idempotent:
+    // disposes any prior batch first.
+    const registerEditorCommands = useCallback(() => {
+        for (const d of editorActionDisposablesRef.current) d.dispose();
+        editorActionDisposablesRef.current = [];
+
+        const registerPaletteAction = (id: string, title: string, keybinding: number[] | undefined, handler: () => void) => {
+            class PaletteAction extends Action2 {
+                constructor() {
+                    super({
+                        id: `simulizer.${id}`,
+                        title: { value: title, original: title },
+                        f1: true,
+                        keybinding: keybinding?.length
+                            ? keybinding.map(primary => ({ primary, weight: KeybindingWeight.WorkbenchContrib }))
+                            : undefined,
+                    });
+                }
+                run() { handler(); }
+            }
+            editorActionDisposablesRef.current.push(registerAction2(PaletteAction));
+        };
+
+        for (const cmd of editorCommandsRef.current) {
+            registerPaletteAction(cmd.id, cmd.label, COMMAND_KEYBINDINGS[cmd.id], () => {
+                const latest = editorCommandsRef.current.find(c => c.id === cmd.id);
+                if (!latest || latest.disabled) return;
+                latest.run();
+            });
+        }
+        registerPaletteAction("goToFile", "Go to File…", [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP], () => { void openFilePicker(); });
+    }, [openFilePicker]);
+
     const ensureModel = useCallback((path: string, initialContent: string): monaco.editor.ITextModel => {
         const uri = monaco.Uri.parse(pathToUri(path));
         let model = monaco.editor.getModel(uri);
@@ -407,7 +603,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             // target). The entry file gets this for free via MonacoEditor-
             // ReactComp's createModelReference; we mirror that here.
             void vscodeWriteFile(uri, initialContent).catch(() => { /* best-effort */ });
-            model = monaco.editor.createModel(initialContent, "cpp", uri);
+            model = monaco.editor.createModel(initialContent, languageForPath(path), uri);
             const disp = model.onDidChangeContent(() => {
                 const m = monaco.editor.getModel(uri);
                 if (!m) return;
@@ -498,6 +694,8 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         captureDisposablesRef.current = [];
         for (const d of contentChangeDisposablesRef.current.values()) d.dispose();
         contentChangeDisposablesRef.current.clear();
+        for (const d of editorActionDisposablesRef.current) d.dispose();
+        editorActionDisposablesRef.current = [];
         if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
         editorRef.current = null;
     }, []);
@@ -571,7 +769,35 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             editor.focus();
         },
         focus: () => { editorRef.current?.focus(); },
-    }), [swapModelTo]);
+        syncModelContent: (path: string, content: string) => {
+            const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));
+            if (!model || model.getValue() === content) return;
+            // Full-range replace via pushEditOperations keeps the undo stack
+            // (setValue would wipe it). The resulting onDidChangeContent echoes
+            // back through onTextChanged, but with identical content it's a
+            // harmless idempotent bundle update.
+            model.pushEditOperations(
+                [],
+                [{ range: model.getFullModelRange(), text: content }],
+                () => null,
+            );
+        },
+        disposeLsp: () => {
+            // Mark intent so a late-completing connection tears itself down,
+            // and drive the false→true edge that disposes a running client.
+            lspDisposeRequestedRef.current = true;
+            setEfd(true);
+        },
+        reconnectLsp: () => {
+            // Force a true→false edge across two commits so the underlying
+            // component re-runs its start path even if `efd` was already false
+            // (e.g. a silent drop). A single start — no double-init.
+            lspDisposeRequestedRef.current = false;
+            emitLspStatus("starting");
+            setEfd(true);
+            setTimeout(() => setEfd(false), 0);
+        },
+    }), [swapModelTo, emitLspStatus]);
 
     const initialFilesRef = useRef(files);
     const initialActiveUriRef = useRef(activeUri);
@@ -586,6 +812,8 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         // Safe to touch monaco.languages now — workbench services are up.
         setupPragmaRegionFolding();
         setupPragmaCompletion();
+        setupJsonLanguageService();
+        registerEditorCommands();
 
         // Rehydrate view-state map from localStorage before any swap so the
         // first restoreViewState in swapModelTo / handleEditorStartDone hits
@@ -706,7 +934,10 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         emit();
         markersDisposableRef.current?.dispose();
         markersDisposableRef.current = monaco.editor.onDidChangeMarkers(() => emit());
-    }, [ensureModel, syncReadOnlyForModel, swapModelTo, captureCurrentViewState, storageKey]);
+
+        // Editor is fully booted; let the host open the LSP-connect prompt.
+        onEditorReadyRef.current?.();
+    }, [ensureModel, syncReadOnlyForModel, swapModelTo, captureCurrentViewState, storageKey, registerEditorCommands]);
 
     // The seed for monaco-editor-react has to point at a workspace file (the
     // simulizer:/... scheme can't be used as a primary resource). Pick the
@@ -718,47 +949,10 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     const initialContent = initialFile?.content ?? "";
     const initialUri = pathToUri(initialFile?.path ?? initialEntryPath);
 
-    return (
-        <MonacoEditorReactComp
-            style={{ width: "100%", height: "100%" }}
-            vscodeApiConfig={{
-                $type: "classic",
-                logLevel: LogLevel.Warning,
-                viewsConfig: { $type: "EditorService" },
-                serviceOverrides: {
-                    ...getFilesServiceOverride(),
-                    ...getConfigurationServiceOverride(),
-                    ...getKeybindingsServiceOverride(),
-                    ...getLanguagesServiceOverride(),
-                    ...getThemeServiceOverride(),
-                    ...getTextmateServiceOverride(),
-                },
-                userConfiguration: {
-                    json: JSON.stringify({
-                        "workbench.colorTheme": colorTheme,
-                        "editor.fontSize": 13,
-                        "editor.fontFamily": "Consolas, 'JetBrains Mono', Menlo, monospace",
-                        "editor.minimap.enabled": false,
-                        "editor.tabSize": 4,
-                        "editor.insertSpaces": true,
-                    }),
-                },
-                monacoWorkerFactory: installMonacoWorkerEnvironment,
-            }}
-            editorAppConfig={{
-                codeResources: {
-                    modified: {
-                        text: initialContent,
-                        uri: initialUri,
-                    },
-                },
-                editorOptions: {
-                    automaticLayout: true,
-                    scrollBeyondLastLine: false,
-                    readOnly,
-                },
-            }}
-            languageClientConfig={{
+    // Stable identity so the underlying component's config effect runs only
+    // once (on mount). A new object each render would re-trigger its start
+    // path and, combined with the dispose-edge restarts, double-init clangd.
+    const languageClientConfig = useMemo<LanguageClientConfig>(() => ({
                 languageId: "cpp",
                 connection: {
                     options: {
@@ -887,7 +1081,53 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                         },
                     },
                 },
+            }), [lspWsUrl, swapModelTo]);
+
+    return (
+        <MonacoEditorReactComp
+            style={{ width: "100%", height: "100%" }}
+            vscodeApiConfig={{
+                $type: "classic",
+                logLevel: LogLevel.Warning,
+                viewsConfig: { $type: "EditorService" },
+                serviceOverrides: {
+                    ...getFilesServiceOverride(),
+                    ...getConfigurationServiceOverride(),
+                    ...getKeybindingsServiceOverride(),
+                    ...getLanguagesServiceOverride(),
+                    ...getQuickAccessServiceOverride(),
+                    ...getThemeServiceOverride(),
+                    ...getTextmateServiceOverride(),
+                },
+                userConfiguration: {
+                    json: JSON.stringify({
+                        "workbench.colorTheme": colorTheme,
+                        "editor.fontSize": 13,
+                        "editor.fontFamily": "Consolas, 'JetBrains Mono', Menlo, monospace",
+                        "editor.minimap.enabled": false,
+                        "editor.tabSize": 4,
+                        "editor.insertSpaces": true,
+                        // Don't infer indentation from file content — always use
+                        // the configured 4-space / spaces settings above.
+                        "editor.detectIndentation": false,
+                    }),
+                },
+                monacoWorkerFactory: installMonacoWorkerEnvironment,
             }}
+            editorAppConfig={{
+                codeResources: {
+                    modified: {
+                        text: initialContent,
+                        uri: initialUri,
+                    },
+                },
+                editorOptions: {
+                    automaticLayout: true,
+                    scrollBeyondLastLine: false,
+                    readOnly,
+                },
+            }}
+            languageClientConfig={languageClientConfig}
             onTextChanged={(_changes: TextContents) => {
                 // Per-model edits are routed through the explicit
                 // onDidChangeContent listeners we attach in ensureModel,
@@ -896,7 +1136,8 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                 // confusing in multi-file mode; ignore it.
             }}
             onEditorStartDone={handleEditorStartDone}
-            enforceLanguageClientDispose={true}
+            onLanguageClientsStartDone={handleLanguageClientsStartDone}
+            enforceLanguageClientDispose={efd}
         />
     );
 });

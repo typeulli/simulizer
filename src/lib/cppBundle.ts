@@ -6,7 +6,7 @@
 
 export const BUNDLE_VERSION = 1;
 
-export const ALLOWED_EXTENSIONS = [".cpp", ".hpp"] as const;
+export const ALLOWED_EXTENSIONS = [".cpp", ".hpp", ".json"] as const;
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number];
 
 export type FileNode = {

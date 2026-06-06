@@ -30,6 +30,7 @@ import { StatusDot } from "@/components/atoms/StatusDot";
 import { Icon } from "@/components/atoms/Icons";
 import { Logo } from "@/components/atoms/Logo";
 import { Spinner } from "@/components/atoms/Spinner";
+import { BuildSnackbar } from "@/components/molecules/BuildSnackbar";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { token } from "@/components/tokens";
 import { BlockManagerModal } from "@/components/workspace-modals/BlockManagerModal";
@@ -799,6 +800,12 @@ const INITIAL_WORKSPACE_XML = `
 
 type RunState = "idle" | "compiling" | "running" | "done" | "error";
 
+type TargetOs = "auto" | "windows" | "linux" | "macos";
+const OS_LABEL: Record<TargetOs, string> = {
+    auto: "Auto", windows: "Windows", linux: "Linux", macos: "macOS",
+};
+const OS_OPTIONS = ["auto", "windows", "linux", "macos"] as const;
+
 interface InfoEntry {
     level: "info" | "warn" | "error";
     message: string;
@@ -882,6 +889,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [translating, setTranslating]         = useState(false);
     const [compiling, setCompiling]             = useState(false);
     const [compileProgress, setCompileProgress] = useState<{ status: "progress" | "done" | "error"; step: number; total: number; message: string } | null>(null);
+    // Build target OS. "auto" defers to the backend's User-Agent sniffing.
+    const [targetOs, setTargetOs]               = useState<TargetOs>("auto");
+    const [osMenuOpen, setOsMenuOpen]           = useState(false);
     const [chatPrompt, setChatPrompt]           = useState("");
     const [chatOutput, setChatOutput]           = useState("");
     const [chatResult, setChatResult]           = useState<object | null>(null);
@@ -2047,12 +2057,17 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const blocklyJson = JSON.stringify(processedSave);
         setCompiling(true);
         setCompileProgress({ status: "progress", step: 0, total: 0, message: "요청 전송 중..." });
+        // "auto" lets the backend pick from the User-Agent; an explicit OS overrides via ?system=.
+        const buildUrl = targetOs === "auto"
+            ? `${API_BASE}/compile/build`
+            : `${API_BASE}/compile/build?system=${targetOs}`;
         try {
             const ctrl = new AbortController();
             let uuid: string | null = null;
+            let downloadName = "output";
 
             const doneUuid = await new Promise<string>((resolve, reject) => {
-                fetchEventSource(`${API_BASE}/compile/build`, {
+                fetchEventSource(buildUrl, {
                 method: "POST",
                     headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ code: blocklyJson }),
@@ -2065,7 +2080,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         }
                     },
                     onmessage(e) {
-                        let payload: { uuid?: string; step?: number; total?: number; message?: string; detail?: string };
+                        let payload: { uuid?: string; name?: string; step?: number; total?: number; message?: string; detail?: string };
                         try { payload = JSON.parse(e.data); } catch { return; }
                         if (e.event === "error") {
                             throw new Error(payload.detail ?? "Compile failed");
@@ -2073,6 +2088,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         if (e.event === "done") {
                             const finalUuid = payload.uuid ?? uuid;
                             if (!finalUuid) throw new Error("Compile stream ended without uuid");
+                            if (payload.name) downloadName = payload.name;
                             setCompileProgress(prev => ({ status: "progress", step: Math.max(0, (prev?.total ?? prev?.step ?? 0) - 1), total: prev?.total ?? 0, message: "다운로드 준비 중..." }));
                             ctrl.abort();
                             resolve(finalUuid);
@@ -2111,7 +2127,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = "output.exe";
+            a.download = downloadName;
             a.click();
             URL.revokeObjectURL(url);
             setCompileProgress(prev => ({ status: "done", step: prev?.total ?? prev?.step ?? 0, total: prev?.total ?? 0, message: "다운로드 완료" }));
@@ -2120,7 +2136,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         } finally {
             setCompiling(false);
         }
-    }, [watSource, compiling]);
+    }, [watSource, compiling, targetOs]);
 
     const handleReset = useCallback(() => {
         const ws = workspaceRef.current;
@@ -2886,43 +2902,53 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     Copy
                                 </button>
                                 {watLang === "cpp" && (
+                                    <div style={{ position:"relative", display:"inline-flex", alignItems:"stretch" }}>
                                     <button
                                         onClick={handleCompile}
                                         disabled={compiling || !watSource}
-                                        style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer", opacity: compiling || !watSource ? 0.5 : 1 }}
+                                        style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRight:"none", borderRadius:`${token.radius.sm} 0 0 ${token.radius.sm}`, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer", opacity: compiling || !watSource ? 0.5 : 1 }}
                                     >
-                                        {compiling ? "Compiling…" : "Compile"}
+                                        {compiling ? "Compiling…" : (targetOs === "auto" ? "Compile" : `Compile (${OS_LABEL[targetOs]})`)}
                                     </button>
+                                    <button
+                                        onClick={() => setOsMenuOpen(o => !o)}
+                                        disabled={compiling}
+                                        title="빌드 대상 OS"
+                                        aria-label="빌드 대상 OS 선택"
+                                        style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", padding:"3px 5px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRadius:`0 ${token.radius.sm} ${token.radius.sm} 0`, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer", opacity: compiling ? 0.5 : 1 }}
+                                    >
+                                        <Icon.Chevron dir="down" size={11} />
+                                    </button>
+                                    {osMenuOpen && (
+                                        <>
+                                            <div onClick={() => setOsMenuOpen(false)} style={{ position:"fixed", inset:0, zIndex:40 }} />
+                                            <div style={{ position:"absolute", top:"calc(100% + 4px)", right:0, zIndex:41, minWidth:150, padding:4, background:token.color.bgRaised, border:`1px solid ${token.color.border}`, borderRadius:token.radius.sm, boxShadow:"0 6px 18px rgba(0,0,0,0.35)", display:"flex", flexDirection:"column", gap:2 }}>
+                                                {OS_OPTIONS.map(os => (
+                                                    <button
+                                                        key={os}
+                                                        onClick={() => { setTargetOs(os); setOsMenuOpen(false); }}
+                                                        style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"5px 8px", fontSize:token.font.size.fs11, border:"none", borderRadius:token.radius.sm, background: targetOs === os ? token.color.surfaceHover : "transparent", color: targetOs === os ? token.color.accent : token.color.fg, cursor:"pointer", fontWeight: targetOs === os ? 700 : 500, textAlign:"left" }}
+                                                    >
+                                                        <span>{OS_LABEL[os]}</span>
+                                                        {targetOs === os && <span>✓</span>}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </>
+                                    )}
+                                    </div>
                                 )}
                             </div>
                             {watLang === "cpp" && compileProgress && (
-                                <div style={{ position:"absolute", bottom:16, right:24, zIndex:15, width:300, padding:"10px 12px", background:token.color.bgRaised, border:`1px solid ${compileProgress.status === "error" ? "#e5484d" : compileProgress.status === "done" ? "#46a758" : token.color.border}`, borderRadius:token.radius.sm, boxShadow:"0 6px 18px rgba(0,0,0,0.35)", display:"flex", flexDirection:"column", gap:8 }}>
-                                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                                        <span style={{ flex:1, fontSize:token.font.size.fs11, color: compileProgress.status === "error" ? "#e5484d" : token.color.fg, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace: compileProgress.status === "error" ? "normal" : "nowrap", wordBreak:"break-word", maxHeight: compileProgress.status === "error" ? 120 : undefined, overflowY: compileProgress.status === "error" ? "auto" : undefined }}>
-                                            {compileProgress.status === "done" && "✓ "}
-                                            {compileProgress.status === "error" && "✕ "}
-                                            {compileProgress.message}
-                                        </span>
-                                        <button
-                                            onClick={() => setCompileProgress(null)}
-                                            disabled={compileProgress.status === "progress"}
-                                            style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", padding:2, border:"none", background:"none", color:token.color.fgMuted, cursor: compileProgress.status === "progress" ? "default" : "pointer", opacity: compileProgress.status === "progress" ? 0.3 : 1 }}
-                                            aria-label="Dismiss"
-                                        >
-                                            <Icon.X size={11} />
-                                        </button>
-                                    </div>
-                                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                                        <div style={{ flex:1, height:4, background:token.color.bgSubtle, borderRadius:2, overflow:"hidden" }}>
-                                            <div style={{ width: `${Math.max(0, Math.min(100, (compileProgress.step / Math.max(1, compileProgress.total)) * 100))}%`, height:"100%", background: compileProgress.status === "error" ? "#e5484d" : compileProgress.status === "done" ? "#46a758" : token.color.fg, transition:"width 0.2s ease" }} />
-                                        </div>
-                                        {compileProgress.total > 0 && (
-                                            <span style={{ fontSize:token.font.size.fs11, color:token.color.fgSubtle, fontVariantNumeric:"tabular-nums" }}>
-                                                {compileProgress.step}/{compileProgress.total}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
+                                <BuildSnackbar
+                                    status={compileProgress.status}
+                                    message={compileProgress.message}
+                                    step={compileProgress.step}
+                                    total={compileProgress.total}
+                                    onDismiss={() => setCompileProgress(null)}
+                                    position="absolute"
+                                    zIndex={15}
+                                />
                             )}
                             {translating
                                 ? <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>Translating…</div>
