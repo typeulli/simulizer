@@ -79,8 +79,6 @@ const LSP_WS_URL = (() => {
 
 // How long the connect modal waits before declaring the LSP unreachable.
 const LSP_CONNECT_TIMEOUT_MS = 20000;
-const LSP_FAIL_MESSAGE =
-    "C++ 언어 서버(clangd)에 연결하지 못했어요.\nLSP 기능 없이 편집은 계속할 수 있어요. 명령 팔레트에서 \"$lsp\" 로 다시 시도할 수 있어요.";
 
 type LspModalState =
     | { kind: "connecting" }
@@ -213,6 +211,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     const [rightTab, setRightTab] = useState<"console" | "infos" | "debug">("console");
     const [infos, setInfos] = useState<ClangDiagnostic[]>([]);
+    // Interactive input prompt (Asyncify run paused on sim_input_*).
+    const [inputRequest, setInputRequest] = useState<{ kind: "i32" | "f64" } | null>(null);
+    const [inputValue, setInputValue] = useState("");
     const codeEditorRef = useRef<CodeEditorRef | null>(null);
 
     // ─── LSP connection prompt ────────────────────────────────────────────
@@ -237,7 +238,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         lspConnectingRef.current = false;
         clearLspTimer();
         codeEditorRef.current?.disposeLsp(); // tear down the stalled attempt → work without LSP
-        setLspModal({ kind: "alert", variant: "warning", title: "LSP 연결 실패", message: LSP_FAIL_MESSAGE });
+        setLspModal({ kind: "alert", variant: "warning", title: pack.clang.lsp_fail_title, message: pack.clang.lsp_fail_message });
     }, [clearLspTimer]);
 
     const beginLspConnecting = useCallback(() => {
@@ -297,7 +298,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // connect prompt and trigger a fresh connection attempt.
     const handleLspCommand = useCallback(() => {
         if (lspConnectedRef.current) {
-            setLspModal({ kind: "alert", variant: "info", title: "LSP 연결됨", message: "C++ 언어 서버가 이미 연결되어 있어요." });
+            setLspModal({ kind: "alert", variant: "info", title: pack.clang.lsp_connected_title, message: pack.clang.lsp_already_connected });
             return;
         }
         beginLspConnecting();
@@ -477,7 +478,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setFileName(updated.name);
             setFileMeta(prev => prev ? { ...prev, name: updated.name } : prev);
         } catch (err: any) {
-            if (err?.status === 409) setErrorMsg("같은 이름의 프로젝트가 이미 있어요.");
+            if (err?.status === 409) setErrorMsg(pack.clang.project_name_conflict);
             if (fileMeta) setFileName(fileMeta.name);
         }
     }, [fileId, fileName, fileMeta]);
@@ -537,14 +538,14 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // surface errors back into the input via a return value: returning a
     // string keeps the input open with that message, null commits.
     const handleCreateFile = useCallback((parentPath: string, name: string): string | null => {
-        if (!isOwnerRef.current) return "권한이 없습니다.";
+        if (!isOwnerRef.current) return pack.clang.no_permission;
         const validationErr = validateFileName(name);
         if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
         let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleAddFile(prev.tree, path, "");
-            if (!nextTree) { resultErr = "같은 이름의 파일이 이미 있습니다."; return null; }
+            if (!nextTree) { resultErr = pack.clang.file_name_conflict; return null; }
             return {
                 ...prev,
                 tree: nextTree,
@@ -559,21 +560,21 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, [applyBundleChange]);
 
     const handleCreateFolder = useCallback((parentPath: string, name: string): string | null => {
-        if (!isOwnerRef.current) return "권한이 없습니다.";
+        if (!isOwnerRef.current) return pack.clang.no_permission;
         const validationErr = validateFolderName(name);
         if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
         let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleAddFolder(prev.tree, path);
-            if (!nextTree) { resultErr = "같은 이름의 폴더가 이미 있습니다."; return null; }
+            if (!nextTree) { resultErr = pack.clang.folder_name_conflict; return null; }
             return { ...prev, tree: nextTree };
         });
         return resultErr;
     }, [applyBundleChange]);
 
     const handleRenameNode = useCallback((path: string, newName: string): string | null => {
-        if (!isOwnerRef.current) return "권한이 없습니다.";
+        if (!isOwnerRef.current) return pack.clang.no_permission;
         const { base, dir } = splitPath(path);
         if (newName === base) return null; // no-op
         const isFile = listBundleFiles(pendingBundleRef.current.tree).some(f => f.path === path);
@@ -582,7 +583,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleRenameNode(prev.tree, path, newName);
-            if (!nextTree) { resultErr = "같은 이름이 이미 있습니다."; return null; }
+            if (!nextTree) { resultErr = pack.clang.name_conflict; return null; }
             const newPath = dir ? `${dir}/${newName}` : newName;
             const rewrite = (p: string) =>
                 p === path ? newPath
@@ -678,7 +679,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const handleSetAsEntry = useCallback((path: string) => {
         if (!isOwnerRef.current) return;
         if (!path.toLowerCase().endsWith(".cpp")) {
-            window.alert("Entry 는 .cpp 파일이어야 합니다.");
+            window.alert(pack.clang.entry_must_cpp);
             return;
         }
         applyBundleChange(prev => prev.entry === path ? null : { ...prev, entry: path });
@@ -715,7 +716,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         // Cap per-file size at 1 MB. The whole bundle is bounded by the
         // backend's 5 MB content limit; this is a friendlier per-file ceiling.
         if (file.size > 1 * 1024 * 1024) {
-            window.alert("파일이 너무 큽니다 (1MB 이하)");
+            window.alert(pack.clang.file_too_large_1mb);
             return;
         }
         const parentPath = uploadParentRef.current;
@@ -724,7 +725,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const content = binary ? await fileToBase64(file) : await file.text();
         applyBundleChange(prev => {
             const nextTree = bundleAddFile(prev.tree, path, content, binary ? "base64" : undefined);
-            if (!nextTree) { window.alert("같은 이름의 파일이 이미 있습니다."); return null; }
+            if (!nextTree) { window.alert(pack.clang.file_name_conflict); return null; }
             // Binary assets (icons) aren't editable — add them to the tree
             // without opening an editor tab. Text files open as before.
             if (binary) return { ...prev, tree: nextTree };
@@ -755,11 +756,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         e.target.value = "";
         if (!file || !isOwnerRef.current) return;
         const name = file.name;
-        if (!isBinaryName(name)) { window.alert("이미지 파일만 올릴 수 있어요 (.ico / .png / .jpg / .gif / .bmp / .webp)."); return; }
+        if (!isBinaryName(name)) { window.alert(pack.clang.image_only); return; }
         const nameErr = validateFileName(name);
         if (nameErr) { window.alert(nameErr); return; }
         // Source images can be larger than a finished .ico (the server converts).
-        if (file.size > 4 * 1024 * 1024) { window.alert("파일이 너무 큽니다 (4MB 이하)"); return; }
+        if (file.size > 4 * 1024 * 1024) { window.alert(pack.clang.file_too_large_4mb); return; }
         const base64 = await fileToBase64(file);
         const path = `${ICON_DIR}/${name}`;
         // Serialize config.json up front so a parse error aborts before we touch
@@ -770,7 +771,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             compile: compileCfg.options,
             environment: envCfg.environment,
         });
-        if (cfg.error) { window.alert("config.json 형식 오류로 아이콘을 설정할 수 없어요. JSON 으로 열어 먼저 고쳐주세요."); return; }
+        if (cfg.error) { window.alert(pack.clang.config_json_format_error); return; }
         applyBundleChange(prev => {
             // 1) add (replacing any existing file at the path) the icon under
             //    build/icon — remove+add guarantees base64 encoding even if a
@@ -902,7 +903,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, []);
     const handleUnresolvedDefinition = useCallback((uri: string) => {
         const filename = uri.split(/[/\\]/).pop() || uri;
-        setEditorNotice(`외부 라이브러리 파일은 열 수 없습니다: ${filename}`);
+        setEditorNotice(pack.clang.external_lib_locked.replace("$0", filename));
         if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
         editorNoticeTimerRef.current = setTimeout(() => setEditorNotice(null), 4500);
     }, []);
@@ -922,6 +923,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const b = bindingsRef.current;
 
         if (msg.type === "ready") { setRunState("idle"); return; }
+        if (msg.type === "input-request") {
+            setRightTab("console");
+            setInputRequest({ kind: msg.kind });
+            return;
+        }
         if (msg.type === "backend-switched") {
             setTfBackend(msg.backend);
             pendingBackendSwitchRef.current = null;
@@ -1057,10 +1063,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         clearLog();
         setErrorMsg(null);
         setResultValue(null);
+        setInputRequest(null);
         setRunState("compiling");
 
         if (compileCfg.error) {
-            setConfigAlert({ variant: "warning", title: "config.json 오류", message: compileCfg.error });
+            setConfigAlert({ variant: "warning", title: pack.clang.config_json_error_title, message: compileCfg.error });
         }
 
         try {
@@ -1088,6 +1095,18 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         }
     }, [bundle.tree, bundle.entry, runState, clearLog, isMobile, compileCfg]);
 
+    // Submit the value typed into the input panel; the clang worker resumes the
+    // suspended run with it.
+    const submitInput = useCallback(() => {
+        if (!inputRequest) return;
+        const raw = inputValue.trim();
+        let value = inputRequest.kind === "i32" ? parseInt(raw, 10) : parseFloat(raw);
+        if (!Number.isFinite(value)) value = 0;
+        workerRef.current?.postMessage({ type: "input-response", value } satisfies ClangWorkerInMsg);
+        setInputRequest(null);
+        setInputValue("");
+    }, [inputRequest, inputValue]);
+
     // ── Auto-run on URL ?autorun=1 ────────────────────────────────────────
     // Used by the landing-page iframes to show a workspace that already
     // produced a result instead of an empty console.
@@ -1110,10 +1129,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (buildState === "building" || buildState === "downloading") return;
 
         setBuildState("building");
-        setBuildProgress({ step: 0, total: 0, message: "요청 전송 중…" });
+        setBuildProgress({ step: 0, total: 0, message: pack.clang.progress_sending });
 
         if (compileCfg.error) {
-            setConfigAlert({ variant: "warning", title: "config.json 오류", message: compileCfg.error });
+            setConfigAlert({ variant: "warning", title: pack.clang.config_json_error_title, message: compileCfg.error });
         }
 
         // Target OS (and the rest of the options) come from config.json; "auto"
@@ -1177,7 +1196,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             });
 
             setBuildState("downloading");
-            setBuildProgress(prev => ({ step: prev?.step ?? 0, total: prev?.total ?? 0, message: "다운로드 중…" }));
+            setBuildProgress(prev => ({ step: prev?.step ?? 0, total: prev?.total ?? 0, message: pack.clang.progress_downloading }));
 
             const dlRes = await fetch(`${API_BASE}/compile/build/download/${doneUuid}`);
             if (!dlRes.ok) {
@@ -1193,7 +1212,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             URL.revokeObjectURL(url);
 
             setBuildState("done");
-            setBuildProgress(prev => ({ step: prev?.total ?? 0, total: prev?.total ?? 0, message: "다운로드 완료" }));
+            setBuildProgress(prev => ({ step: prev?.total ?? 0, total: prev?.total ?? 0, message: pack.clang.progress_download_done }));
         } catch (e) {
             setBuildState("error");
             setErrorMsg(e instanceof Error ? e.message : String(e));
@@ -1265,23 +1284,23 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const runDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
     const buildDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
     const runLabel =
-        runState === "loading"   ? "런타임 로드 중…" :
-        runState === "compiling" ? "컴파일 중…" :
+        runState === "loading"   ? pack.clang.progress_loading :
+        runState === "compiling" ? pack.clang.progress_compiling :
         runState === "running"   ? pack.workspace.ui.run_button_running :
         pack.workspace.ui.run_button;
     const buildLabel =
-        buildState === "building"    ? "빌드 중…" :
-        buildState === "downloading" ? "다운로드 중…" :
+        buildState === "building"    ? pack.clang.progress_building :
+        buildState === "downloading" ? pack.clang.progress_downloading :
         buildCfg.options.system === "auto" ? "Build" :
         `Build (${SYSTEM_LABEL[buildCfg.options.system]})`;
 
     const runStatusLabel =
-        runState === "loading"   ? "런타임 로드 중"   :
-        runState === "compiling" ? "컴파일 중"        :
-        runState === "running"   ? "실행 중"          :
-        runState === "done"      ? "완료"             :
-        runState === "error"     ? "오류"             :
-        "대기 중";
+        runState === "loading"   ? pack.clang.status_loading   :
+        runState === "compiling" ? pack.clang.status_compiling :
+        runState === "running"   ? pack.clang.status_running   :
+        runState === "done"      ? pack.clang.status_done      :
+        runState === "error"     ? pack.clang.status_error     :
+        pack.clang.status_waiting;
 
     const runStatusColor =
         runState === "error"     ? token.color.danger  :
@@ -1365,10 +1384,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
                     {!isMobile && <>
                     {isOwner && saveStatus === "unsaved" && (
-                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>저장 안됨</span>
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>{pack.clang.save_unsaved}</span>
                     )}
                     {isOwner && saveStatus === "error" && (
-                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>저장 실패</span>
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>{pack.clang.save_failed}</span>
                     )}
                     {isOwner && (
                         <Button
@@ -1378,7 +1397,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             onClick={handleSaveToServer}
                             disabled={saveStatus === "saving" || !fileId}
                         >
-                            {saveStatus === "saving" ? "저장 중..." : "저장"}
+                            {saveStatus === "saving" ? pack.clang.saving : pack.clang.save}
                         </Button>
                     )}
                     {isOwner === false && (
@@ -1398,7 +1417,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         leading={buildSpinning ? <Spinner size="sm" /> : <Icon.Download size={11} />}
                         onClick={handleBuild}
                         disabled={buildDisabled}
-                        title="빌드 설정은 config.json 에서 변경할 수 있어요"
+                        title={pack.clang.build_settings_title}
                     >
                         {buildLabel}
                     </Button>
@@ -1412,9 +1431,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             : <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="9" r="4" /><path d="M8 5V3M5 6 3.5 4.5M11 6l1.5-1.5M4 9H2M14 9h-2M5 12l-1.5 1.5M11 12l1.5 1.5" /></svg>}
                         onClick={debug.handleDebug}
                         disabled={debug.status === "compiling" || debug.status === "running"}
-                        title="사용자 C++ 코드를 디버깅합니다 (중단점·단계 실행·변수 검사)"
+                        title={pack.clang.debug_title}
                     >
-                        디버그
+                        {pack.clang.debug_button}
                     </Button>
 
                     <button
@@ -1450,7 +1469,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <button
                             type="button"
                             onClick={handleToggleTree}
-                            title="파일 트리 열기/닫기"
+                            title={pack.clang.filetree_toggle}
                             aria-pressed={bundle.ui.treeOpen}
                             style={{
                                 display: "inline-flex", alignItems: "center",
@@ -1501,7 +1520,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                             <button
                                                 type="button"
                                                 onClick={e => { e.stopPropagation(); handleTabClose(tab); }}
-                                                aria-label={`${tab.label} 탭 닫기`}
+                                                aria-label={pack.clang.tab_close_aria.replace("$0", tab.label)}
                                                 style={{
                                                     marginLeft: 2,
                                                     width: 16,
@@ -1528,11 +1547,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <button
                             type="button"
                             onClick={handleLspCommand}
-                            title={lspConnected ? "LSP 연결됨" : "LSP 연결 안됨 · 클릭하여 재연결"}
+                            title={lspConnected ? pack.clang.lsp_status_connected : pack.clang.lsp_status_disconnected}
                             style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 4px", border: "none", background: "transparent", cursor: "pointer", color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}
                         >
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
-                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : "연결 안됨"}
+                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : pack.clang.lsp_disconnected_short}
                         </button>
                     </div>
 
@@ -1620,7 +1639,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                             if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
                                             setEditorNotice(null);
                                         }}
-                                        aria-label="알림 닫기"
+                                        aria-label={pack.clang.notice_close_aria}
                                         style={{
                                             marginLeft: 4,
                                             width: 16,
@@ -1666,7 +1685,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <button onClick={() => setRightTab("debug")}
                             style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "debug" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "debug" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
                         >
-                            디버그
+                            {pack.clang.debug_button}
                             {debugActive && (
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: debug.status === "stopped" ? token.color.warning : token.color.success, display: "inline-block" }} />
                             )}
@@ -1704,6 +1723,24 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 {pack.workspace.ui.log_placeholder}
                             </div>
                         </div>
+                        {/* Interactive input prompt (Asyncify run paused on sim_input_*) */}
+                        {inputRequest && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, background: token.color.bgSubtle }}>
+                                <span style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs11, color: token.color.fgMuted, whiteSpace: "nowrap" }}>
+                                    {inputRequest.kind === "i32" ? pack.workspace.input.int_label : pack.workspace.input.float_label}
+                                </span>
+                                <input
+                                    autoFocus
+                                    type="number"
+                                    step={inputRequest.kind === "i32" ? "1" : "any"}
+                                    value={inputValue}
+                                    onChange={(e) => setInputValue(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === "Enter") submitInput(); }}
+                                    style={{ flex: 1, minWidth: 0, padding: "6px 8px", fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, background: token.color.bg, color: token.color.fg, border: `1px solid ${token.color.border}`, borderRadius: 6 }}
+                                />
+                                <Button onClick={submitInput}>{pack.workspace.input.submit}</Button>
+                            </div>
+                        )}
                         <div style={{ padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, fontFamily: token.font.family.mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle, display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: token.color.success, display: "inline-block" }} />
                             {tfBackend === "initializing" ? pack.workspace.ui.backend_initializing : `${tfBackend} · ${pack.workspace.ui.backend_ready}`}
@@ -1732,7 +1769,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                         key={i}
                                         type="button"
                                         onClick={() => focusInfoEntry(entry)}
-                                        title="클릭하여 해당 위치로 이동"
+                                        title={pack.clang.jump_title}
                                         style={{
                                             display: "flex",
                                             alignItems: "flex-start",
@@ -1857,7 +1894,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 fontFamily: token.font.family.mono,
                             }}
                         >
-                            닫기
+                            {pack.clang.close}
                         </button>
                     </div>
                     <pre style={{
@@ -1920,21 +1957,21 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
             {lspModal?.kind === "connecting" && (
                 <Modal width={420}>
-                    <ModalHeader>C++ 언어 서버 연결 중</ModalHeader>
+                    <ModalHeader>{pack.clang.lsp_connecting_title}</ModalHeader>
                     <ModalBody>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                             <Spinner size="lg" />
                             <div style={{ fontSize: token.font.size.fs13, color: token.color.fg, lineHeight: 1.6 }}>
-                                <div>C++ 언어 서버(clangd)에 연결하고 있어요…</div>
+                                <div>{pack.clang.lsp_connecting_msg}</div>
                                 <div style={{ marginTop: 4, color: token.color.fgMuted, fontSize: token.font.size.fs11 }}>
-                                    취소하면 LSP 기능 없이 편집을 계속할 수 있어요.
+                                    {pack.clang.lsp_cancel_hint}
                                 </div>
                             </div>
                         </div>
                     </ModalBody>
                     <ModalFooter>
                         <Button variant="ghost" size="sm" onClick={handleLspCancel}>
-                            취소
+                            {pack.clang.cancel}
                         </Button>
                     </ModalFooter>
                 </Modal>
@@ -2002,7 +2039,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                         <img src={src} alt={name} width={128} height={128} style={{ display: "block", objectFit: "contain" }} />
                                     </div>
                                 ) : (
-                                    <span style={{ color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>미리보기를 표시할 수 없습니다.</span>
+                                    <span style={{ color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>{pack.clang.preview_unavailable}</span>
                                 )}
                                 <span style={{ color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>{imagePreview}</span>
                             </div>
@@ -2014,17 +2051,17 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             {deleteConfirm && (
                 <Modal width={420} onClose={() => setDeleteConfirm(null)}>
                     <ModalHeader onClose={() => setDeleteConfirm(null)}>
-                        {deleteConfirm.kind === "entry-block" ? "Entry 파일은 삭제할 수 없어요" : "삭제 확인"}
+                        {deleteConfirm.kind === "entry-block" ? pack.clang.delete_entry_title : pack.clang.delete_confirm_title}
                     </ModalHeader>
                     <ModalBody>
                         {deleteConfirm.kind === "entry-block" ? (
                             <div style={{ fontSize: token.font.size.fs13, color: token.color.fg, lineHeight: 1.6 }}>
                                 <div>
                                     <span style={{ fontFamily: token.font.family.mono }}>{deleteConfirm.path}</span>
-                                    {" "}은(는) 현재 Entry 파일을 포함하고 있어 삭제할 수 없어요.
+                                    {pack.clang.entry_contains}
                                 </div>
                                 <div style={{ marginTop: 8, color: token.color.fgMuted }}>
-                                    다른 파일을 Entry 로 지정한 뒤 다시 시도해주세요.
+                                    {pack.clang.entry_reassign}
                                 </div>
                             </div>
                         ) : (
@@ -2032,11 +2069,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 <div>
                                     <span style={{ fontFamily: token.font.family.mono }}>{deleteConfirm.path}</span>
                                     {deleteConfirm.affected.length > 1
-                                        ? ` 와 그 하위 ${deleteConfirm.affected.length}개 파일을 삭제할까요?`
-                                        : " 를 삭제할까요?"}
+                                        ? pack.clang.delete_with_children.replace("$0", String(deleteConfirm.affected.length))
+                                        : pack.clang.delete_single}
                                 </div>
                                 <div style={{ marginTop: 8, color: token.color.fgMuted, fontSize: token.font.size.fs11 }}>
-                                    이 동작은 되돌릴 수 없어요.
+                                    {pack.clang.delete_irreversible}
                                 </div>
                             </div>
                         )}
@@ -2044,15 +2081,15 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     <ModalFooter>
                         {deleteConfirm.kind === "entry-block" ? (
                             <Button variant="primary" size="sm" onClick={() => setDeleteConfirm(null)}>
-                                확인
+                                {pack.clang.confirm}
                             </Button>
                         ) : (
                             <>
                                 <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>
-                                    취소
+                                    {pack.clang.cancel}
                                 </Button>
                                 <Button variant="danger" size="sm" onClick={confirmDelete}>
-                                    삭제
+                                    {pack.clang.delete}
                                 </Button>
                             </>
                         )}

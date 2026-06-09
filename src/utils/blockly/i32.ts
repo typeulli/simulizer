@@ -57,7 +57,21 @@ export const I32_BLOCKS: BlockSet = {
             const op = block.getFieldValue("OP") as keyof typeof simulizer.i32ops;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return (simulizer.i32ops[op] as any)(lhs, rhs);
-        })
+        }),
+    I32_RANDOM: new BlockBuilder("i32_random", "i32", 230, "정수 난수 [min, max]")
+        .addBody("random int %1 ~ %2")
+        .addArgValue("MIN", "i32")
+        .addArgValue("MAX", "i32")
+        .expr((block, ctx) => {
+            const min = ctx.blockToExpr(block.getInputTargetBlock("MIN"), ctx);
+            const max = ctx.blockToExpr(block.getInputTargetBlock("MAX"), ctx);
+            if (!min || !max) return null;
+            return new simulizer.Call("math_rand_int",
+                [ctx.coerce(min, simulizer.i32), ctx.coerce(max, simulizer.i32)], simulizer.i32);
+        }),
+    INPUT_I32: new BlockBuilder("input_i32", "i32", 230, "정수 입력 (C++ 실행 전용)")
+        .addBody("input int")
+        .expr(() => new simulizer.Call("input_i32", [], simulizer.i32)),
 }
 
 export function xmlI32Blocks(cat: string) {
@@ -69,5 +83,7 @@ export function xmlI32Blocks(cat: string) {
     <block type="i32_unop"></block>
     <block type="i32_cmp"></block>
     <block type="i32_not"></block>
+    <block type="i32_random"></block>
+    <block type="input_i32"></block>
 </category>`;
 }

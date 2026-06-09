@@ -21,7 +21,7 @@ import { xmlI32Blocks } from "@/utils/blockly/i32";
 import { xmlLocalBlocks, type BuiltinConst } from "@/utils/blockly/locals";
 import { xmlTensorBlocks, registerDynamicTensorBlocks } from "@/utils/blockly/tensor";
 import { mat_data_to_image_url, vec_field_to_image_url } from "@/utils/wasm/tensor";
-import { CUSTOM_BLOCKS } from "@/utils/blockly/$blocks";
+import { CUSTOM_BLOCKS, NEEDS_EMCC_BLOCK_TYPES } from "@/utils/blockly/$blocks";
 
 import { Button } from "@/components/atoms/Button";
 import { Text } from "@/components/atoms/Text";
@@ -37,7 +37,6 @@ import { BlockManagerModal } from "@/components/workspace-modals/BlockManagerMod
 import { BoundaryManagerModal } from "@/components/workspace-modals/BoundaryManagerModal";
 import { ConstManagerModal } from "@/components/workspace-modals/ConstManagerModal";
 import { ErrorModal } from "@/components/workspace-modals/ErrorModal";
-import { FunctionManagerModal } from "@/components/workspace-modals/FunctionManagerModal";
 import { LatexOcrModal } from "@/components/workspace-modals/LatexOcrModal";
 
 import { useConsolePanel } from "@/components/console";
@@ -57,6 +56,7 @@ import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark";
 import { useTheme } from "@/hooks/useTheme";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
+import type { ClangWorkerInMsg } from "@/utils/wasm/clang-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { getMe, getFile, saveFile, renameFile, uploadThumbnail, duplicateFile, createFile, type FileOut, type FileDetail } from "@/lib/authapi";
 import { serializeBundle, makeDefaultBundle, type CppBundle } from "@/lib/cppBundle";
@@ -287,26 +287,27 @@ function cssColorToHex(value: string): string {
 function buildCustomBlockDefs(p: langpack): BlockDef[] {
     const msgs = p.block_messages ?? {};
     const dropdowns = p.block_dropdowns ?? {};
+    const tooltips = p.block_tooltips ?? {};
     return [
-        ...unpack(translateBlockSet(CUSTOM_BLOCKS, msgs, dropdowns)),
+        ...unpack(translateBlockSet(CUSTOM_BLOCKS, msgs, dropdowns, tooltips)),
         {
             type: "i32_not",
             message0: "! %1",
             args0: [{ type: "input_value", name: "VALUE", check: "i32" }],
-            output: "bool", colour: 60, tooltip: "logical NOT",
+            output: "bool", colour: 60, tooltip: tooltips["i32_not"] ?? "logical NOT",
             inputsInline: true,
         },
         {
             type: "wasm_return_i32",
             message0: msgs["wasm_return_i32"]?.[0] ?? "return int %1",
             args0: [{ type: "input_value", name: "VALUE", check: "i32" }],
-            previousStatement: null, nextStatement: null, colour: 0, tooltip: "return int",
+            previousStatement: null, nextStatement: null, colour: 0, tooltip: tooltips["wasm_return_i32"] ?? "return int",
         },
         {
             type: "wasm_return_f64",
             message0: msgs["wasm_return_f64"]?.[0] ?? "return float %1",
             args0: [{ type: "input_value", name: "VALUE", check: "f64" }],
-            previousStatement: null, nextStatement: null, colour: 0, tooltip: "return float",
+            previousStatement: null, nextStatement: null, colour: 0, tooltip: tooltips["wasm_return_f64"] ?? "return float",
         },
         {
             type: "wasm_func_main",
@@ -319,7 +320,7 @@ function buildCustomBlockDefs(p: langpack): BlockDef[] {
             ],
             message1: msgs["wasm_func_main"]?.[1] ?? "body %1",
             args1: [{ type: "input_statement", name: "BODY" }],
-            colour: 290, tooltip: "WebAssembly main function",
+            colour: 290, tooltip: tooltips["wasm_func_main"] ?? "WebAssembly main function",
         },
     ];
 }
@@ -374,46 +375,167 @@ let _bd3Arrays: Bd3ArrayEntry[] = [];
 
 const displayType = (t: string) => t === "i32" ? "int" : t === "f64" ? "float" : t;
 
-function registerCustomFuncBlocks(spec: CustomFuncSpec) {
-    const { id, name, retType, params } = spec;
+// ── Custom functions ─────────────────────────────────────────────────────────
+// The canvas is the single source of truth: each `custom_func_def` block carries
+// its own stable `funcId` (extraState), an editable NAME, a return-type dropdown,
+// and N editable parameters (added/removed via the block's context menu). The
+// function list, the per-function call blocks (`custom_func_<id>`), and the
+// compiled symbols are all derived by scanning these blocks. The compiled symbol
+// is id-based (`custom_func_<id>`), so renaming a function never orphans calls —
+// the name is just a label that auto-syncs onto the call blocks.
 
-    if (!Blockly.Blocks[`wasm_func_def_${id}`]) {
-        Blockly.Blocks[`wasm_func_def_${id}`] = {
-            init(this: Blockly.Block) {
-                this.appendDummyInput()
-                    .appendField(`function ${name}`)
-                    .appendField(` → ${displayType(retType)}`);
-                params.forEach(p =>
-                    this.appendDummyInput().appendField(`  param ${p.name}: ${displayType(p.type)}`)
-                );
-                this.appendStatementInput("BODY").appendField("body");
-                this.setColour(290);
-                this.setTooltip(`function ${name}`);
-            },
-        };
-    }
+type FuncDefBlock = Blockly.Block & {
+    paramCount_: number;
+    updateShape_(target: number): void;
+};
 
-    if (!Blockly.Blocks[`wasm_call_${id}`]) {
-        Blockly.Blocks[`wasm_call_${id}`] = {
-            init(this: Blockly.Block) {
-                this.appendDummyInput().appendField(`${name}(`);
-                params.forEach((p, i) =>
-                    this.appendValueInput(`ARG${i}`).setCheck(p.type).appendField(`${p.name}:`)
-                );
-                this.appendDummyInput().appendField(")");
-                if (retType !== "void") {
-                    this.setOutput(true, retType);
-                } else {
-                    this.setPreviousStatement(true);
-                    this.setNextStatement(true);
-                }
-                this.setColour(290);
-                this.setInputsInline(params.length <= 2);
-                this.setTooltip(`call ${name}`);
-            },
-        };
-    }
+const FUNC_RET_OPTIONS:  [string, string][] = [["int", "i32"], ["float", "f64"], ["void", "void"]];
+const PARAM_TYPE_OPTIONS: [string, string][] = [["int", "i32"], ["float", "f64"]];
+
+// A function's stable identity is its Blockly block id (unique per instance,
+// preserved across save/load, regenerated on duplicate/flyout-drag). We only
+// sanitize it into a WAT/block-type-safe symbol; nothing extra is serialized,
+// so dragging two definitions out can never share an id.
+function funcIdOf(blocklyId: string): string {
+    return "f" + blocklyId.replace(/[^A-Za-z0-9]/g, "_");
 }
+
+// Module-level language pack reference so the dynamically-registered custom
+// function blocks (def + calls) can localize their labels/tooltips without
+// threading `pack` through every call site. Kept in sync by the component.
+let _langPack: langpack | null = null;
+
+/** Register the single generic function-definition block type. Re-registering
+ *  with a fresh pack (on language change) relabels future blocks. */
+function registerFuncDefBlock() {
+    const cf = _langPack?.block_dynamic;
+    const labelFunc = cf?.custom_func_def_label ?? "function";
+    const labelBody = cf?.custom_func_def_body_label ?? "body";
+    const labelParam = cf?.custom_func_def_param_label ?? "param";
+    const defTip = cf?.custom_func_def_tooltip ?? "custom function (right-click to add/remove parameters)";
+    const addParam = cf?.custom_func_add_param ?? "Add parameter";
+    const removeParam = cf?.custom_func_remove_param ?? "Remove parameter";
+    Blockly.Blocks["custom_func_def"] = {
+        init(this: FuncDefBlock) {
+            this.paramCount_ = 0;
+            this.appendDummyInput()
+                .appendField(labelFunc)
+                .appendField(new Blockly.FieldTextInput("myFunc"), "NAME")
+                .appendField("→")
+                .appendField(new Blockly.FieldDropdown(FUNC_RET_OPTIONS), "RET");
+            this.appendStatementInput("BODY").appendField(labelBody);
+            this.setColour(290);
+            this.setTooltip(defTip);
+        },
+        saveExtraState(this: FuncDefBlock) {
+            return { paramCount: this.paramCount_ };
+        },
+        loadExtraState(this: FuncDefBlock, state: { paramCount?: number }) {
+            this.updateShape_(state.paramCount ?? 0);
+        },
+        // Add/remove parameter rows to reach `target`; BODY always stays last.
+        updateShape_(this: FuncDefBlock, target: number) {
+            while (this.paramCount_ < target) {
+                const i = this.paramCount_;
+                this.appendDummyInput(`PARAM${i}`)
+                    .appendField(labelParam)
+                    .appendField(new Blockly.FieldTextInput(`p${i}`), `PNAME${i}`)
+                    .appendField(":")
+                    .appendField(new Blockly.FieldDropdown(PARAM_TYPE_OPTIONS), `PTYPE${i}`);
+                this.moveInputBefore(`PARAM${i}`, "BODY");
+                this.paramCount_ += 1;
+            }
+            while (this.paramCount_ > target) {
+                this.paramCount_ -= 1;
+                this.removeInput(`PARAM${this.paramCount_}`);
+            }
+        },
+        customContextMenu(this: FuncDefBlock, options: Array<{ text: string; enabled: boolean; callback: () => void }>) {
+            options.push({ text: addParam, enabled: true, callback: () => this.updateShape_(this.paramCount_ + 1) });
+            if (this.paramCount_ > 0)
+                options.push({ text: removeParam, enabled: true, callback: () => this.updateShape_(this.paramCount_ - 1) });
+        },
+    };
+}
+
+/** Read the current function list from the canvas `custom_func_def` blocks. */
+function scanCustomFuncs(ws: Blockly.Workspace): CustomFuncSpec[] {
+    const specs: CustomFuncSpec[] = [];
+    for (const b of ws.getAllBlocks(false)) {
+        if (b.type !== "custom_func_def") continue;
+        const fb = b as unknown as FuncDefBlock;
+        const id = funcIdOf(b.id);
+        const name = (b.getFieldValue("NAME") as string)?.trim() || id;
+        const retType = (b.getFieldValue("RET") as "i32" | "f64" | "void") ?? "void";
+        const params: { name: string; type: "i32" | "f64" }[] = [];
+        for (let i = 0; i < fb.paramCount_; i++) {
+            const pn = (b.getFieldValue(`PNAME${i}`) as string)?.trim() || `p${i}`;
+            const pt = (b.getFieldValue(`PTYPE${i}`) as "i32" | "f64") ?? "i32";
+            params.push({ name: pn, type: pt });
+        }
+        specs.push({ id, name, retType, params });
+    }
+    return specs;
+}
+
+/** (Re)register the call block `custom_func_<id>` for a function spec. */
+function registerCallBlock(spec: CustomFuncSpec) {
+    const { id, name, retType, params } = spec;
+    Blockly.Blocks[`custom_func_${id}`] = {
+        init(this: Blockly.Block) {
+            this.appendDummyInput().appendField(new Blockly.FieldLabel(`${name}(`), "FUNC_NAME");
+            params.forEach((p, i) =>
+                this.appendValueInput(`ARG${i}`).setCheck(p.type).appendField(`${p.name}:`)
+            );
+            this.appendDummyInput().appendField(")");
+            if (retType !== "void") this.setOutput(true, retType);
+            else { this.setPreviousStatement(true); this.setNextStatement(true); }
+            this.setColour(290);
+            this.setInputsInline(params.length <= 2);
+            this.setTooltip((_langPack?.workspace.blocks.custom_func_call_tooltip ?? "call $0").replace("$0", name));
+        },
+    };
+}
+
+type WorkspaceState = Parameters<typeof Blockly.serialization.workspaces.load>[0];
+
+/** Read func specs directly from a serialized workspace (top-level def blocks),
+ *  so call blocks can be registered BEFORE the workspace is deserialized. */
+function specsFromState(state: WorkspaceState): CustomFuncSpec[] {
+    const specs: CustomFuncSpec[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const top = (state as any)?.blocks?.blocks;
+    if (!Array.isArray(top)) return specs;
+    for (const blk of top) {
+        if (blk?.type !== "custom_func_def" || !blk.id) continue;
+        const id = funcIdOf(String(blk.id));
+        const count: number = blk.extraState?.paramCount ?? 0;
+        const fields = blk.fields ?? {};
+        const name = String(fields.NAME ?? "").trim() || id;
+        const retType = (fields.RET ?? "void") as "i32" | "f64" | "void";
+        const params: { name: string; type: "i32" | "f64" }[] = [];
+        for (let i = 0; i < count; i++) {
+            params.push({
+                name: String(fields[`PNAME${i}`] ?? `p${i}`).trim() || `p${i}`,
+                type: (fields[`PTYPE${i}`] ?? "i32") as "i32" | "f64",
+            });
+        }
+        specs.push({ id, name, retType, params });
+    }
+    return specs;
+}
+
+/** Load a workspace, pre-registering the generic def block + every call block
+ *  the state references so no block is dropped during deserialization. */
+function loadWorkspaceState(ws: Blockly.Workspace, state: WorkspaceState) {
+    registerFuncDefBlock();
+    for (const spec of specsFromState(state)) registerCallBlock(spec);
+    Blockly.serialization.workspaces.load(state, ws);
+}
+
+// Ensure the generic definition block type exists as soon as this module loads
+// (the base toolbox references it).
+registerFuncDefBlock();
 
 /** Build custom function definition block → FuncDef */
 function buildCustomFunc(
@@ -425,7 +547,7 @@ function buildCustomFunc(
     const paramDefs = spec.params.map(
         p => new simulizer.ParamDef(new simulizer.Param(p.name, p.type === "i32" ? simulizer.i32 : simulizer.f64))
     );
-    const func = new simulizer.FuncDef(spec.name, paramDefs, retType);
+    const func = new simulizer.FuncDef(`custom_func_${spec.id}`, paramDefs, retType);
     const ctx: CompileCtx = {
         func,
         locals: new Map(),
@@ -538,15 +660,15 @@ function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimulizerExp
 
         default: {
             // Custom function call (non-void → expr)
-            if (block.type.startsWith("wasm_call_")) {
-                const id = block.type.slice("wasm_call_".length);
+            if (block.type.startsWith("custom_func_")) {
+                const id = block.type.slice("custom_func_".length);
                 const spec = _customFuncSpecs.find(f => f.id === id);
                 if (spec && spec.retType !== "void") {
                     const args = spec.params.map((p, i) => {
                         const e = blockToExpr(block.getInputTargetBlock(`ARG${i}`), ctx);
                         return e ? coerce(e, p.type === "i32" ? simulizer.i32 : simulizer.f64) : null;
                     }).filter((a): a is SimulizerExpr => a !== null);
-                    return new simulizer.Call(spec.name, args, retTypeMap[spec.retType]);
+                    return new simulizer.Call(`custom_func_${id}`, args, retTypeMap[spec.retType]);
                 }
             }
             return null;
@@ -578,15 +700,15 @@ function stmtBlockToExpr(block: Blockly.Block, ctx: CompileCtx): SimulizerExpr |
         // Expression in statement position → wrap with Drop
         default: {
             // Custom void function call (statement position)
-            if (block.type.startsWith("wasm_call_")) {
-                const id = block.type.slice("wasm_call_".length);
+            if (block.type.startsWith("custom_func_")) {
+                const id = block.type.slice("custom_func_".length);
                 const spec = _customFuncSpecs.find(f => f.id === id);
                 if (spec && spec.retType === "void") {
                     const args = spec.params.map((p, i) => {
                         const e = blockToExpr(block.getInputTargetBlock(`ARG${i}`), ctx);
                         return e ? coerce(e, p.type === "i32" ? simulizer.i32 : simulizer.f64) : null;
                     }).filter((a): a is SimulizerExpr => a !== null);
-                    return new simulizer.Call(spec.name, args, simulizer.void_);
+                    return new simulizer.Call(`custom_func_${id}`, args, simulizer.void_);
                 }
             }
             const expr = blockToExpr(block, ctx);
@@ -671,7 +793,7 @@ function buildFuncDef(
     const body = stmtChainToExprs(mainBlock.getInputTargetBlock("BODY"), ctx);
 
     if (!declaredRetType.equals(simulizer.void_) && !allPathsReturn(body)) {
-        return { kind: "no_return", message: "모든 경로에 return 블록이 필요합니다." };
+        return { kind: "no_return", message: _langPack?.workspace.infos.no_return ?? "Every path needs a return block." };
     }
 
     body.forEach((e) => func.add_expr(e));
@@ -715,8 +837,8 @@ function buildBaseToolboxXml(p: langpack): string {
     <category name="${tb.func}" colour="${290}">
     <sep gap="16"></sep>
         <label text="Function"></label>
-        <button text="${tb.func_btn}" callbackKey="OPEN_FUNC_MGR"></button>
         <block type="wasm_func_main"></block>
+        <block type="custom_func_def"></block>
         <block type="wasm_return_i32"></block>
         <block type="wasm_return_f64"></block>
     </category>
@@ -726,8 +848,10 @@ function buildBaseToolboxXml(p: langpack): string {
 function buildToolboxXml(funcs: CustomFuncSpec[], p: langpack): string {
     const base = buildBaseToolboxXml(p);
     if (funcs.length === 0) return base;
+    // The generic definition block lives in the base toolbox; here we add one
+    // call block per function currently defined on the canvas.
     const funcBlocks = funcs.map(f =>
-        `<block type="wasm_func_def_${f.id}"></block>\n        <block type="wasm_call_${f.id}"></block>`
+        `<block type="custom_func_${f.id}"></block>`
     ).join("\n        ");
     return base.replace(
         `<block type="wasm_return_f64"></block>\n    </category>`,
@@ -822,6 +946,11 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const blocklyDivRef = useRef<HTMLDivElement>(null);
     const workspaceRef  = useRef<Blockly.WorkspaceSvg | null>(null);
     const wasmWorkerRef = useRef<Worker | null>(null);
+    // Clang worker drives the Asyncify (interactive-input) run path; created
+    // lazily the first time a program with input blocks is run.
+    const clangWorkerRef = useRef<Worker | null>(null);
+    const [inputRequest, setInputRequest] = useState<{ kind: "i32" | "f64" } | null>(null);
+    const [inputValue, setInputValue] = useState("");
     const router = useRouter();
     const searchParams = useSearchParams();
     const { theme } = useTheme();
@@ -835,10 +964,6 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [watSource, setWatSource]         = useState<string>("");
     const [customFuncs, setCustomFuncs]     = useState<CustomFuncSpec[]>([]);
     const customFuncsRef                    = useRef<CustomFuncSpec[]>([]);
-    const [showFuncMgr, setShowFuncMgr]     = useState(false);
-    const [newFuncName, setNewFuncName]     = useState("myFunc");
-    const [newFuncRet,  setNewFuncRet]      = useState<"i32"|"f64"|"void">("i32");
-    const [newFuncParams, setNewFuncParams] = useState<{name:string;type:"i32"|"f64"}[]>([]);
 
     const [bd2Arrays, setBd2Arrays]   = useState<Bd2ArrayEntry[]>([]);
     const bd2ArraysRef                = useRef<Bd2ArrayEntry[]>([]);
@@ -940,7 +1065,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 }
             }
         } catch (e: any) {
-            if (e?.name !== "AbortError") setOcrLatex(prev => prev || "오류가 발생했습니다.");
+            if (e?.name !== "AbortError") setOcrLatex(prev => prev || pack.messages.error);
         } finally {
             setOcrStreaming(false);
         }
@@ -1087,7 +1212,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             },
             onerror(err) {
                 if ((err as Error)?.name !== "AbortError") {
-                    setChatOutput(prev => prev + `\n\n[오류] ${err instanceof Error ? err.message : String(err)}`);
+                    setChatOutput(prev => prev + "\n\n" + pack.workspace.ai.error_prefix.replace("$0", err instanceof Error ? err.message : String(err)));
                 }
                 setChatStreaming(false);
                 throw err; // fetchEventSource 재시도 방지
@@ -1162,9 +1287,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             }
             setExportCppOpen(false);
             const href = `/workspace?file=${created!.id}`;
-            showExportToast(`'${candidate}' 파일이 만들어졌어요.`, href);
+            showExportToast(pack.workspace.logs.export_created.replace("$0", candidate), href);
         } catch (err) {
-            showExportToast(`내보내기 실패: ${err instanceof Error ? err.message : String(err)}`);
+            showExportToast(pack.workspace.logs.export_failed.replace("$0", err instanceof Error ? err.message : String(err)));
         } finally {
             setExporting(false);
         }
@@ -1220,6 +1345,14 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
         if (msg.type === "ready") return;
 
+        if (msg.type === "input-request") {
+            // Clang (Asyncify) run suspended on sim_input_*; surface the inline
+            // input prompt in the console tab.
+            setRightTab("console");
+            setInputRequest({ kind: msg.kind });
+            return;
+        }
+
         if (msg.type === "backend-switched") {
             pendingBackendSwitchRef.current = null;
             setTfBackend(msg.backend);
@@ -1265,7 +1398,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
         if (msg.type === "result") {
             setResult(msg.value);
-            currentAddLog("success", `🎉 결과: ${msg.value}`);
+            currentAddLog("success", (_langPack?.workspace.logs.result_value ?? "🎉 Result: $0").replace("$0", String(msg.value)));
             return;
         }
 
@@ -1340,6 +1473,24 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         };
     }, [createWasmWorker]);
 
+    // Clang worker (interactive-input run path) — created on demand, reused.
+    const getClangWorker = useCallback(() => {
+        if (clangWorkerRef.current) return clangWorkerRef.current;
+        const worker = new Worker(
+            new URL("@/utils/wasm/clang-worker.ts", import.meta.url),
+            { type: "module" }
+        );
+        worker.addEventListener("message", handleWorkerMessage);
+        worker.addEventListener("error", handleWorkerError);
+        clangWorkerRef.current = worker;
+        return worker;
+    }, [handleWorkerMessage, handleWorkerError]);
+
+    useEffect(() => () => {
+        clangWorkerRef.current?.terminate();
+        clangWorkerRef.current = null;
+    }, []);
+
     const handleSwitchBackend = useCallback((backend: string) => {
         const worker = wasmWorkerRef.current;
         if (!worker) return;
@@ -1353,9 +1504,11 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // Initialize Blockly
     useEffect(() => {
         if (isOwner === null) return;
+        _langPack = pack;
         registerDynamicTensorBlocks(pack);
         registerDynamicArrayBlocks(pack);
-        registerFoldRegionBlock();
+        registerFoldRegionBlock(pack);
+        registerFuncDefBlock();
         buildCustomBlockDefs(pack).forEach((def) => {
             const d = def as { type: string };
             if (!Blockly.Blocks[d.type]) {
@@ -1383,7 +1536,6 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
         workspaceRef.current = ws;
         if (!isMobile) {
-            ws.registerButtonCallback("OPEN_FUNC_MGR",   () => setShowFuncMgr(true));
             ws.registerButtonCallback("OPEN_BD_MGR",     () => { setBdMgrTab("2d"); setShowBdMgr(true); });
             ws.registerButtonCallback("OPEN_CONST_MGR",  () => setShowConstMgr(true));
             ws.registerButtonCallback("OPEN_LATEX_OCR",  () => { setOcrLatex(""); setOcrImageUrl(null); setShowLatexOcr(true); });
@@ -1392,7 +1544,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const refreshInfo = () => {
             const mainBlock = ws.getAllBlocks(false).find(b => b.type === "wasm_func_main");
             if (!mainBlock) {
-                setInfos([{ level: "error", kind: "no_main", message: "wasm_func_main 블록이 없습니다." }]);
+                setInfos([{ level: "error", kind: "no_main", message: pack.workspace.infos.no_main }]);
                 return;
             }
             const result = buildFuncDef(mainBlock);
@@ -1407,7 +1559,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     entries.push({
                         level: "error",
                         kind: "duplicate_decl",
-                        message: `변수 '${name}'이(가) ${bucket.length}번 선언되었습니다.`,
+                        message: pack.workspace.infos.var_redeclared.replace("$0", name).replace("$1", String(bucket.length)),
                         blockId: bucket[1].blockId,
                     });
                 }
@@ -1416,6 +1568,28 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         };
         const handleBlockChange = (event: Blockly.Events.Abstract) => {
             if (event.isUiEvent) return;
+
+            // The canvas is the source of truth for custom functions: re-derive
+            // the list, (re)register each call block, and sync the (possibly
+            // renamed) function name onto existing call blocks. Field writes are
+            // wrapped so they don't re-trigger this listener.
+            const specs = scanCustomFuncs(ws);
+            Blockly.Events.disable();
+            try {
+                for (const spec of specs) {
+                    registerCallBlock(spec);
+                    for (const cb of ws.getBlocksByType(`custom_func_${spec.id}`, false)) {
+                        cb.getField("FUNC_NAME")?.setValue(`${spec.name}(`);
+                    }
+                }
+            } finally {
+                Blockly.Events.enable();
+            }
+            if (JSON.stringify(specs) !== JSON.stringify(customFuncsRef.current)) {
+                customFuncsRef.current = specs;
+                setCustomFuncs(specs);
+            }
+
             refreshInfo();
             if (!isOwnerRef.current) return;
             setSaveStatus("unsaved");
@@ -1630,7 +1804,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (pendingContentRef.current) {
                 try {
                     const state = JSON.parse(pendingContentRef.current);
-                    Blockly.serialization.workspaces.load(state, ws);
+                    loadWorkspaceState(ws, state);
                 } catch {
                     Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
                 }
@@ -1697,6 +1871,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (!ws || !langReady) return;
         // Skip until the requested language and fetched pack match.
         if (lang && pack.meta.langc !== lang) return;
+        _langPack = pack;
         const defs = buildCustomBlockDefs(pack);
         defs.forEach(def => {
             Blockly.Blocks[(def as { type: string }).type] = {
@@ -1706,9 +1881,11 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         // Restore dynamic blocks that were overwritten above
         registerDynamicTensorBlocks(pack);
         registerDynamicArrayBlocks(pack);
+        registerFoldRegionBlock(pack);
+        registerFuncDefBlock();
         const savedState = Blockly.serialization.workspaces.save(ws);
         ws.clear();
-        Blockly.serialization.workspaces.load(savedState, ws);
+        loadWorkspaceState(ws, savedState);
         if (ws.getToolbox()) ws.updateToolbox(buildToolboxXml(customFuncs, pack));
     }, [lang, pack]);
 
@@ -1800,10 +1977,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         registerDynamicArrayBlocks(pack);
 
         try {
-            Blockly.serialization.workspaces.load(
-                { blocks: { languageVersion: 0, blocks: tree } },
-                diffWs,
-            );
+            loadWorkspaceState(diffWs, { blocks: { languageVersion: 0, blocks: tree } });
         } catch (e) {
             console.error("Failed to load diff tree:", e);
             return;
@@ -1860,7 +2034,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const ws = workspaceRef.current;
         if (!ws) return null;
 
-        _customFuncSpecs = customFuncsRef.current;
+        // Function list is derived from the canvas definition blocks.
+        const funcSpecs = scanCustomFuncs(ws);
+        _customFuncSpecs = funcSpecs;
         _bd2Arrays = bd2ArraysRef.current;
         _bd3Arrays = bd3ArraysRef.current;
 
@@ -1884,8 +2060,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 .replace("$2", String(func.body.length))
         );
 
-        for (const spec of customFuncsRef.current) {
-            const defBlock = ws.getAllBlocks(false).find(b => b.type === `wasm_func_def_${spec.id}`);
+        for (const spec of funcSpecs) {
+            const defBlock = ws.getAllBlocks(false).find(b => b.type === "custom_func_def" && funcIdOf(b.id) === spec.id);
             if (!defBlock) { addLog("error", pack.workspace.logs.func_block_not_found.replace("$0", spec.name)); continue; }
             const customFunc = buildCustomFunc(defBlock, spec, mod);
             mod.add_func(customFunc);
@@ -1911,6 +2087,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             new simulizer.ImportDef("tensor", "tensor_sub",       "func", "tensor_sub",       "(param i32 i32) (result i32)"),
             new simulizer.ImportDef("tensor", "tensor_matmul",    "func", "tensor_matmul",    "(param i32 i32) (result i32)"),
             new simulizer.ImportDef("tensor", "tensor_neg",       "func", "tensor_neg",       "(param i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_grad",      "func", "tensor_grad",      "(param i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_curl",      "func", "tensor_curl",      "(param i32) (result i32)"),
+            new simulizer.ImportDef("tensor", "tensor_lapl",      "func", "tensor_lapl",      "(param i32) (result i32)"),
             new simulizer.ImportDef("tensor", "tensor_elemul",    "func", "tensor_elemul",    "(param i32 i32) (result i32)"),
             new simulizer.ImportDef("tensor", "tensor_scale",     "func", "tensor_scale",     "(param i32 f64) (result i32)"),
             new simulizer.ImportDef("tensor", "tensor_save",      "func", "tensor_save",      "(param i32 i32) (result i32)"),
@@ -1933,6 +2112,11 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             new simulizer.ImportDef("math",   "math_ln",          "func", "math_ln",          "(param f64) (result f64)"),
             new simulizer.ImportDef("math",   "math_cos",         "func", "math_cos",         "(param f64) (result f64)"),
             new simulizer.ImportDef("math",   "math_sin",         "func", "math_sin",         "(param f64) (result f64)"),
+            new simulizer.ImportDef("math",   "math_rand_int",    "func", "math_rand_int",    "(param i32 i32) (result i32)"),
+            new simulizer.ImportDef("math",   "math_rand_range",  "func", "math_rand_range",  "(param f64 f64) (result f64)"),
+            new simulizer.ImportDef("math",   "math_rand_unit",   "func", "math_rand_unit",   "(result f64)"),
+            new simulizer.ImportDef("io",     "input_i32",        "func", "input_i32",        "(result i32)"),
+            new simulizer.ImportDef("io",     "input_f64",        "func", "input_f64",        "(result f64)"),
         ];
         for (const imp of allImports) mod.add_import(imp);
 
@@ -1956,7 +2140,6 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     useEffect(() => {
         if (!isMobile) return;
         setShowBlocks(false);
-        setShowFuncMgr(false);
         setShowConstMgr(false);
         setShowBdMgr(false);
         setShowLatexOcr(false);
@@ -1982,7 +2165,41 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setResult(null); setWatSource(""); setRunState("compiling");
         clearLog();
 
+        // Routing: a program containing input (or any Asyncify-requiring block)
+        // can't run on the native browser simulation (no suspend) — transpile it
+        // to C++ and run it through the emcc/clang Asyncify path instead.
+        // Only blocks that actually live inside a function count; blocks sitting
+        // loose on the canvas (outside any function) are ignored.
+        const inFunction = (b: Blockly.Block) => {
+            const root = b.getRootBlock();
+            return root.type === "wasm_func_main" || root.type.startsWith("wasm_func_def_");
+        };
+        const needsEmcc = ws.getAllBlocks(false).some(b => NEEDS_EMCC_BLOCK_TYPES.has(b.type) && inFunction(b));
+
         try {
+            if (needsEmcc) {
+                addLog("info", pack.workspace.logs.input_emcc);
+                const blocklyJson = JSON.stringify(replaceLatexBlocksInWorkspace(Blockly.serialization.workspaces.save(ws)));
+                const res = await fetch(`${API_BASE}/compile/emcc/blocks`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ code: blocklyJson }),
+                });
+                if (!res.ok) {
+                    let detail = await res.text();
+                    try { detail = JSON.parse(detail).detail ?? detail; } catch { /* leave raw */ }
+                    throw new Error(detail);
+                }
+                const wasmBuffer = await res.arrayBuffer();
+                setRunState("running");
+                const worker = getClangWorker();
+                await new Promise<void>((resolve, reject) => {
+                    pendingRunRef.current = { resolve, reject };
+                    worker.postMessage({ type: "run", wasmBuffer } satisfies ClangWorkerInMsg, [wasmBuffer]);
+                });
+                return;
+            }
+
             const result = await generateWat();
             if (!result) { setRunState("error"); return; }
             const { mod } = result;
@@ -2009,11 +2226,18 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             }
             console.error(err);
         }
-    }, [addLog, pack, clearLog, isMobile]);
+    }, [addLog, pack, clearLog, isMobile, getClangWorker]);
 
     const handleStop = useCallback(() => {
         const oldWorker = wasmWorkerRef.current;
         if (oldWorker) oldWorker.terminate();
+
+        // Tear down an in-flight interactive (clang) run too; recreated on demand.
+        if (clangWorkerRef.current) {
+            clangWorkerRef.current.terminate();
+            clangWorkerRef.current = null;
+        }
+        setInputRequest(null);
 
         if (pendingRunRef.current) {
             const abortError = new Error("Execution stopped");
@@ -2027,8 +2251,20 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         createWasmWorker();
 
         setRunState("idle");
-        addLog("info", "실행이 중단되었습니다.");
+        addLog("info", pack.workspace.logs.run_aborted);
     }, [addLog, createWasmWorker]);
+
+    // Submit the value the user typed into the input panel back to the clang
+    // worker, which resumes the suspended run with it.
+    const submitInput = useCallback(() => {
+        if (!inputRequest) return;
+        const raw = inputValue.trim();
+        let value = inputRequest.kind === "i32" ? parseInt(raw, 10) : parseFloat(raw);
+        if (!Number.isFinite(value)) value = 0;
+        clangWorkerRef.current?.postMessage({ type: "input-response", value } satisfies ClangWorkerInMsg);
+        setInputRequest(null);
+        setInputValue("");
+    }, [inputRequest, inputValue]);
 
     // ── Auto-run on URL ?autorun=1 ───────────────────────────────────────
     // Used by the landing-page iframes to show a workspace that already
@@ -2056,7 +2292,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const processedSave = replaceLatexBlocksInWorkspace(rawSave);
         const blocklyJson = JSON.stringify(processedSave);
         setCompiling(true);
-        setCompileProgress({ status: "progress", step: 0, total: 0, message: "요청 전송 중..." });
+        setCompileProgress({ status: "progress", step: 0, total: 0, message: pack.workspace.progress.sending });
         // "auto" lets the backend pick from the User-Agent; an explicit OS overrides via ?system=.
         const buildUrl = targetOs === "auto"
             ? `${API_BASE}/compile/build`
@@ -2089,7 +2325,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             const finalUuid = payload.uuid ?? uuid;
                             if (!finalUuid) throw new Error("Compile stream ended without uuid");
                             if (payload.name) downloadName = payload.name;
-                            setCompileProgress(prev => ({ status: "progress", step: Math.max(0, (prev?.total ?? prev?.step ?? 0) - 1), total: prev?.total ?? 0, message: "다운로드 준비 중..." }));
+                            setCompileProgress(prev => ({ status: "progress", step: Math.max(0, (prev?.total ?? prev?.step ?? 0) - 1), total: prev?.total ?? 0, message: pack.workspace.progress.preparing_download }));
                             ctrl.abort();
                             resolve(finalUuid);
                             return;
@@ -2130,7 +2366,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             a.download = downloadName;
             a.click();
             URL.revokeObjectURL(url);
-            setCompileProgress(prev => ({ status: "done", step: prev?.total ?? prev?.step ?? 0, total: prev?.total ?? 0, message: "다운로드 완료" }));
+            setCompileProgress(prev => ({ status: "done", step: prev?.total ?? prev?.step ?? 0, total: prev?.total ?? 0, message: pack.workspace.progress.download_done }));
         } catch (e) {
             setCompileProgress(prev => ({ status: "error", step: prev?.step ?? 0, total: prev?.total ?? 0, message: e instanceof Error ? e.message : String(e) }));
         } finally {
@@ -2147,33 +2383,13 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         clearLog();
     }, [clearLog]);
 
-    const handleAddFunc = useCallback(() => {
-        const name = newFuncName.trim();
-        if (!name) { alert(pack.workspace.alerts.func_name_required); return; }
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert(pack.workspace.alerts.invalid_identifier); return; }
-        if (customFuncs.some(f => f.name === name)) { alert(pack.workspace.alerts.func_name_exists); return; }
-
-        const id = `f${Date.now()}`;
-        const spec: CustomFuncSpec = { id, name, retType: newFuncRet, params: newFuncParams.map(p => ({ ...p })) };
-        registerCustomFuncBlocks(spec);
-        setCustomFuncs(prev => { const next = [...prev, spec]; customFuncsRef.current = next; return next; });
-
-        const ws = workspaceRef.current;
-        if (ws) {
-            const b = ws.newBlock(`wasm_func_def_${id}`);
-            b.initSvg(); b.render();
-            b.moveBy(400, 60 + customFuncs.length * 220);
-        }
-        setNewFuncName("myFunc"); setNewFuncParams([]);
-    }, [newFuncName, newFuncRet, newFuncParams, customFuncs, pack]);
-
     const handleBd2FileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
         const name = newBd2Name.trim() || file.name.replace(/\.bin$/i, "");
-        if (!name) { alert("이름을 입력하세요."); return; }
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert("이름은 영문자/숫자/밑줄로만 구성되어야 합니다."); return; }
-        if (bd2ArraysRef.current.some(b => b.name === name)) { alert(`'${name}' 이름이 이미 사용 중입니다.`); return; }
+        if (!name) { alert(pack.workspace.alerts.name_required); return; }
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert(pack.workspace.alerts.name_charset); return; }
+        if (bd2ArraysRef.current.some(b => b.name === name)) { alert(pack.workspace.alerts.name_in_use.replace("$0", name)); return; }
         const reader = new FileReader();
         reader.onload = (ev) => {
             const buf = ev.target?.result as ArrayBuffer;
@@ -2214,7 +2430,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             } else {
                 // Legacy interleaved format: 56 bytes per element
                 if (buf.byteLength % BD2_ELEM_BYTES !== 0) {
-                    alert(`파일 크기가 올바르지 않습니다.\n56의 배수여야 합니다 (현재 ${buf.byteLength} 바이트).`);
+                    alert(pack.workspace.alerts.file_size_invalid.replace("$0", "56").replace("$1", String(buf.byteLength)));
                     return;
                 }
                 count = buf.byteLength / BD2_ELEM_BYTES;
@@ -2242,9 +2458,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const file = e.target.files?.[0];
         if (!file) return;
         const name = newBd3Name.trim() || file.name.replace(/\.bin$/i, "");
-        if (!name) { alert("이름을 입력하세요."); return; }
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert("이름은 영문자/숫자/밑줄로만 구성되어야 합니다."); return; }
-        if (bd3ArraysRef.current.some(b => b.name === name)) { alert(`'${name}' 이름이 이미 사용 중입니다.`); return; }
+        if (!name) { alert(pack.workspace.alerts.name_required); return; }
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert(pack.workspace.alerts.name_charset); return; }
+        if (bd3ArraysRef.current.some(b => b.name === name)) { alert(pack.workspace.alerts.name_in_use.replace("$0", name)); return; }
         const reader = new FileReader();
         reader.onload = (ev) => {
             const buf = ev.target?.result as ArrayBuffer;
@@ -2280,7 +2496,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 data = new Float64Array(points);
             } else {
                 if (buf.byteLength % BD3_ELEM_BYTES !== 0) {
-                    alert(`파일 크기가 올바르지 않습니다.\n72의 배수여야 합니다 (현재 ${buf.byteLength} 바이트).`);
+                    alert(pack.workspace.alerts.file_size_invalid.replace("$0", "72").replace("$1", String(buf.byteLength)));
                     return;
                 }
                 data = new Float64Array(buf.slice(0));
@@ -2303,17 +2519,6 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setBd3Arrays(prev => { const next = prev.filter(b => b.id !== id); bd3ArraysRef.current = next; return next; });
     }, []);
 
-    const handleRemoveFunc = useCallback((id: string) => {
-        const ws = workspaceRef.current;
-        if (ws) {
-            ws.getAllBlocks(false)
-                .filter(b => b.type === `wasm_func_def_${id}` || b.type === `wasm_call_${id}`)
-                .forEach(b => b.dispose());
-        }
-        setCustomFuncs(prev => { const next = prev.filter(f => f.id !== id); customFuncsRef.current = next; return next; });
-    }, []);
-
-
     const handleOpenBlocks = useCallback(() => {
         const ws = workspaceRef.current;
         if (!ws) return;
@@ -2335,7 +2540,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 generateThumbnailBlob(ws).then(blob => { if (blob) uploadThumbnail(fileId, blob).catch(() => {}); });
             }
         } catch {
-            addLog("error", "파일 저장에 실패했어요.");
+            addLog("error", pack.workspace.logs.file_save_failed);
             setSaveStatus("error");
         }
     }, [fileId, blockData, addLog]);
@@ -2348,7 +2553,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             const updated = await renameFile(fileId, trimmed);
             setFileName(updated.name);
         } catch (err: any) {
-            if (err?.status === 409) addLog("error", "같은 이름의 파일이 이미 있어요.");
+            if (err?.status === 409) addLog("error", pack.workspace.logs.file_name_conflict);
         }
     }, [fileId, fileName, addLog]);
 
@@ -2393,7 +2598,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     ws.clear();
                     if (content) {
                         try {
-                            Blockly.serialization.workspaces.load(JSON.parse(content), ws);
+                            loadWorkspaceState(ws, JSON.parse(content));
                         } catch {
                             Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
                         }
@@ -2434,7 +2639,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         if (ws) {
                             ws.clear();
                             try {
-                                Blockly.serialization.workspaces.load(JSON.parse(content), ws);
+                                loadWorkspaceState(ws, JSON.parse(content));
                             } catch {
                                 Blockly.Xml.domToWorkspace(
                                     Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML),
@@ -2480,7 +2685,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     ws.clear();
                     if (content) {
                         try {
-                            Blockly.serialization.workspaces.load(JSON.parse(content), ws);
+                            loadWorkspaceState(ws, JSON.parse(content));
                         } catch {
                             Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
                         }
@@ -2581,7 +2786,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, color: token.color.fgSubtle, fontSize: token.font.size.fs13, fontFamily: token.font.family.mono }}>
                         <Spinner size="md" />
-                        <span>Initializing...</span>
+                        <span>{pack.workspace.ui.initializing}</span>
                     </div>
                 </div>
             )}
@@ -2642,10 +2847,10 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     {!isMobile && <>
                     {/* Save button (owner only) */}
                     {isOwner && saveStatus === "unsaved" && (
-                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>저장 안됨</span>
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>{pack.workspace.ui.save_unsaved}</span>
                     )}
                     {isOwner && saveStatus === "error" && (
-                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>저장 실패</span>
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>{pack.workspace.ui.save_failed}</span>
                     )}
                     {isOwner && (
                         <Button
@@ -2655,7 +2860,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             onClick={handleSaveToServer}
                             disabled={saveStatus === "saving" || !fileId}
                         >
-                            {saveStatus === "saving" ? "저장 중..." : "저장"}
+                            {saveStatus === "saving" ? pack.workspace.ui.saving : pack.workspace.ui.save}
                         </Button>
                     )}
                     {/* Duplicate-to-mine (non-owner) */}
@@ -2746,16 +2951,16 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             }}>
                                 <div style={{ fontSize: token.font.size.fs11, fontWeight: 600, color: token.color.fgMuted, display: "flex", alignItems: "center", gap: 6 }}>
                                     <Icon.Sparkle size={11} />
-                                    AI 어시스턴트
+                                    {pack.workspace.ai.title}
                                 </div>
                                 {chatStreaming ? (
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>
                                         <Spinner size="sm" />
-                                        <span style={{ flex: 1 }}>AI 응답 대기 중...</span>
+                                        <span style={{ flex: 1 }}>{pack.workspace.ai.waiting}</span>
                                         <button
                                             onClick={() => chatAbortRef.current?.abort()}
                                             style={{ padding: "2px 8px", border: `1px solid ${token.color.border}`, borderRadius: token.radius.xs, background: "none", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs11 }}
-                                        >중단</button>
+                                        >{pack.workspace.ai.abort}</button>
                                     </div>
                                 ) : (
                                     <>
@@ -2769,7 +2974,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                                 }
                                                 if (e.key === "Escape") setShowChatPopover(false);
                                             }}
-                                            placeholder="블록 프로그램 수정 요청... (Enter 전송, Shift+Enter 줄바꿈)"
+                                            placeholder={pack.workspace.ai.placeholder}
                                             rows={2}
                                             autoFocus
                                             style={{
@@ -2789,7 +2994,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                         />
                                         <div style={{ display: "flex", justifyContent: "flex-end" }}>
                                             <Button variant="run" size="sm" onClick={handleChat} disabled={!chatPrompt.trim()}>
-                                                전송
+                                                {pack.workspace.ai.send}
                                             </Button>
                                         </div>
                                     </>
@@ -2866,7 +3071,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                                 onMouseEnter={e => { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; }}
                                                 onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = token.color.fgMuted; }}
                                             >
-                                                <Icon.Download size={12} />C++ 파일로 내보내기
+                                                <Icon.Download size={12} />{pack.workspace.ui.export_cpp_menu}
                                             </button>
                                         </>
                                     )}
@@ -2913,8 +3118,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     <button
                                         onClick={() => setOsMenuOpen(o => !o)}
                                         disabled={compiling}
-                                        title="빌드 대상 OS"
-                                        aria-label="빌드 대상 OS 선택"
+                                        title={pack.workspace.ui.build_os_title}
+                                        aria-label={pack.workspace.ui.build_os_aria}
                                         style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", padding:"3px 5px", fontSize:token.font.size.fs11, border:`1px solid ${token.color.border}`, borderRadius:`0 ${token.radius.sm} ${token.radius.sm} 0`, background:token.color.bgRaised, color:token.color.fgMuted, cursor:"pointer", opacity: compiling ? 0.5 : 1 }}
                                     >
                                         <Icon.Chevron dir="down" size={11} />
@@ -2970,9 +3175,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     <div style={{ flex:1, display:"flex", flexDirection:"column", borderRight:`1px solid ${token.color.border}`, overflow:"hidden" }}>
                                         <div style={{ padding:"5px 12px", background:token.color.bgRaised, borderBottom:`1px solid ${token.color.border}`, display:"flex", gap:14, alignItems:"center"}}>
                                             <Inline style={{flex:1, width:"100%", fontSize:token.font.size.fs13, fontWeight:token.font.weight.black, flexShrink:0 }}>
-                                                <span style={{ color: token.color.addBlockColor }}>■ 추가됨</span>
-                                                <span style={{ color: token.color.deleteBlockColor }}>■ 삭제됨</span>
-                                                <span style={{ color: token.color.nochangeBlockColor }}>■ 변화없음</span>
+                                                <span style={{ color: token.color.addBlockColor }}>{pack.workspace.ai.diff_added}</span>
+                                                <span style={{ color: token.color.deleteBlockColor }}>{pack.workspace.ai.diff_removed}</span>
+                                                <span style={{ color: token.color.nochangeBlockColor }}>{pack.workspace.ai.diff_unchanged}</span>
                                             </Inline>
                                             {/* Action bar */}
                                             {(chatOutput || chatResult) && (
@@ -2983,15 +3188,15 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                                             if (!ws || !chatResult) return;
                                                             try {
                                                                 ws.clear();
-                                                                Blockly.serialization.workspaces.load(chatResult as Parameters<typeof Blockly.serialization.workspaces.load>[0], ws);
+                                                                loadWorkspaceState(ws, chatResult as Parameters<typeof Blockly.serialization.workspaces.load>[0]);
                                                                 setCanvasTab("blocks");
                                                             } catch (err) {
                                                                 showErrorModal(`Block apply error: ${err instanceof Error ? err.message : String(err)}`);
                                                             }
-                                                        }}>✦ 워크스페이스에 적용</Button>
+                                                        }}>{pack.workspace.ai.apply}</Button>
                                                     )}
                                                     {/*                                                 {chatOutput && <Button variant="blocks" size="sm" onClick={() => navigator.clipboard.writeText(chatOutput)}>복사</Button>} */}
-                                                    <Button variant="danger" size="sm" onClick={() => { setChatOutput(""); setChatResult(null); setChatDiffData(null); }}>취소</Button>
+                                                    <Button variant="danger" size="sm" onClick={() => { setChatOutput(""); setChatResult(null); setChatDiffData(null); }}>{pack.workspace.ai.cancel}</Button>
                                                 </Inline>
                                             )}
                                         </div>
@@ -3007,7 +3212,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                             </pre>
                                         ) : (
                                             <div style={{ padding:"32px 16px", textAlign:"center", color:token.color.fgMuted, fontSize:token.font.size.fs12 }}>
-                                                {chatStreaming ? "응답 생성 중..." : "응답이 여기에 표시됩니다."}
+                                                {chatStreaming ? pack.workspace.ai.streaming : pack.workspace.ai.idle}
                                             </div>
                                         )}
                                     </div>
@@ -3018,7 +3223,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 </pre>
                             ) : (
                                 <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:token.color.fgSubtle, fontSize:token.font.size.fs12, fontFamily:token.font.family.mono }}>
-                                    AI에게 블록 프로그램 수정을 요청해 보세요.
+                                    {pack.workspace.ai.hint}
                                 </div>
                             )}
                             
@@ -3073,6 +3278,24 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     {pack.workspace.ui.log_placeholder}
                                 </div>
                             </div>
+                            {/* Interactive input prompt (Asyncify run paused on sim_input_*) */}
+                            {inputRequest && (
+                                <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 14px", borderTop:`1px solid ${token.color.border}`, background:token.color.bgSubtle }}>
+                                    <span style={{ fontFamily:token.font.family.mono, fontSize:token.font.size.fs11, color:token.color.fgMuted, whiteSpace:"nowrap" }}>
+                                        {inputRequest.kind === "i32" ? pack.workspace.input.int_label : pack.workspace.input.float_label}
+                                    </span>
+                                    <input
+                                        autoFocus
+                                        type="number"
+                                        step={inputRequest.kind === "i32" ? "1" : "any"}
+                                        value={inputValue}
+                                        onChange={(e) => setInputValue(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === "Enter") submitInput(); }}
+                                        style={{ flex:1, minWidth:0, padding:"6px 8px", fontSize:token.font.size.fs12, fontFamily:token.font.family.mono, background:token.color.bg, color:token.color.fg, border:`1px solid ${token.color.border}`, borderRadius:6 }}
+                                    />
+                                    <Button onClick={submitInput}>{pack.workspace.input.submit}</Button>
+                                </div>
+                            )}
                             {/* Footer */}
                             <div style={{ padding:"8px 14px", borderTop:`1px solid ${token.color.border}`, fontFamily:token.font.family.mono, fontSize:token.font.size.fs10, color:token.color.fgSubtle, display:"flex", alignItems:"center", gap:6 }}>
                                 <span style={{ width:6, height:6, borderRadius:"50%", background:token.color.success, display:"inline-block" }} />
@@ -3096,7 +3319,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                         type="button"
                                         onClick={() => focusInfoEntry(entry)}
                                         disabled={!clickable}
-                                        title={clickable ? "클릭하여 관련 블록으로 이동" : undefined}
+                                        title={clickable ? pack.workspace.ui.block_nav_title : undefined}
                                         style={{
                                             display:"flex",
                                             alignItems:"flex-start",
@@ -3134,7 +3357,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 {[
                                     [pack.workspace.ui.stat_backend, lastRunBackend ?? "—"],
                                     [pack.workspace.ui.stat_status, runState],
-                                    ["실행 시간", formatRunDuration(lastRunDurationMs)],
+                                    [pack.workspace.ui.stat_run_time, formatRunDuration(lastRunDurationMs)],
                                 ].map(([label, val]) => (
                                     <div key={label} style={{ padding:"10px 8px", background:token.color.bg, display:"flex", flexDirection:"column", gap:2 }}>
                                         <span style={{ fontSize:token.font.size.fs10, textTransform:"uppercase", letterSpacing:"0.06em", color:token.color.fgSubtle, fontWeight:600 }}>{label}</span>
@@ -3217,24 +3440,6 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onApply={() => handleLatexOcrApply(ocrLatex)}
             />}
 
-            {!isMobile && <FunctionManagerModal
-                open={showFuncMgr}
-                onClose={() => setShowFuncMgr(false)}
-                pack={pack}
-                customFuncs={customFuncs}
-                newFuncName={newFuncName}
-                newFuncRet={newFuncRet}
-                newFuncParams={newFuncParams}
-                onChangeName={setNewFuncName}
-                onChangeRet={setNewFuncRet}
-                onChangeParamName={(index, value) => setNewFuncParams(prev => prev.map((x, j) => j === index ? { ...x, name: value } : x))}
-                onChangeParamType={(index, value) => setNewFuncParams(prev => prev.map((x, j) => j === index ? { ...x, type: value } : x))}
-                onRemoveParam={(index) => setNewFuncParams(prev => prev.filter((_, j) => j !== index))}
-                onAddParam={() => setNewFuncParams(prev => [...prev, { name: `p${prev.length}`, type: "i32" }])}
-                onAddFunc={handleAddFunc}
-                onRemoveFunc={handleRemoveFunc}
-            />}
-
             {!isMobile && <ConstManagerModal
                 open={showConstMgr}
                 onClose={() => setShowConstMgr(false)}
@@ -3270,21 +3475,21 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             {exportCppOpen && (
                 <Modal width={460} onClose={() => !exporting && setExportCppOpen(false)}>
                     <ModalHeader onClose={() => !exporting && setExportCppOpen(false)}>
-                        C++ 파일로 내보내기
+                        {pack.workspace.exportCpp.title}
                     </ModalHeader>
                     <ModalBody>
                         <p style={{ margin: 0, fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.55 }}>
-                            현재 블록 코드를 C++로 변환해 <b>새 파일</b>{`('${fileName || "untitled"} (C++)')`}을 만듭니다.
+                            {pack.workspace.exportCpp.desc_pre}<b>{pack.workspace.exportCpp.desc_bold}</b>{pack.workspace.exportCpp.desc_post.replace("$0", `('${fileName || "untitled"} (C++)')`)}
                         </p>
                         <ul style={{ margin: `${token.space.sp3} 0 0 ${token.space.sp4}`, padding: 0, fontSize: token.font.size.fs12, color: token.color.fgSubtle, lineHeight: 1.7 }}>
-                            <li>원본 블록 파일은 그대로 유지됩니다.</li>
-                            <li>생성된 C++ 파일을 수정해도 원본 블록에는 반영되지 않습니다.</li>
-                            <li>C++ 파일을 다시 블록으로 되돌리는 기능은 없습니다.</li>
+                            <li>{pack.workspace.exportCpp.bullet1}</li>
+                            <li>{pack.workspace.exportCpp.bullet2}</li>
+                            <li>{pack.workspace.exportCpp.bullet3}</li>
                         </ul>
                     </ModalBody>
                     <ModalFooter>
                         <Button variant="ghost" size="sm" onClick={() => setExportCppOpen(false)} disabled={exporting}>
-                            취소
+                            {pack.workspace.exportCpp.cancel}
                         </Button>
                         <Button
                             variant="accent"
@@ -3293,7 +3498,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             onClick={handleConfirmExportToCpp}
                             disabled={exporting}
                         >
-                            {exporting ? "변환 중…" : "C++ 파일로 내보내기"}
+                            {exporting ? pack.workspace.exportCpp.exporting : pack.workspace.exportCpp.confirm}
                         </Button>
                     </ModalFooter>
                 </Modal>
@@ -3316,7 +3521,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             rel="noopener noreferrer"
                             style={{ color: token.color.accent, textDecoration: "none", fontWeight: 600 }}
                         >
-                            열기
+                            {pack.workspace.exportCpp.open}
                         </a>
                     )}
                     <button

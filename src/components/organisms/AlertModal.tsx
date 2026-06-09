@@ -1,4 +1,5 @@
 import React from "react";
+import useLanguagePack from "@/hooks/useLanguagePack";
 import { token } from "@/components/tokens";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
 import { Button } from "@/components/atoms/Button";
@@ -16,11 +17,10 @@ type VariantMeta = {
     glyph: React.ReactNode;
 };
 
-const VARIANT_META: Record<AlertVariant, VariantMeta> = {
+const VARIANT_META: Record<AlertVariant, Omit<VariantMeta, 'defaultTitle'>> = {
     info: {
         color: token.color.info,
         soft: token.color.infoSoft,
-        defaultTitle: "알림",
         glyph: (
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
@@ -32,7 +32,6 @@ const VARIANT_META: Record<AlertVariant, VariantMeta> = {
     warning: {
         color: token.color.warning,
         soft: token.color.warningSoft,
-        defaultTitle: "경고",
         glyph: (
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -44,7 +43,6 @@ const VARIANT_META: Record<AlertVariant, VariantMeta> = {
     error: {
         color: token.color.danger,
         soft: token.color.dangerSoft,
-        defaultTitle: "오류",
         glyph: (
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
@@ -75,11 +73,16 @@ export function AlertModal({
     variant,
     title,
     message,
-    confirmLabel = "확인",
+    confirmLabel,
     onClose,
     width = 420,
 }: AlertModalProps) {
+    const [, , pack] = useLanguagePack();
     const meta = VARIANT_META[variant];
+    const defaultTitle = variant === "info" ? pack.messages.alert_title
+        : variant === "warning" ? pack.messages.warning_title
+        : pack.messages.error_title;
+    const finalConfirmLabel = confirmLabel ?? pack.messages.ok_button;
     return (
         <Modal width={width} onClose={onClose}>
             <ModalHeader onClose={onClose}>
@@ -101,7 +104,7 @@ export function AlertModal({
                         {meta.glyph}
                     </span>
                     <span style={{ fontWeight: token.font.weight.semibold, fontSize: token.font.size.fs14 }}>
-                        {title ?? meta.defaultTitle}
+                        {title ?? defaultTitle}
                     </span>
                 </div>
             </ModalHeader>
@@ -112,7 +115,7 @@ export function AlertModal({
             </ModalBody>
             <ModalFooter>
                 <Button variant="secondary" size="sm" onClick={onClose}>
-                    {confirmLabel}
+                    {finalConfirmLabel}
                 </Button>
             </ModalFooter>
         </Modal>

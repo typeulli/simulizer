@@ -159,6 +159,15 @@ function unaryMatrixCall(
     return new simulizer.Call(fn, [ctx.coerce(mExpr, simulizer.i32)], result);
 }
 
+/** Unary field op (grad/curl/lapl): tensor id in → tensor id out. */
+function unaryTensorCall(block: Blockly.Block, ctx: CompileCtx, fn: string): simulizer.Expr | null {
+    const tBlock = block.getInputTargetBlock("TENSOR");
+    if (!tBlock) return null;
+    const tExpr = ctx.blockToExpr(tBlock, ctx);
+    if (!tExpr) return null;
+    return new simulizer.Call(fn, [ctx.coerce(tExpr, simulizer.i32)], simulizer.i32);
+}
+
 export const TENSOR_BLOCKS: BlockSet = {
     TENSOR_RANDOM: new BlockBuilder("tensor_random", "i32", 160,"랜덤 텐서 생성 (id 반환)")
         .addBody("TENSOR_RANDOM dist:%1 p1:%2 p2:%3 shape:%4")
@@ -210,6 +219,18 @@ export const TENSOR_BLOCKS: BlockSet = {
                 [ctx.coerce(tensorExpr, simulizer.i32)],
                 simulizer.i32);
         }),
+    TENSOR_GRAD: new BlockBuilder("tensor_grad", "i32", 160, "기울기 ∇f: 스칼라장 [R,C] → 벡터장 [2,R,C]")
+        .addBody("grad( %1 )")
+        .addArgValue("TENSOR", "i32")
+        .expr((block, ctx) => unaryTensorCall(block, ctx, "tensor_grad")),
+    TENSOR_CURL: new BlockBuilder("tensor_curl", "i32", 160, "회전 ∇×F: 벡터장 [2,R,C] → 스칼라장 [R,C]")
+        .addBody("curl( %1 )")
+        .addArgValue("TENSOR", "i32")
+        .expr((block, ctx) => unaryTensorCall(block, ctx, "tensor_curl")),
+    TENSOR_LAPL: new BlockBuilder("tensor_lapl", "i32", 160, "라플라시안 ∇²f: 스칼라장 [R,C] → 스칼라장 [R,C]")
+        .addBody("lapl( %1 )")
+        .addArgValue("TENSOR", "i32")
+        .expr((block, ctx) => unaryTensorCall(block, ctx, "tensor_lapl")),
     TENSOR_SCALE: new BlockBuilder("tensor_scale", "i32", 160,"텐서 상수배 %1 × %2")
         .addBody("%1 × %2")
         .addArgValue("TENSOR", "i32")
@@ -571,6 +592,15 @@ export function xmlTensorBlocks(cat: string) {
         <value name="RHS"><block type="tensor_get"></block></value>
     </block>
     <block type="tensor_unop">
+        <value name="TENSOR"><block type="tensor_get"></block></value>
+    </block>
+    <block type="tensor_grad">
+        <value name="TENSOR"><block type="tensor_get"></block></value>
+    </block>
+    <block type="tensor_curl">
+        <value name="TENSOR"><block type="tensor_get"></block></value>
+    </block>
+    <block type="tensor_lapl">
         <value name="TENSOR"><block type="tensor_get"></block></value>
     </block>
     <block type="tensor_scale">

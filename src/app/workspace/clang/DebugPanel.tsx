@@ -1,6 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import useLanguagePack from "@/hooks/useLanguagePack";
 import { token } from "@/components/tokens";
 import type { DebugFrame, DebugVariable } from "@/utils/wasm/debug-protocol";
 import type { DebugStatus, SetResult } from "./useClangDebug";
@@ -64,6 +65,7 @@ interface TreeCtx {
 }
 
 function VarRow({ v, depth, path, ctx }: { v: DebugVariable; depth: number; path: string; ctx: TreeCtx }) {
+    const [, , pack] = useLanguagePack();
     const expandable = v.variablesReference > 0;
     const editable = (v.setId ?? 0) > 0;
     const [open, setOpen] = useState(expandable && ctx.expanded.has(path));
@@ -106,7 +108,7 @@ function VarRow({ v, depth, path, ctx }: { v: DebugVariable; depth: number; path
     const commit = async () => {
         const r = await ctx.requestSetVariable(v.setId!, draft);
         if (r.ok) { setOverride(r.value ?? draft); setEditing(false); setErr(null); }
-        else setErr(r.error ?? "변경 실패");
+        else setErr(r.error ?? pack.clang.dbg_change_failed);
     };
 
     return (
@@ -139,12 +141,12 @@ function VarRow({ v, depth, path, ctx }: { v: DebugVariable; depth: number; path
                             border: `1px solid ${err ? token.color.danger : token.color.accent}`,
                             borderRadius: token.radius.xs, outline: "none",
                         }}
-                        title={err ?? "Enter로 적용, Esc로 취소"}
+                        title={err ?? pack.clang.dbg_edit_hint}
                     />
                 ) : (
                     <span
                         onDoubleClick={beginEdit}
-                        title={editable ? "더블클릭하여 값 변경" : undefined}
+                        title={editable ? pack.clang.dbg_dblclick_edit : undefined}
                         style={{
                             color: override != null ? token.color.warning : token.color.fgStrong,
                             overflow: "hidden", textOverflow: "ellipsis",
@@ -155,7 +157,7 @@ function VarRow({ v, depth, path, ctx }: { v: DebugVariable; depth: number; path
                 <span style={{ color: token.color.fgSubtle, marginLeft: 4 }}>{v.type}</span>
             </div>
             {open && loading && (
-                <div style={{ padding: "1px 8px 1px " + (8 + (depth + 1) * 12 + 9) + "px", fontFamily: mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle }}>로딩…</div>
+                <div style={{ padding: "1px 8px 1px " + (8 + (depth + 1) * 12 + 9) + "px", fontFamily: mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle }}>{pack.clang.dbg_loading}</div>
             )}
             {open && children?.map((c, i) => (
                 <VarRow key={c.name + i} v={c} depth={depth + 1} path={path + "/" + c.name} ctx={ctx} />
@@ -165,6 +167,7 @@ function VarRow({ v, depth, path, ctx }: { v: DebugVariable; depth: number; path
 }
 
 function VariablesView({ scopeRef, ctx }: { scopeRef: number | null; ctx: TreeCtx }) {
+    const [, , pack] = useLanguagePack();
     const [vars, setVars] = useState<DebugVariable[] | null>(null);
     useEffect(() => {
         let alive = true;
@@ -174,8 +177,8 @@ function VariablesView({ scopeRef, ctx }: { scopeRef: number | null; ctx: TreeCt
         return () => { alive = false; };
     }, [scopeRef, ctx]);
 
-    if (vars === null) return <Muted>로딩…</Muted>;
-    if (vars.length === 0) return <Muted>이 범위에 변수가 없습니다</Muted>;
+    if (vars === null) return <Muted>{pack.clang.dbg_loading}</Muted>;
+    if (vars.length === 0) return <Muted>{pack.clang.dbg_no_vars}</Muted>;
     return <>{vars.map((v, i) => <VarRow key={v.name + i} v={v} depth={0} path={v.name} ctx={ctx} />)}</>;
 }
 
@@ -185,6 +188,7 @@ function WatchView({ watches, activeFrameId, status, requestEvaluate, addWatch, 
     requestEvaluate: (frameId: number, expr: string) => Promise<string | null>;
     addWatch: (e: string) => void; removeWatch: (e: string) => void;
 }) {
+    const [, , pack] = useLanguagePack();
     const [vals, setVals] = useState<Record<string, string | null>>({});
     const [input, setInput] = useState("");
 
@@ -203,7 +207,7 @@ function WatchView({ watches, activeFrameId, status, requestEvaluate, addWatch, 
         <div>
             <form onSubmit={e => { e.preventDefault(); addWatch(input); setInput(""); }}
                 style={{ padding: "4px 10px" }}>
-                <input value={input} onChange={e => setInput(e.target.value)} placeholder="식 추가 (변수명)"
+                <input value={input} onChange={e => setInput(e.target.value)} placeholder={pack.clang.dbg_watch_placeholder}
                     style={{
                         width: "100%", padding: "3px 6px", fontFamily: mono, fontSize: token.font.size.fs11,
                         background: token.color.bgSubtle, color: token.color.fg,
@@ -211,12 +215,12 @@ function WatchView({ watches, activeFrameId, status, requestEvaluate, addWatch, 
                     }} />
             </form>
             {watches.length === 0
-                ? <Muted>감시할 식을 추가하세요</Muted>
+                ? <Muted>{pack.clang.dbg_watch_empty}</Muted>
                 : watches.map(w => (
                     <div key={w} style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "1px 10px", fontFamily: mono, fontSize: token.font.size.fs11, lineHeight: 1.7 }}>
                         <span style={{ color: token.color.accent }}>{w}</span>
                         <span style={{ color: token.color.fgStrong }}>= {status === "stopped" ? (vals[w] ?? "<n/a>") : "—"}</span>
-                        <button type="button" onClick={() => removeWatch(w)} title="제거"
+                        <button type="button" onClick={() => removeWatch(w)} title={pack.clang.dbg_remove}
                             style={{ marginLeft: "auto", border: "none", background: "none", color: token.color.fgSubtle, cursor: "pointer", fontSize: token.font.size.fs11 }}>×</button>
                     </div>
                 ))}
@@ -237,6 +241,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 export default function DebugPanel(props: Props) {
+    const [, , pack] = useLanguagePack();
     const {
         status, errorMsg, callStack, activeFrameId, setActiveFrameId, watches, addWatch, removeWatch,
         onContinue, onStepOver, onStepInto, onStepOut, onStop,
@@ -264,21 +269,21 @@ export default function DebugPanel(props: Props) {
     );
 
     const statusText =
-        status === "compiling" ? "디버그 빌드 중…" :
-        status === "running" ? "실행 중…" :
-        status === "stopped" ? `일시정지 · ${activeFrame ? `${activeFrame.file}:${activeFrame.line}` : ""}` :
-        status === "terminated" ? "종료됨" :
-        status === "error" ? "오류" : "대기 중";
+        status === "compiling" ? pack.clang.dbg_status_building :
+        status === "running" ? pack.clang.dbg_status_running :
+        status === "stopped" ? `${pack.clang.dbg_status_paused.replace("$0", activeFrame ? `${activeFrame.file}:${activeFrame.line}` : "")}` :
+        status === "terminated" ? pack.clang.dbg_status_terminated :
+        status === "error" ? pack.clang.dbg_status_error : pack.clang.dbg_status_waiting;
 
     return (
         <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
             {/* toolbar */}
             <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "4px 8px", borderBottom: `1px solid ${token.color.border}` }}>
-                <ToolBtn title="계속 (F5)" onClick={onContinue} disabled={!paused}>{ICON.continue}</ToolBtn>
-                <ToolBtn title="단계 건너뛰기" onClick={onStepOver} disabled={!paused}>{ICON.over}</ToolBtn>
-                <ToolBtn title="단계 들어가기" onClick={onStepInto} disabled={!paused}>{ICON.into}</ToolBtn>
-                <ToolBtn title="단계 나가기" onClick={onStepOut} disabled={!paused}>{ICON.out}</ToolBtn>
-                <ToolBtn title="중지" onClick={onStop} disabled={status === "idle" || status === "terminated"}>{ICON.stop}</ToolBtn>
+                <ToolBtn title={pack.clang.dbg_continue} onClick={onContinue} disabled={!paused}>{ICON.continue}</ToolBtn>
+                <ToolBtn title={pack.clang.dbg_step_over} onClick={onStepOver} disabled={!paused}>{ICON.over}</ToolBtn>
+                <ToolBtn title={pack.clang.dbg_step_into} onClick={onStepInto} disabled={!paused}>{ICON.into}</ToolBtn>
+                <ToolBtn title={pack.clang.dbg_step_out} onClick={onStepOut} disabled={!paused}>{ICON.out}</ToolBtn>
+                <ToolBtn title={pack.clang.dbg_stop} onClick={onStop} disabled={status === "idle" || status === "terminated"}>{ICON.stop}</ToolBtn>
                 <span style={{ marginLeft: 8, fontFamily: mono, fontSize: token.font.size.fs10, color: token.color.fgMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {statusText}
                 </span>
@@ -293,12 +298,12 @@ export default function DebugPanel(props: Props) {
                         borderRadius: token.radius.sm, maxHeight: 260, overflowY: "auto",
                     }}>{errorMsg}</pre>
                 )}
-                <SectionLabel>변수</SectionLabel>
+                <SectionLabel>{pack.clang.dbg_vars}</SectionLabel>
                 {paused
                     ? <VariablesView key={scopeRef ?? -1} scopeRef={scopeRef} ctx={treeCtx} />
-                    : <Muted>일시정지 상태에서 변수를 볼 수 있어요</Muted>}
+                    : <Muted>{pack.clang.dbg_vars_hint}</Muted>}
 
-                <SectionLabel>호출 스택</SectionLabel>
+                <SectionLabel>{pack.clang.dbg_callstack}</SectionLabel>
                 {callStack.length === 0
                     ? <Muted>—</Muted>
                     : callStack.map(f => (
@@ -315,7 +320,7 @@ export default function DebugPanel(props: Props) {
                         </div>
                     ))}
 
-                <SectionLabel>감시</SectionLabel>
+                <SectionLabel>{pack.clang.dbg_watch}</SectionLabel>
                 <WatchView watches={watches} activeFrameId={activeFrameId} status={status}
                     requestEvaluate={requestEvaluate} addWatch={addWatch} removeWatch={removeWatch} />
             </div>

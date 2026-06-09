@@ -12,6 +12,18 @@ import { BOUNDARY_BLOCKS } from "./boundary";
 import { UTIL_BLOCKS } from "./util";
 
 
+/**
+ * Block types whose execution requires the Asyncify-capable C++ (emcc/clang)
+ * run path — they can suspend mid-run waiting on the host (e.g. interactive
+ * input). The native browser simulation (wabt → wasm-worker) cannot pause a
+ * synchronous run, so a program containing any of these must be routed to the
+ * emcc path. Keep this in sync with the backend's ASYNCIFY_IMPORTS list.
+ */
+export const NEEDS_EMCC_BLOCK_TYPES: ReadonlySet<string> = new Set([
+    "input_i32",
+    "input_f64",
+]);
+
 export const CUSTOM_BLOCKS: BlockSet = zip(
     DEBUG_BLOCKS,
     BOOL_BLOCKS,

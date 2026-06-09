@@ -50,7 +50,7 @@ export class MatShowPanel implements ConsolePanelRenderer {
         const wrapper = document.createElement("div");
         wrapper.id = `panel-${this.id}`;
         wrapper.style.cssText =
-            "background:var(--bg-raised);border-radius:4px;padding:6px 8px;border-left:3px solid var(--accent);font-family:var(--font-mono)";
+            "margin:3px 10px;background:var(--bg-raised);border-radius:4px;padding:6px 8px;border-left:3px solid var(--accent);font-family:var(--font-mono)";
 
         const hdr = document.createElement("div");
         hdr.style.cssText =

@@ -7,6 +7,9 @@ import {
     js_tensor_sub,
     js_tensor_matmul,
     js_tensor_neg,
+    js_tensor_grad,
+    js_tensor_curl,
+    js_tensor_lapl,
     js_tensor_elemul,
     js_tensor_scale,
     js_tensor_save,
@@ -46,7 +49,11 @@ export type WorkerOutMsg =
     | { type: "result"; value: string }
     | { type: "done" }
     | { type: "error"; message: string }
-    | { type: "backend-switched"; backend: string };
+    | { type: "backend-switched"; backend: string }
+    // Interactive input: the (Asyncify) clang run path emits this when it
+    // suspends on sim_input_int()/sim_input_float(), waiting for the host to
+    // post back an "input-response" with the value the user entered.
+    | { type: "input-request"; kind: "i32" | "f64" };
 
 function post(msg: WorkerOutMsg) {
     self.postMessage(msg);
@@ -125,6 +132,19 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
                 math_ln:  (v: number) => Math.log(v),
                 math_cos: (v: number) => Math.cos(v),
                 math_sin: (v: number) => Math.sin(v),
+                // [min, max] inclusive integer
+                math_rand_int:   (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min,
+                // [min, max) float
+                math_rand_range: (min: number, max: number) => Math.random() * (max - min) + min,
+                // [0, 1) float
+                math_rand_unit:  () => Math.random(),
+            },
+            // input is only interactive in the C++ (clang) run path via Asyncify;
+            // in the native block simulation these are non-reachable fallbacks (routing
+            // sends any program containing input blocks to the emcc path).
+            io: {
+                input_i32: () => 0,
+                input_f64: () => 0,
             },
             debug: {
                 log: (val: number) => log(`🔍 log: ${val}`),
@@ -203,6 +223,9 @@ self.onmessage = async (e: MessageEvent<WorkerInMsg>) => {
                 tensor_sub:    (lhsVarId: number, rhsVarId: number) => js_tensor_sub(lhsVarId, rhsVarId),
                 tensor_matmul: (lhsVarId: number, rhsVarId: number) => js_tensor_matmul(lhsVarId, rhsVarId),
                 tensor_neg:    (varId: number) => js_tensor_neg(varId),
+                tensor_grad:   (varId: number) => js_tensor_grad(varId),
+                tensor_curl:   (varId: number) => js_tensor_curl(varId),
+                tensor_lapl:   (varId: number) => js_tensor_lapl(varId),
                 tensor_elemul: (lhsVarId: number, rhsVarId: number) => js_tensor_elemul(lhsVarId, rhsVarId),
                 tensor_scale:  (tensorVarId: number, scalar: number) => js_tensor_scale(tensorVarId, scalar),
                 tensor_save:   (outVarId: number, tensorId: number) => js_tensor_save(outVarId, tensorId),

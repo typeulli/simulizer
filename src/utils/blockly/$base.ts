@@ -174,13 +174,16 @@ export function translateBlockSet(
     blockSet: BlockSet,
     msgs: Record<string, string[]>,
     dropdowns: Record<string, Record<string, Record<string, string>>> = {},
+    tooltips: Record<string, string> = {},
 ): BlockSet {
     const result: BlockSet = {};
     for (const [key, builder] of Object.entries(blockSet)) {
         const translation = msgs[builder.type];
         const ddMap = dropdowns[builder.type];
-        if (translation || ddMap) {
+        const tip = tooltips[builder.type];
+        if (translation || ddMap || tip) {
             const nb = Object.assign(Object.create(Object.getPrototypeOf(builder)), builder);
+            if (tip) nb.tooltip = tip;
             nb.body = builder.body.map((b, i) => ({
                 ...b,
                 message: translation?.[i] ?? b.message,

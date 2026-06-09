@@ -297,6 +297,73 @@ export function js_tensor_neg(varId: number): number {
     return tempId;
 }
 
+// ── Field calculus (finite differences, unit grid spacing, edges clamped) ────
+// Convention: a 2D scalar field is a [rows, cols] tensor; a 2D vector field is
+// a [2, rows, cols] tensor (channel 0 = x-component, channel 1 = y-component).
+
+// grad: scalar field [R,C] → vector field [2,R,C]  (∂/∂x, ∂/∂y), central diff.
+export function js_tensor_grad(varId: number): number {
+    flushBuffer(varId);
+    const t = tfSpace[varId];
+    if (!t || t.shape.length !== 2) { console.warn(`tensor_grad failed: varId=${varId}`); return 0; }
+    const [rows, cols] = t.shape as [number, number];
+    const s = t.dataSync() as Float32Array;
+    const at = (r: number, c: number) =>
+        s[Math.min(rows - 1, Math.max(0, r)) * cols + Math.min(cols - 1, Math.max(0, c))];
+    const dx = new Float32Array(rows * cols);
+    const dy = new Float32Array(rows * cols);
+    for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++) {
+            dx[r * cols + c] = (at(r, c + 1) - at(r, c - 1)) * 0.5;
+            dy[r * cols + c] = (at(r + 1, c) - at(r - 1, c)) * 0.5;
+        }
+    const dxT = tf.tensor2d(dx, [rows, cols]);
+    const dyT = tf.tensor2d(dy, [rows, cols]);
+    const field = tf.stack([dxT, dyT], 0);  // [2, rows, cols]
+    dxT.dispose(); dyT.dispose();
+    const tempId = tempTensorCounter++;
+    tfSpace[tempId] = field;
+    return tempId;
+}
+
+// curl: vector field [2,R,C] → scalar field [R,C]  (∂vy/∂x − ∂vx/∂y), central diff.
+export function js_tensor_curl(varId: number): number {
+    flushBuffer(varId);
+    const t = tfSpace[varId];
+    if (!t || t.shape.length !== 3 || t.shape[0] !== 2) { console.warn(`tensor_curl failed: varId=${varId}`); return 0; }
+    const [, rows, cols] = t.shape as [number, number, number];
+    const f = t.dataSync() as Float32Array;
+    const N = rows * cols;
+    const cl = (r: number, c: number) => Math.min(rows - 1, Math.max(0, r)) * cols + Math.min(cols - 1, Math.max(0, c));
+    const vx = (r: number, c: number) => f[cl(r, c)];
+    const vy = (r: number, c: number) => f[N + cl(r, c)];
+    const out = new Float32Array(N);
+    for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++)
+            out[r * cols + c] = (vy(r, c + 1) - vy(r, c - 1)) * 0.5 - (vx(r + 1, c) - vx(r - 1, c)) * 0.5;
+    const tempId = tempTensorCounter++;
+    tfSpace[tempId] = tf.tensor2d(out, [rows, cols]);
+    return tempId;
+}
+
+// lapl: scalar field [R,C] → scalar field [R,C]  (∇² via 5-point stencil).
+export function js_tensor_lapl(varId: number): number {
+    flushBuffer(varId);
+    const t = tfSpace[varId];
+    if (!t || t.shape.length !== 2) { console.warn(`tensor_lapl failed: varId=${varId}`); return 0; }
+    const [rows, cols] = t.shape as [number, number];
+    const s = t.dataSync() as Float32Array;
+    const at = (r: number, c: number) =>
+        s[Math.min(rows - 1, Math.max(0, r)) * cols + Math.min(cols - 1, Math.max(0, c))];
+    const out = new Float32Array(rows * cols);
+    for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++)
+            out[r * cols + c] = at(r, c + 1) + at(r, c - 1) + at(r + 1, c) + at(r - 1, c) - 4 * at(r, c);
+    const tempId = tempTensorCounter++;
+    tfSpace[tempId] = tf.tensor2d(out, [rows, cols]);
+    return tempId;
+}
+
 export function js_tensor_elemul(lhsVarId: number, rhsVarId: number): number {
     flushBuffer(lhsVarId);
     flushBuffer(rhsVarId);

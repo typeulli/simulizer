@@ -7,6 +7,9 @@ import {
     js_tensor_sub,
     js_tensor_matmul,
     js_tensor_neg,
+    js_tensor_grad,
+    js_tensor_curl,
+    js_tensor_lapl,
     js_tensor_elemul,
     js_tensor_scale,
     js_tensor_save,
@@ -39,6 +42,7 @@ export type ClangWorkerInMsg =
     | { type: "init" }
     | { type: "run"; wasmBuffer: ArrayBuffer }
     | { type: "switch-backend"; backend: string }
+    | { type: "input-response"; value: number }
     | DebugInMsg;
 
 function post(msg: WorkerOutMsg) {
@@ -67,6 +71,30 @@ let barIdCounter = 0;
 let holderCounter = 1;
 let currentHolderId = 0;
 let wasmMemory: WebAssembly.Memory | null = null;
+
+// ── Interactive input (Asyncify) run state ──────────────────────────────────
+// sim_input_int()/sim_input_float() call the __sim_input_* host imports below.
+// On the first (NORMAL) call we Asyncify-unwind back to runInteractive(), which
+// asks the main thread for a value and then rewinds; on the rewind pass the same
+// import returns that value so execution resumes where it suspended.
+let runExports: Record<string, unknown> | null = null;
+let runAsyncifyData = 0;
+let pendingInputKind: "i32" | "f64" = "i32";
+let pendingInputValue = 0;
+let inputResolver: ((v: number) => void) | null = null;
+
+function simInputSuspend(kind: "i32" | "f64"): number {
+    const ex = runExports;
+    if (!ex) return 0;  // non-Asyncify build: input unsupported, return 0
+    const state = (ex.asyncify_get_state as () => number)();
+    if (state === 2) {                                  // REWINDING: resume
+        (ex.asyncify_stop_rewind as () => void)();
+        return pendingInputValue;
+    }
+    pendingInputKind = kind;                            // NORMAL: request + unwind
+    (ex.asyncify_start_unwind as (p: number) => void)(runAsyncifyData);
+    return 0;                                           // ignored during unwind
+}
 
 // stdout/stderr line buffers (module-level so the run/debug paths can flush any
 // trailing partial line — output without a final newline — at termination).
@@ -99,6 +127,10 @@ function buildEnvImports(): Record<string, unknown> {
         __sim_log_arr_i32: (ptr: number, cap: number) => log(`📚 [${load_raw_i32(ptr, cap).join(", ")}]`),
         __sim_log_arr_f64: (ptr: number, cap: number) => log(`📚 [${load_raw_f64(ptr, cap).join(", ")}]`),
         __sim_log_tensor: (id: number) => log(`🧠 ${js_tensor_toString(id)}`),
+
+        // Interactive input (Asyncify suspend points — see ASYNCIFY_IMPORTS).
+        __sim_input_i32: (): number => simInputSuspend("i32"),
+        __sim_input_f64: (): number => simInputSuspend("f64"),
 
         __sim_debug_bar: (mn: number, mx: number): number => {
             const id = ++barIdCounter;
@@ -142,6 +174,9 @@ function buildEnvImports(): Record<string, unknown> {
         __sim_tensor_sub: js_tensor_sub,
         __sim_tensor_matmul: js_tensor_matmul,
         __sim_tensor_neg: js_tensor_neg,
+        __sim_tensor_grad: js_tensor_grad,
+        __sim_tensor_curl: js_tensor_curl,
+        __sim_tensor_lapl: js_tensor_lapl,
         __sim_tensor_elemul: js_tensor_elemul,
         __sim_tensor_scale: js_tensor_scale,
         __sim_tensor_save: js_tensor_save,
@@ -762,8 +797,69 @@ async function startDebug(wasmBuffer: ArrayBuffer, sidecar: Sidecar, breakpoints
     }
 }
 
+// Post an input request to the main thread and resolve once the user submits a
+// value (delivered as an "input-response" message handled in onmessage below).
+function requestInput(kind: "i32" | "f64"): Promise<number> {
+    return new Promise<number>((resolve) => {
+        inputResolver = resolve;
+        post({ type: "input-request", kind });
+    });
+}
+
+// Drive an Asyncify-enabled run: call the entry repeatedly, servicing each input
+// suspension (unwind) by asking the host for a value and then rewinding, until
+// the entry returns normally.
+async function runInteractive(entry: () => unknown, exports: Record<string, unknown>): Promise<unknown> {
+    const malloc      = exports.malloc as (n: number) => number;
+    const free        = exports.free as (p: number) => void;
+    const getState    = exports.asyncify_get_state as () => number;
+    const stopUnwind  = exports.asyncify_stop_unwind as () => void;
+    const startRewind = exports.asyncify_start_rewind as (p: number) => void;
+
+    runExports = exports;
+    runAsyncifyData = malloc(ASYNCIFY_STACK_BYTES + 8);
+    // header: [currentStackPtr, endStackPtr] then the stack region
+    new Int32Array((wasmMemory as WebAssembly.Memory).buffer, runAsyncifyData, 2)
+        .set([runAsyncifyData + 8, runAsyncifyData + 8 + ASYNCIFY_STACK_BYTES]);
+
+    let rewinding = false;
+    let ret: unknown;
+    try {
+        for (;;) {
+            if (rewinding) { startRewind(runAsyncifyData); rewinding = false; }
+            try {
+                ret = entry();
+            } catch (err) {
+                if (err instanceof ProcExit) { ret = err.code; break; }
+                throw err;
+            }
+            if (getState() === 1) {                 // unwound → needs input
+                stopUnwind();
+                const value = await requestInput(pendingInputKind);
+                pendingInputValue = pendingInputKind === "i32" ? Math.trunc(value) : value;
+                rewinding = true;
+                continue;
+            }
+            break;                                  // finished normally
+        }
+    } finally {
+        try { free(runAsyncifyData); } catch { /* ignore */ }
+        runAsyncifyData = 0;
+        runExports = null;
+        inputResolver = null;
+    }
+    return ret;
+}
+
 self.onmessage = async (e: MessageEvent<ClangWorkerInMsg>) => {
     const msg = e.data;
+
+    if (msg.type === "input-response") {
+        const resolve = inputResolver;
+        inputResolver = null;
+        resolve?.(msg.value);
+        return;
+    }
 
     // Debug control messages operate on the live session.
     switch (msg.type) {
@@ -883,8 +979,16 @@ self.onmessage = async (e: MessageEvent<ClangWorkerInMsg>) => {
             post({ type: "error", message: "No entry point (__sim_worker_entry) in user.wasm" });
             return;
         }
+        // Asyncify-enabled builds (interactive input) export the unwind/rewind
+        // machinery + malloc/free; drive them through runInteractive so
+        // sim_input_* can suspend. Plain builds run synchronously.
+        const interactive = typeof wasmExports.asyncify_start_unwind === "function"
+            && typeof wasmExports.malloc === "function"
+            && typeof wasmExports.free === "function";
         try {
-            const ret = (entry as () => unknown)();
+            const ret = interactive
+                ? await runInteractive(entry as () => unknown, wasmExports)
+                : (entry as () => unknown)();
             post({ type: "result", value: ret == null ? "(void)" : String(ret) });
         } catch (err) {
             if (err instanceof ProcExit) {

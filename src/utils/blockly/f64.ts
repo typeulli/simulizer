@@ -67,7 +67,24 @@ export const F64_BLOCKS: BlockSet = {
             const op = block.getFieldValue("OP") as keyof typeof simulizer.f64ops;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return (simulizer.f64ops[op] as any)(lhs, rhs);
-        })
+        }),
+    RANDOM: new BlockBuilder("f64_random", "f64", 160, "실수 난수 [0, 1)")
+        .addBody("random [0, 1)")
+        .expr(() => new simulizer.Call("math_rand_unit", [], simulizer.f64)),
+    RANDOM_RANGE: new BlockBuilder("f64_random_range", "f64", 160, "실수 난수 [min, max)")
+        .addBody("random range %1 ~ %2")
+        .addArgValue("MIN", "f64")
+        .addArgValue("MAX", "f64")
+        .expr((block, ctx) => {
+            const min = ctx.blockToExpr(block.getInputTargetBlock("MIN"), ctx);
+            const max = ctx.blockToExpr(block.getInputTargetBlock("MAX"), ctx);
+            if (!min || !max) return null;
+            return new simulizer.Call("math_rand_range",
+                [ctx.coerce(min, simulizer.f64), ctx.coerce(max, simulizer.f64)], simulizer.f64);
+        }),
+    INPUT_F64: new BlockBuilder("input_f64", "f64", 160, "실수 입력 (C++ 실행 전용)")
+        .addBody("input float")
+        .expr(() => new simulizer.Call("input_f64", [], simulizer.f64)),
 }
 
 export function xmlF64Blocks(cat: string): string {
@@ -78,5 +95,8 @@ export function xmlF64Blocks(cat: string): string {
     <block type="f64_binop"></block>
     <block type="f64_unop"></block>
     <block type="f64_cmp"></block>
+    <block type="f64_random"></block>
+    <block type="f64_random_range"></block>
+    <block type="input_f64"></block>
 </category>`;
 }
