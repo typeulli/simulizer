@@ -310,6 +310,12 @@ function buildCustomBlockDefs(p: langpack): BlockDef[] {
             previousStatement: null, nextStatement: null, colour: 0, tooltip: tooltips["wasm_return_f64"] ?? "return float",
         },
         {
+            type: "wasm_return_struct",
+            message0: msgs["wasm_return_struct"]?.[0] ?? "return struct %1",
+            args0: [{ type: "input_value", name: "VALUE", check: "struct" }],
+            previousStatement: null, nextStatement: null, colour: 0, tooltip: tooltips["wasm_return_struct"] ?? "return struct",
+        },
+        {
             type: "wasm_func_main",
             message0: msgs["wasm_func_main"]?.[0] ?? "function main → %1",
             args0: [
@@ -332,8 +338,31 @@ type SimulizerExpr = simulizer.Expr;
 interface CustomFuncSpec {
     id: string;
     name: string;
-    retType: "i32" | "f64" | "void";
-    params: { name: string; type: "i32" | "f64" }[];
+    // "i32" | "f64" | "void" for primitives, or "struct_<id>" when the function
+    // returns a user-defined struct (compiled as an i32 pointer).
+    retType: string;
+    // Each param type is "i32" | "f64", or "struct_<id>" for a struct param
+    // (passed as an i32 pointer, bound to the body's `__struct_<name>` local).
+    params: { name: string; type: string }[];
+}
+
+// ── Structs ──────────────────────────────────────────────────────────────────
+// A struct mirrors the custom-function model: each `struct_def` block on the
+// canvas carries a stable id (from its Blockly block id), an editable NAME, and
+// a stack of `struct_field` blocks declaring its props. A struct instance is an
+// i32 pointer into linear memory (same representation as arrays); fields are
+// laid out in declaration order with natural alignment. Per-struct blocks
+// (`struct_<id>_decl/ref/get/set`) are derived from these definitions.
+interface StructFieldSpec {
+    name: string;
+    type: "i32" | "f64";
+    offset: number;
+}
+interface StructSpec {
+    id: string;
+    name: string;
+    fields: StructFieldSpec[];
+    size: number;
 }
 
 const retTypeMap: Record<string, simulizer.Type> = {
@@ -342,6 +371,40 @@ const retTypeMap: Record<string, simulizer.Type> = {
 
 // 컴파일 직전에 설정되는 모듈 레벨 참조 (blockToExpr 에서 접근)
 let _customFuncSpecs: CustomFuncSpec[] = [];
+
+// 현재 캔버스의 struct 목록. blockToExpr/필드 dropdown/RET dropdown 생성기가
+// 실시간으로 참조하므로 캔버스 변경 시(handleBlockChange)와 컴파일 직전에 갱신한다.
+let _structSpecs: StructSpec[] = [];
+
+// True only while Blockly is deserializing a saved workspace. Struct value
+// blocks leave their type checks permissive during load (their dynamic output
+// would otherwise mismatch the parent before the field value is restored, and
+// Blockly skips field validators on load); the real checks are reapplied right
+// after load by normalizeStructBlocks() — derived straight from the saved
+// field values, no extraState involved.
+let _loadingWorkspace = false;
+
+// A struct's stable identity is its Blockly block id, sanitized to a symbol-safe
+// string (parallel to funcIdOf). Used in block types `struct_<id>_*` and the
+// Blockly output-check tag `struct_<id>`.
+function structIdOf(blocklyId: string): string {
+    return "s" + blocklyId.replace(/[^A-Za-z0-9]/g, "_");
+}
+
+/** Lay out fields in declaration order with natural alignment (i32→4B, f64→8B).
+ *  Total size is rounded up to an 8-byte boundary. */
+function computeStructLayout(raw: { name: string; type: "i32" | "f64" }[]): { fields: StructFieldSpec[]; size: number } {
+    let offset = 0;
+    const fields: StructFieldSpec[] = [];
+    for (const f of raw) {
+        const sz = f.type === "i32" ? 4 : 8;
+        if (offset % sz !== 0) offset += sz - (offset % sz);
+        fields.push({ name: f.name, type: f.type, offset });
+        offset += sz;
+    }
+    if (offset % 8 !== 0) offset += 8 - (offset % 8);
+    return { fields, size: Math.max(offset, 8) };
+}
 
 // ── Boundary2D ─────────────────────────────────────────────────────────────
 // 각 원소: f64 × 7 = 56 바이트 (t, x, y, tx, ty, nx, ny 순서)
@@ -391,6 +454,24 @@ type FuncDefBlock = Blockly.Block & {
 
 const FUNC_RET_OPTIONS:  [string, string][] = [["int", "i32"], ["float", "f64"], ["void", "void"]];
 const PARAM_TYPE_OPTIONS: [string, string][] = [["int", "i32"], ["float", "f64"]];
+const FIELD_TYPE_OPTIONS: [string, string][] = [["int", "i32"], ["float", "f64"]];
+
+const STRUCT_COLOUR = 160;
+
+// Custom-function return dropdown: primitives + every struct currently defined
+// on the canvas. Used as a FieldDropdown generator so it re-evaluates live
+// against `_structSpecs` (which handleBlockChange keeps in sync).
+function funcRetOptions(): [string, string][] {
+    const structs = _structSpecs.map(s => [s.name, `struct_${s.id}`] as [string, string]);
+    return [...FUNC_RET_OPTIONS, ...structs];
+}
+
+// Custom-function parameter type dropdown: primitives + every struct currently
+// defined on the canvas (a struct param is passed as an i32 pointer).
+function paramTypeOptions(): [string, string][] {
+    const structs = _structSpecs.map(s => [s.name, `struct_${s.id}`] as [string, string]);
+    return [...PARAM_TYPE_OPTIONS, ...structs];
+}
 
 // A function's stable identity is its Blockly block id (unique per instance,
 // preserved across save/load, regenerated on duplicate/flyout-drag). We only
@@ -422,7 +503,7 @@ function registerFuncDefBlock() {
                 .appendField(labelFunc)
                 .appendField(new Blockly.FieldTextInput("myFunc"), "NAME")
                 .appendField("→")
-                .appendField(new Blockly.FieldDropdown(FUNC_RET_OPTIONS), "RET");
+                .appendField(new Blockly.FieldDropdown(funcRetOptions), "RET");
             this.appendStatementInput("BODY").appendField(labelBody);
             this.setColour(290);
             this.setTooltip(defTip);
@@ -441,7 +522,7 @@ function registerFuncDefBlock() {
                     .appendField(labelParam)
                     .appendField(new Blockly.FieldTextInput(`p${i}`), `PNAME${i}`)
                     .appendField(":")
-                    .appendField(new Blockly.FieldDropdown(PARAM_TYPE_OPTIONS), `PTYPE${i}`);
+                    .appendField(new Blockly.FieldDropdown(paramTypeOptions), `PTYPE${i}`);
                 this.moveInputBefore(`PARAM${i}`, "BODY");
                 this.paramCount_ += 1;
             }
@@ -466,11 +547,11 @@ function scanCustomFuncs(ws: Blockly.Workspace): CustomFuncSpec[] {
         const fb = b as unknown as FuncDefBlock;
         const id = funcIdOf(b.id);
         const name = (b.getFieldValue("NAME") as string)?.trim() || id;
-        const retType = (b.getFieldValue("RET") as "i32" | "f64" | "void") ?? "void";
-        const params: { name: string; type: "i32" | "f64" }[] = [];
+        const retType = (b.getFieldValue("RET") as string) ?? "void";
+        const params: { name: string; type: string }[] = [];
         for (let i = 0; i < fb.paramCount_; i++) {
             const pn = (b.getFieldValue(`PNAME${i}`) as string)?.trim() || `p${i}`;
-            const pt = (b.getFieldValue(`PTYPE${i}`) as "i32" | "f64") ?? "i32";
+            const pt = (b.getFieldValue(`PTYPE${i}`) as string) ?? "i32";
             params.push({ name: pn, type: pt });
         }
         specs.push({ id, name, retType, params });
@@ -488,8 +569,12 @@ function registerCallBlock(spec: CustomFuncSpec) {
                 this.appendValueInput(`ARG${i}`).setCheck(p.type).appendField(`${p.name}:`)
             );
             this.appendDummyInput().appendField(")");
-            if (retType !== "void") this.setOutput(true, retType);
-            else { this.setPreviousStatement(true); this.setNextStatement(true); }
+            if (retType !== "void") {
+                // Struct-returning calls yield an i32 pointer; tag the output with
+                // both the specific struct id and the generic "struct" check so it
+                // can feed struct decls/returns.
+                this.setOutput(true, retType.startsWith("struct_") ? [retType, "struct"] : retType);
+            } else { this.setPreviousStatement(true); this.setNextStatement(true); }
             this.setColour(290);
             this.setInputsInline(params.length <= 2);
             this.setTooltip((_langPack?.workspace.blocks.custom_func_call_tooltip ?? "call {0}").replace("{0}", name));
@@ -497,7 +582,243 @@ function registerCallBlock(spec: CustomFuncSpec) {
     };
 }
 
+// ── Struct block registration (mirrors the custom-function machinery) ────────
+
+/** Register the generic `struct_def` block: `struct [NAME]` with a FIELDS
+ *  statement stack that only accepts `struct_field` blocks. */
+function registerStructDefBlock() {
+    const cf = _langPack?.block_dynamic;
+    const labelStruct = cf?.struct_def_label ?? "struct";
+    const labelFields = cf?.struct_def_fields_label ?? "fields";
+    const defTip = cf?.struct_def_tooltip ?? "struct definition (stack field blocks inside)";
+    Blockly.Blocks["struct_def"] = {
+        init(this: Blockly.Block) {
+            this.appendDummyInput()
+                .appendField(labelStruct)
+                .appendField(new Blockly.FieldTextInput("MyStruct"), "NAME");
+            this.appendStatementInput("FIELDS").setCheck("struct_field").appendField(labelFields);
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip(defTip);
+        },
+    };
+}
+
+/** Register the `struct_field` block: `field [FNAME] : [int/float]`. Only
+ *  connects inside a struct_def's FIELDS stack. */
+function registerFieldBlock() {
+    const cf = _langPack?.block_dynamic;
+    const labelField = cf?.struct_field_label ?? "field";
+    Blockly.Blocks["struct_field"] = {
+        init(this: Blockly.Block) {
+            this.appendDummyInput()
+                .appendField(labelField)
+                .appendField(new Blockly.FieldTextInput("x"), "FNAME")
+                .appendField(":")
+                .appendField(new Blockly.FieldDropdown(FIELD_TYPE_OPTIONS), "FTYPE");
+            this.setPreviousStatement(true, "struct_field");
+            this.setNextStatement(true, "struct_field");
+            this.setColour(STRUCT_COLOUR);
+        },
+    };
+}
+
+/** Output-check for an empty_value block of the given selected type. */
+function emptyValueOutputCheck(ty: string): string | string[] {
+    if (ty === "f64") return "f64";
+    if (ty.startsWith("struct_")) return [ty, "struct"];
+    return "i32";
+}
+
+/** Register the `empty_value` block: `empty [type ▾]` — yields the default/empty
+ *  value of the selected type (int→0, float→0.0, struct→fresh zero region). The
+ *  output check tracks the dropdown so it only plugs into matching inputs. */
+function registerEmptyValueBlock() {
+    const cf = _langPack?.block_dynamic;
+    const label = cf?.empty_value_label ?? "empty";
+    Blockly.Blocks["empty_value"] = {
+        init(this: Blockly.Block) {
+            const dd = new Blockly.FieldDropdown(paramTypeOptions);
+            dd.setValidator(function (this: Blockly.Field, newValue: string) {
+                this.getSourceBlock()?.setOutput(true, emptyValueOutputCheck(newValue));
+                return newValue;
+            });
+            this.appendDummyInput().appendField(label).appendField(dd, "TYPE");
+            // Permissive while loading (real check reapplied by normalizeStructBlocks).
+            this.setOutput(true, _loadingWorkspace ? null : emptyValueOutputCheck(this.getFieldValue("TYPE") ?? "i32"));
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip(cf?.empty_value_tooltip ?? "default/empty value of the selected type");
+        },
+    };
+}
+
+/** Field-name dropdown options for struct `sid`, read live from `_structSpecs`
+ *  so existing blocks reflect field renames/additions when reopened. */
+function structFieldOptions(sid: string): () => [string, string][] {
+    return () => {
+        const s = _structSpecs.find(x => x.id === sid);
+        const fs = s?.fields ?? [];
+        return fs.length ? fs.map(f => [f.name, f.name] as [string, string]) : [["—", ""]];
+    };
+}
+
+/** (Re)register the per-struct blocks `struct_<id>_{decl,ref,get,set}`. */
+function registerStructBlocks(spec: StructSpec) {
+    const sid = spec.id;
+    const cf = _langPack?.block_dynamic;
+    const assignLabel = cf?.struct_decl_assign_label ?? "←";
+
+    // decl (stmt): `(Struct) [var] ← [init?]` — fresh allocation, or bind to an
+    // existing struct pointer (e.g. a struct returned from a function).
+    Blockly.Blocks[`struct_${sid}_decl`] = {
+        init(this: Blockly.Block) {
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldLabel(spec.name), "SLABEL")
+                .appendField(new Blockly.FieldTextInput("s"), "VAR");
+            this.appendValueInput("INIT").setCheck("struct").appendField(assignLabel);
+            this.setInputsInline(true);
+            this.setPreviousStatement(true);
+            this.setNextStatement(true);
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip(cf?.struct_decl_tooltip ?? "declare a struct variable (optionally initialize from a struct value)");
+        },
+    };
+
+    // ref (expr): whole-struct value (pointer) of a named variable.
+    Blockly.Blocks[`struct_${sid}_ref`] = {
+        init(this: Blockly.Block) {
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldLabel(`(${spec.name})`), "SLABEL")
+                .appendField(new Blockly.FieldTextInput("s"), "VAR");
+            this.setOutput(true, [`struct_${sid}`, "struct"]);
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip(cf?.struct_ref_tooltip ?? "struct value");
+        },
+    };
+
+    // get (expr): `(Struct) [var] . [field]` — output check tracks the field type.
+    Blockly.Blocks[`struct_${sid}_get`] = {
+        init(this: Blockly.Block) {
+            const dd = new Blockly.FieldDropdown(structFieldOptions(sid));
+            dd.setValidator(function (this: Blockly.Field, newValue: string) {
+                const s = _structSpecs.find(x => x.id === sid);
+                const fld = s?.fields.find(f => f.name === newValue);
+                this.getSourceBlock()?.setOutput(true, fld ? fld.type : null);
+                return newValue;
+            });
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldLabel(`(${spec.name})`), "SLABEL")
+                .appendField(new Blockly.FieldTextInput("s"), "VAR")
+                .appendField(".")
+                .appendField(dd, "FIELD");
+            this.setOutput(true, "i32");
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip(cf?.struct_get_tooltip ?? "read a struct field");
+            const fld = spec.fields.find(f => f.name === this.getFieldValue("FIELD"));
+            // Permissive while loading (real check reapplied by normalizeStructBlocks).
+            this.setOutput(true, _loadingWorkspace ? null : (fld ? fld.type : (spec.fields[0]?.type ?? "i32")));
+        },
+    };
+
+    // set (stmt): `(Struct) [var] . [field] ← [value]` — value check tracks field.
+    Blockly.Blocks[`struct_${sid}_set`] = {
+        init(this: Blockly.Block) {
+            const dd = new Blockly.FieldDropdown(structFieldOptions(sid));
+            dd.setValidator(function (this: Blockly.Field, newValue: string) {
+                const s = _structSpecs.find(x => x.id === sid);
+                const fld = s?.fields.find(f => f.name === newValue);
+                this.getSourceBlock()?.getInput("VALUE")?.setCheck(fld ? fld.type : null);
+                return newValue;
+            });
+            this.appendDummyInput()
+                .appendField(new Blockly.FieldLabel(`(${spec.name})`), "SLABEL")
+                .appendField(new Blockly.FieldTextInput("s"), "VAR")
+                .appendField(".")
+                .appendField(dd, "FIELD");
+            this.appendValueInput("VALUE").appendField(assignLabel);
+            this.setInputsInline(true);
+            this.setPreviousStatement(true);
+            this.setNextStatement(true);
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip(cf?.struct_set_tooltip ?? "write a struct field");
+            const fld = spec.fields.find(f => f.name === this.getFieldValue("FIELD"));
+            // Permissive while loading (real check reapplied by normalizeStructBlocks).
+            this.getInput("VALUE")?.setCheck(_loadingWorkspace ? null : (fld ? fld.type : (spec.fields[0]?.type ?? "i32")));
+        },
+    };
+}
+
+/** Reapply struct value blocks' dynamic type checks from their saved field
+ *  values, after a workspace load. Mirrors how custom-function call blocks
+ *  derive their signature from the def block — everything comes from the
+ *  serialized block fields, nothing extra is persisted. */
+function normalizeStructBlocks(ws: Blockly.Workspace) {
+    for (const b of ws.getAllBlocks(false)) {
+        if (b.type === "empty_value") {
+            b.setOutput(true, emptyValueOutputCheck((b.getFieldValue("TYPE") as string) ?? "i32"));
+            continue;
+        }
+        const sb = parseStructBlock(b.type);
+        if (!sb || (sb.op !== "get" && sb.op !== "set")) continue;
+        const spec = _structSpecs.find(s => s.id === sb.sid);
+        const fld = spec?.fields.find(f => f.name === b.getFieldValue("FIELD"));
+        const ty = fld ? fld.type : (spec?.fields[0]?.type ?? "i32");
+        if (sb.op === "get") b.setOutput(true, ty);
+        else b.getInput("VALUE")?.setCheck(ty);
+    }
+}
+
+/** Read the current struct list from the canvas `struct_def` blocks. */
+function scanStructs(ws: Blockly.Workspace): StructSpec[] {
+    const specs: StructSpec[] = [];
+    for (const b of ws.getAllBlocks(false)) {
+        if (b.type !== "struct_def") continue;
+        const id = structIdOf(b.id);
+        const name = (b.getFieldValue("NAME") as string)?.trim() || id;
+        const raw: { name: string; type: "i32" | "f64" }[] = [];
+        let f = b.getInputTargetBlock("FIELDS");
+        while (f) {
+            if (f.type === "struct_field") {
+                const fn = (f.getFieldValue("FNAME") as string)?.trim();
+                const ft = (f.getFieldValue("FTYPE") as "i32" | "f64") ?? "i32";
+                if (fn) raw.push({ name: fn, type: ft });
+            }
+            f = f.getNextBlock();
+        }
+        const { fields, size } = computeStructLayout(raw);
+        specs.push({ id, name, fields, size });
+    }
+    return specs;
+}
+
 type WorkspaceState = Parameters<typeof Blockly.serialization.workspaces.load>[0];
+
+/** Read struct specs directly from a serialized workspace (top-level def blocks),
+ *  so per-struct blocks can be registered BEFORE deserialization. */
+function structSpecsFromState(state: WorkspaceState): StructSpec[] {
+    const specs: StructSpec[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const top = (state as any)?.blocks?.blocks;
+    if (!Array.isArray(top)) return specs;
+    for (const blk of top) {
+        if (blk?.type !== "struct_def" || !blk.id) continue;
+        const id = structIdOf(String(blk.id));
+        const name = String(blk.fields?.NAME ?? "").trim() || id;
+        const raw: { name: string; type: "i32" | "f64" }[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let f: any = blk.inputs?.FIELDS?.block;
+        while (f) {
+            if (f.type === "struct_field") {
+                const fn = String(f.fields?.FNAME ?? "").trim();
+                const ft = (f.fields?.FTYPE ?? "i32") as "i32" | "f64";
+                if (fn) raw.push({ name: fn, type: ft });
+            }
+            f = f.next?.block;
+        }
+        const { fields, size } = computeStructLayout(raw);
+        specs.push({ id, name, fields, size });
+    }
+    return specs;
+}
 
 /** Read func specs directly from a serialized workspace (top-level def blocks),
  *  so call blocks can be registered BEFORE the workspace is deserialized. */
@@ -512,12 +833,12 @@ function specsFromState(state: WorkspaceState): CustomFuncSpec[] {
         const count: number = blk.extraState?.paramCount ?? 0;
         const fields = blk.fields ?? {};
         const name = String(fields.NAME ?? "").trim() || id;
-        const retType = (fields.RET ?? "void") as "i32" | "f64" | "void";
-        const params: { name: string; type: "i32" | "f64" }[] = [];
+        const retType = String(fields.RET ?? "void");
+        const params: { name: string; type: string }[] = [];
         for (let i = 0; i < count; i++) {
             params.push({
                 name: String(fields[`PNAME${i}`] ?? `p${i}`).trim() || `p${i}`,
-                type: (fields[`PTYPE${i}`] ?? "i32") as "i32" | "f64",
+                type: String(fields[`PTYPE${i}`] ?? "i32"),
             });
         }
         specs.push({ id, name, retType, params });
@@ -525,17 +846,36 @@ function specsFromState(state: WorkspaceState): CustomFuncSpec[] {
     return specs;
 }
 
-/** Load a workspace, pre-registering the generic def block + every call block
- *  the state references so no block is dropped during deserialization. */
+/** Load a workspace, pre-registering the generic def block + every call/struct
+ *  block the state references so no block is dropped during deserialization. */
 function loadWorkspaceState(ws: Blockly.Workspace, state: WorkspaceState) {
     registerFuncDefBlock();
+    registerStructDefBlock();
+    registerFieldBlock();
+    registerEmptyValueBlock();
+    // Populate the live struct list first so the func RET dropdown can resolve
+    // any saved `struct_<id>` value and the per-struct blocks register.
+    _structSpecs = structSpecsFromState(state);
+    for (const spec of _structSpecs) registerStructBlocks(spec);
     for (const spec of specsFromState(state)) registerCallBlock(spec);
-    Blockly.serialization.workspaces.load(state, ws);
+    // Struct value blocks load with permissive type checks (so a child's dynamic
+    // output can't fail to connect before its field value is restored), then we
+    // reapply the real checks from the loaded field values.
+    _loadingWorkspace = true;
+    try {
+        Blockly.serialization.workspaces.load(state, ws);
+    } finally {
+        _loadingWorkspace = false;
+    }
+    normalizeStructBlocks(ws);
 }
 
-// Ensure the generic definition block type exists as soon as this module loads
-// (the base toolbox references it).
+// Ensure the generic definition block types exist as soon as this module loads
+// (the base toolbox references them).
 registerFuncDefBlock();
+registerStructDefBlock();
+registerFieldBlock();
+registerEmptyValueBlock();
 
 /** Build custom function definition block → FuncDef */
 function buildCustomFunc(
@@ -543,9 +883,19 @@ function buildCustomFunc(
     spec: CustomFuncSpec,
     mod: simulizer.ModuleDef,
 ): simulizer.FuncDef {
-    const retType = retTypeMap[spec.retType] ?? simulizer.void_;
+    // Struct-returning functions return an i32 pointer at the WASM level.
+    const retType = spec.retType.startsWith("struct_")
+        ? simulizer.i32
+        : (retTypeMap[spec.retType] ?? simulizer.void_);
+    // A struct param is an i32 pointer, bound under the body's `__struct_<name>`
+    // local so struct ref/get/set blocks (which look up `__struct_<VAR>`) resolve
+    // to the parameter rather than a fresh allocation.
+    const isStructParam = (t: string) => t.startsWith("struct_");
+    const paramWasmType = (t: string) => (t === "f64" ? simulizer.f64 : simulizer.i32);
+    const paramLocalName = (p: { name: string; type: string }) =>
+        isStructParam(p.type) ? `__struct_${p.name}` : p.name;
     const paramDefs = spec.params.map(
-        p => new simulizer.ParamDef(new simulizer.Param(p.name, p.type === "i32" ? simulizer.i32 : simulizer.f64))
+        p => new simulizer.ParamDef(new simulizer.Param(paramLocalName(p), paramWasmType(p.type)))
     );
     const func = new simulizer.FuncDef(`custom_func_${spec.id}`, paramDefs, retType);
     const ctx: CompileCtx = {
@@ -564,11 +914,18 @@ function buildCustomFunc(
     };
     // Register parameters in locals (both read/write use local.get/set)
     spec.params.forEach(p => {
-        const pType = p.type === "i32" ? simulizer.i32 : simulizer.f64;
-        const local = new simulizer.Local(p.name, pType);
-        ctx.locals.set(p.name, { local, def: null as unknown as simulizer.LocalDef });
+        const name = paramLocalName(p);
+        const local = new simulizer.Local(name, paramWasmType(p.type));
+        ctx.locals.set(name, { local, def: null as unknown as simulizer.LocalDef });
     });
+    if (bodyUsesStructFrame(defBlock)) setupStructFrame(ctx, mod);
     const body = stmtChainToExprs(defBlock.getInputTargetBlock("BODY"), ctx);
+    if (ctx.structStack) {
+        framePrologue(ctx).reverse().forEach(e => body.unshift(e));
+        // void functions fall through → restore the stack pointer at the end.
+        if (retType.equals(simulizer.void_))
+            body.push(new simulizer.GlobalSet(ctx.structStack.spGlobal, ctx.structStack.spSave));
+    }
     body.forEach(e => func.add_expr(e));
     return func;
 }
@@ -617,6 +974,144 @@ function declareLocal(
     return local;
 }
 
+/** Parse a dynamic per-struct block type `struct_<sid>_<op>`. Returns null for
+ *  the definition blocks (`struct_def`, `struct_field`) and non-struct types.
+ *  `sid` may itself contain underscores; the op is always the final segment. */
+function parseStructBlock(type: string): { sid: string; op: "decl" | "ref" | "get" | "set" } | null {
+    if (!type.startsWith("struct_")) return null;
+    const last = type.lastIndexOf("_");
+    const op = type.slice(last + 1);
+    if (op !== "decl" && op !== "ref" && op !== "get" && op !== "set") return null;
+    return { sid: type.slice("struct_".length, last), op };
+}
+
+// ── Struct shadow stack ──────────────────────────────────────────────────────
+// Structs live on a runtime stack in linear memory (grows down from STACK_TOP,
+// below the bd2 region). Each function that allocates/copies structs pushes a
+// frame on entry and pops it on every return, so recursion gives every
+// invocation its own struct memory, and structs are passed/returned by value.
+const STRUCT_STACK_TOP = 0x80000;
+let _structFrameLabel = 0;
+const nextFrameLabel = () => `sf_${(_structFrameLabel++).toString(36)}`;
+
+/** Find-or-add the module's `$__sp` shadow-stack pointer global. */
+function ensureSpGlobal(mod: simulizer.ModuleDef): simulizer.Global {
+    const found = mod.globals.find(g => g.global.name === "__sp");
+    if (found) return found.global;
+    const g = new simulizer.Global("__sp", simulizer.i32, true);
+    mod.add_global(new simulizer.GlobalDef(g, new simulizer.Const(simulizer.i32, STRUCT_STACK_TOP)));
+    return g;
+}
+
+/** Does this function body allocate/copy structs (→ needs a stack frame)?
+ *  Reading/writing fields of a struct *parameter* needs no frame. */
+function bodyUsesStructFrame(root: Blockly.Block | null): boolean {
+    if (!root) return false;
+    for (const b of root.getDescendants(false)) {
+        if (b.type === "empty_value" && String(b.getFieldValue("TYPE") ?? "").startsWith("struct_")) return true;
+        const sb = parseStructBlock(b.type);
+        if (sb && sb.op === "decl") return true;                       // local struct slot
+        if (b.type.startsWith("custom_func_") && b.type !== "custom_func_def") {
+            const id = b.type.slice("custom_func_".length);
+            const spec = _customFuncSpecs.find(f => f.id === id);
+            if (spec && spec.params.some(p => p.type.startsWith("struct_"))) return true;  // by-value arg copy
+        }
+    }
+    return false;
+}
+
+/** Reserve `size` bytes in the current frame; returns the byte offset. */
+function frameAlloc(ctx: CompileCtx, size: number): number {
+    const st = ctx.structStack!;
+    const off = st.offset;
+    st.offset += size;
+    return off;
+}
+
+/** Pointer expression for `$__fp + off`. */
+function framePtr(ctx: CompileCtx, off: number): SimulizerExpr {
+    return off === 0
+        ? ctx.structStack!.fp
+        : simulizer.i32ops.add(ctx.structStack!.fp, new simulizer.Const(simulizer.i32, off));
+}
+
+/** Allocate a fresh, zero-initialized struct slot; yields its pointer. */
+function frameZeroStruct(ctx: CompileCtx, spec: StructSpec): SimulizerExpr {
+    const off = frameAlloc(ctx, spec.size);
+    const body: SimulizerExpr[] = [];
+    for (let w = 0; w < spec.size; w += 4)
+        body.push(new simulizer.Store(simulizer.i32, framePtr(ctx, off + w), new simulizer.Const(simulizer.i32, 0)));
+    body.push(framePtr(ctx, off));
+    return new simulizer.Block(nextFrameLabel(), body, simulizer.i32);
+}
+
+/** Allocate a fresh struct slot and copy `src` (a struct pointer) into it
+ *  (value semantics); yields the new slot's pointer. */
+function frameCopyStruct(ctx: CompileCtx, src: SimulizerExpr, spec: StructSpec): SimulizerExpr {
+    const off = frameAlloc(ctx, spec.size);
+    const srcTmp = new simulizer.Local(`__src_${nextFrameLabel()}`, simulizer.i32);
+    ctx.func.add_local(srcTmp);
+    const body: SimulizerExpr[] = [new simulizer.LocalSet(srcTmp, src)];
+    for (let w = 0; w < spec.size; w += 4) {
+        const srcPtr = w === 0 ? srcTmp : simulizer.i32ops.add(srcTmp, new simulizer.Const(simulizer.i32, w));
+        body.push(new simulizer.Store(simulizer.i32, framePtr(ctx, off + w), new simulizer.Load(simulizer.i32, srcPtr)));
+    }
+    body.push(framePtr(ctx, off));
+    return new simulizer.Block(nextFrameLabel(), body, simulizer.i32);
+}
+
+/** A return that restores the shadow stack first (frame mode), else plain. */
+function makeReturn(ctx: CompileCtx, value: SimulizerExpr, type: simulizer.Type): SimulizerExpr {
+    const st = ctx.structStack;
+    if (!st) return new simulizer.Return(value);
+    let tmp: simulizer.Local;
+    if (type.equals(simulizer.f64)) {
+        if (!st.retTmpF64) { st.retTmpF64 = new simulizer.Local("__ret_f64", simulizer.f64); ctx.func.add_local(st.retTmpF64); }
+        tmp = st.retTmpF64;
+    } else {
+        if (!st.retTmpI32) { st.retTmpI32 = new simulizer.Local("__ret_i32", simulizer.i32); ctx.func.add_local(st.retTmpI32); }
+        tmp = st.retTmpI32;
+    }
+    return new simulizer.Block(nextFrameLabel(), [
+        new simulizer.LocalSet(tmp, value),
+        new simulizer.GlobalSet(st.spGlobal, st.spSave),
+        new simulizer.Return(tmp),
+    ], simulizer.void_);
+}
+
+/** Declare $__fp/$__sp_save and the module $__sp global for a function frame. */
+function setupStructFrame(ctx: CompileCtx, mod: simulizer.ModuleDef) {
+    const spGlobal = ensureSpGlobal(mod);
+    const fp = new simulizer.Local("__fp", simulizer.i32); ctx.func.add_local(fp);
+    const spSave = new simulizer.Local("__sp_save", simulizer.i32); ctx.func.add_local(spSave);
+    ctx.structStack = { fp, spSave, spGlobal, offset: 0 };
+}
+
+/** Prologue: $__sp_save = $__sp; $__sp -= frameSize; $__fp = $__sp. */
+function framePrologue(ctx: CompileCtx): SimulizerExpr[] {
+    const st = ctx.structStack!;
+    const frameSize = (st.offset + 7) & ~7;  // 8-byte aligned
+    return [
+        new simulizer.LocalSet(st.spSave, st.spGlobal),
+        new simulizer.GlobalSet(st.spGlobal, simulizer.i32ops.sub(st.spGlobal, new simulizer.Const(simulizer.i32, frameSize))),
+        new simulizer.LocalSet(st.fp, st.spGlobal),
+    ];
+}
+
+/** Compile a custom-function call's arguments, copying struct args by value. */
+function compileCallArgs(block: Blockly.Block, spec: CustomFuncSpec, ctx: CompileCtx): SimulizerExpr[] {
+    return spec.params.map((p, i) => {
+        const e = blockToExpr(block.getInputTargetBlock(`ARG${i}`), ctx);
+        if (!e) return null;
+        if (p.type.startsWith("struct_")) {
+            const argSpec = _structSpecs.find(s => s.id === p.type.slice("struct_".length));
+            if (argSpec && ctx.structStack) return frameCopyStruct(ctx, coerce(e, simulizer.i32), argSpec);
+            return coerce(e, simulizer.i32);
+        }
+        return coerce(e, p.type === "f64" ? simulizer.f64 : simulizer.i32);
+    }).filter((a): a is SimulizerExpr => a !== null);
+}
+
 /** Expression block → SimulizerExpr */
 function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimulizerExpr | null {
     if (!block) return null;
@@ -633,6 +1128,22 @@ function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimulizerExp
     switch (block.type) {   
 
 
+
+        // Empty / default value of the selected type
+        case "empty_value": {
+            const ty = (block.getFieldValue("TYPE") as string) ?? "i32";
+            if (ty === "f64") return new simulizer.Const(simulizer.f64, 0);
+            if (ty.startsWith("struct_")) {
+                const sid = ty.slice("struct_".length);
+                const spec = _structSpecs.find(s => s.id === sid);
+                if (!spec) return null;
+                if (ctx.structStack) return frameZeroStruct(ctx, spec);
+                const baseOffset = ctx.nextArrayOffset ?? 0x1000;
+                ctx.nextArrayOffset = baseOffset + spec.size;
+                return new simulizer.Const(simulizer.i32, baseOffset);
+            }
+            return new simulizer.Const(simulizer.i32, 0);
+        }
 
         // Array literal
         case "array_literal_i32":
@@ -659,16 +1170,28 @@ function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimulizerExp
         
 
         default: {
+            // Struct field read (get) / whole-struct value (ref)
+            const sb = parseStructBlock(block.type);
+            if (sb && (sb.op === "get" || sb.op === "ref")) {
+                const spec = _structSpecs.find(s => s.id === sb.sid);
+                const varName = (block.getFieldValue("VAR") as string)?.trim();
+                if (!spec || !varName) return null;
+                const ptr = ctx.getOrCreateLocal(ctx, `__struct_${varName}`, simulizer.i32);
+                if (sb.op === "ref") return ptr;
+                const fld = spec.fields.find(f => f.name === block.getFieldValue("FIELD"));
+                if (!fld) return null;
+                const ty = fld.type === "i32" ? simulizer.i32 : simulizer.f64;
+                return new simulizer.Load(ty, ptr, { memArg: { offset: fld.offset } });
+            }
+
             // Custom function call (non-void → expr)
             if (block.type.startsWith("custom_func_")) {
                 const id = block.type.slice("custom_func_".length);
                 const spec = _customFuncSpecs.find(f => f.id === id);
                 if (spec && spec.retType !== "void") {
-                    const args = spec.params.map((p, i) => {
-                        const e = blockToExpr(block.getInputTargetBlock(`ARG${i}`), ctx);
-                        return e ? coerce(e, p.type === "i32" ? simulizer.i32 : simulizer.f64) : null;
-                    }).filter((a): a is SimulizerExpr => a !== null);
-                    return new simulizer.Call(`custom_func_${id}`, args, retTypeMap[spec.retType]);
+                    const args = compileCallArgs(block, spec, ctx);
+                    // Struct-returning calls compile to an i32 pointer.
+                    return new simulizer.Call(`custom_func_${id}`, args, retTypeMap[spec.retType] ?? simulizer.i32);
                 }
             }
             return null;
@@ -693,21 +1216,62 @@ function stmtBlockToExpr(block: Blockly.Block, ctx: CompileCtx): SimulizerExpr |
             if (!val) return null;
             const targetType = ctx.funcRetType
                 ?? (block.type === "wasm_return_i32" ? simulizer.i32 : simulizer.f64);
-            return new simulizer.Return(coerce(val, targetType));
+            return makeReturn(ctx, coerce(val, targetType), targetType);
+        }
+
+        // Struct return → returns the i32 pointer (caller copies it out by value)
+        case "wasm_return_struct": {
+            const val = blockToExpr(block.getInputTargetBlock("VALUE"), ctx);
+            if (!val) return null;
+            return makeReturn(ctx, coerce(val, simulizer.i32), simulizer.i32);
         }
 
 
         // Expression in statement position → wrap with Drop
         default: {
+            // Struct variable declaration (decl) / field write (set)
+            const sb = parseStructBlock(block.type);
+            if (sb && (sb.op === "decl" || sb.op === "set")) {
+                const spec = _structSpecs.find(s => s.id === sb.sid);
+                const varName = (block.getFieldValue("VAR") as string)?.trim();
+                if (!spec || !varName) return null;
+                const ptr = ctx.getOrCreateLocal(ctx, `__struct_${varName}`, simulizer.i32);
+                if (sb.op === "decl") {
+                    const initBlock = block.getInputTargetBlock("INIT");
+                    if (ctx.structStack) {
+                        // Frame mode: a fresh per-invocation slot, value-copied
+                        // from the initializer (or zero-initialized if none).
+                        if (initBlock) {
+                            const initExpr = blockToExpr(initBlock, ctx);
+                            return initExpr ? new simulizer.LocalSet(ptr, frameCopyStruct(ctx, coerce(initExpr, simulizer.i32), spec)) : null;
+                        }
+                        return new simulizer.LocalSet(ptr, frameZeroStruct(ctx, spec));
+                    }
+                    // Static fallback (no frame): bind to the init pointer, or
+                    // allocate a fresh zero region at a fixed address.
+                    if (initBlock) {
+                        const initExpr = blockToExpr(initBlock, ctx);
+                        return initExpr ? new simulizer.LocalSet(ptr, coerce(initExpr, simulizer.i32)) : null;
+                    }
+                    const baseOffset = ctx.nextArrayOffset ?? 0x1000;
+                    ctx.nextArrayOffset = baseOffset + spec.size;
+                    return new simulizer.LocalSet(ptr, new simulizer.Const(simulizer.i32, baseOffset));
+                }
+                // set
+                const fld = spec.fields.find(f => f.name === block.getFieldValue("FIELD"));
+                if (!fld) return null;
+                const val = blockToExpr(block.getInputTargetBlock("VALUE"), ctx);
+                if (!val) return null;
+                const ty = fld.type === "i32" ? simulizer.i32 : simulizer.f64;
+                return new simulizer.Store(ty, ptr, coerce(val, ty), { memArg: { offset: fld.offset } });
+            }
+
             // Custom void function call (statement position)
             if (block.type.startsWith("custom_func_")) {
                 const id = block.type.slice("custom_func_".length);
                 const spec = _customFuncSpecs.find(f => f.id === id);
                 if (spec && spec.retType === "void") {
-                    const args = spec.params.map((p, i) => {
-                        const e = blockToExpr(block.getInputTargetBlock(`ARG${i}`), ctx);
-                        return e ? coerce(e, p.type === "i32" ? simulizer.i32 : simulizer.f64) : null;
-                    }).filter((a): a is SimulizerExpr => a !== null);
+                    const args = compileCallArgs(block, spec, ctx);
                     return new simulizer.Call(`custom_func_${id}`, args, simulizer.void_);
                 }
             }
@@ -734,6 +1298,9 @@ function allPathsReturn(exprs: SimulizerExpr[]): boolean {
     const last = exprs[exprs.length - 1];
     if (last instanceof simulizer.Return) return true;
     if (last instanceof simulizer.Unreachable) return true;
+    // A shadow-stack-wrapped return is a Block whose last expr is a Return.
+    if (last instanceof simulizer.Block && last.body.length > 0
+        && last.body[last.body.length - 1] instanceof simulizer.Return) return true;
     if (last instanceof simulizer.If) {
         return last.else_.length > 0 && allPathsReturn(last.then) && allPathsReturn(last.else_);
     }
@@ -762,7 +1329,10 @@ function buildFuncDef(
     const maxBd3End = _bd3Arrays.reduce(
         (max, bd3) => Math.max(max, bd3.offset + bd3.count * BD3_ELEM_BYTES), 0,
     );
-    const maxEnd = Math.max(maxBd2End, maxBd3End);
+    // Reserve the struct shadow-stack region (grows down from STACK_TOP) whenever
+    // any struct is defined, so frames never run past the allocated memory.
+    const stackEnd = _structSpecs.length > 0 ? STRUCT_STACK_TOP : 0;
+    const maxEnd = Math.max(maxBd2End, maxBd3End, stackEnd);
     const pagesNeeded = maxEnd > 0 ? Math.ceil(maxEnd / 65536) + 1 : 1;
     module.set_memory(pagesNeeded);
 
@@ -790,10 +1360,19 @@ function buildFuncDef(
         declareLocal,
     };
 
+    if (bodyUsesStructFrame(mainBlock)) setupStructFrame(ctx, module);
+
     const body = stmtChainToExprs(mainBlock.getInputTargetBlock("BODY"), ctx);
 
     if (!declaredRetType.equals(simulizer.void_) && !allPathsReturn(body)) {
         return { kind: "no_return", message: _langPack?.workspace.infos.no_return ?? "Every path needs a return block." };
+    }
+
+    if (ctx.structStack) {
+        framePrologue(ctx).reverse().forEach(e => body.unshift(e));
+        // void main falls through → restore the stack pointer at the end.
+        if (declaredRetType.equals(simulizer.void_))
+            body.push(new simulizer.GlobalSet(ctx.structStack.spGlobal, ctx.structStack.spSave));
     }
 
     body.forEach((e) => func.add_expr(e));
@@ -833,6 +1412,11 @@ function buildBaseToolboxXml(p: langpack): string {
         <label text="Cast"></label>
         <block type="f64_from_i32"></block>
         <block type="i32_from_f64"></block>
+        <label text="Struct"></label>
+        <block type="struct_def"></block>
+        <block type="struct_field"></block>
+        <block type="empty_value"></block>
+        <!--STRUCT_BLOCKS-->
     </category>
     <category name="${tb.func}" colour="${290}">
     <sep gap="16"></sep>
@@ -841,22 +1425,26 @@ function buildBaseToolboxXml(p: langpack): string {
         <block type="custom_func_def"></block>
         <block type="wasm_return_i32"></block>
         <block type="wasm_return_f64"></block>
+        <block type="wasm_return_struct"></block>
+        <!--FUNC_BLOCKS-->
     </category>
 </xml>`;
 }
 
-function buildToolboxXml(funcs: CustomFuncSpec[], p: langpack): string {
-    const base = buildBaseToolboxXml(p);
-    if (funcs.length === 0) return base;
-    // The generic definition block lives in the base toolbox; here we add one
-    // call block per function currently defined on the canvas.
-    const funcBlocks = funcs.map(f =>
-        `<block type="custom_func_${f.id}"></block>`
-    ).join("\n        ");
-    return base.replace(
-        `<block type="wasm_return_f64"></block>\n    </category>`,
-        `<block type="wasm_return_f64"></block>\n        ${funcBlocks}\n    </category>`
-    );
+function buildToolboxXml(funcs: CustomFuncSpec[], structs: StructSpec[], p: langpack): string {
+    let xml = buildBaseToolboxXml(p);
+    // The generic definition blocks live in the base toolbox; here we add the
+    // per-instance blocks for everything currently defined on the canvas.
+    const funcBlocks = funcs.map(f => `<block type="custom_func_${f.id}"></block>`).join("\n        ");
+    const structBlocks = structs.flatMap(s => [
+        `<block type="struct_${s.id}_decl"></block>`,
+        `<block type="struct_${s.id}_ref"></block>`,
+        `<block type="struct_${s.id}_get"></block>`,
+        `<block type="struct_${s.id}_set"></block>`,
+    ]).join("\n        ");
+    xml = xml.replace("<!--FUNC_BLOCKS-->", funcBlocks);
+    xml = xml.replace("<!--STRUCT_BLOCKS-->", structBlocks);
+    return xml;
 }
 
 const INITIAL_WORKSPACE_XML = `
@@ -964,6 +1552,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [watSource, setWatSource]         = useState<string>("");
     const [customFuncs, setCustomFuncs]     = useState<CustomFuncSpec[]>([]);
     const customFuncsRef                    = useRef<CustomFuncSpec[]>([]);
+    const [customStructs, setCustomStructs] = useState<StructSpec[]>([]);
+    const customStructsRef                  = useRef<StructSpec[]>([]);
 
     const [bd2Arrays, setBd2Arrays]   = useState<Bd2ArrayEntry[]>([]);
     const bd2ArraysRef                = useRef<Bd2ArrayEntry[]>([]);
@@ -1008,6 +1598,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const chatPopoverRef                        = useRef<HTMLDivElement>(null);
     const [showToolsMenu, setShowToolsMenu]     = useState(false);
     const toolsMenuRef                          = useRef<HTMLDivElement>(null);
+    const [jsonPasteText, setJsonPasteText]     = useState("");
+    const [jsonImportError, setJsonImportError] = useState<string | null>(null);
+    const jsonFileInputRef                      = useRef<HTMLInputElement>(null);
     const [canvasTab, setCanvasTab]             = useState<"blocks" | "wat" | "ai">("blocks");
     const [watLang, setWatLang]                 = useState<"wat" | "cpp" | "py" | "js">("wat");
     const [translatedSource, setTranslatedSource] = useState<string | null>(null);
@@ -1225,13 +1818,63 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     const [showBlocks, setShowBlocks] = useState(false);
     const [blockData, setBlockData]   = useState<string>("");
-    const [blockMode, setBlockMode]   = useState<"export" | "share">("export");
+    const [blockMode, setBlockMode]   = useState<"export" | "import" | "share">("export");
     const lang = useLocale();
     const pack = useMessages();
     const langReady = true;
 
     const [fileId, setFileId]       = useState<string | null>(null);
     const [fileName, setFileName]   = useState<string>("");
+
+    // ── JSON export / import ─────────────────────────────────────────────────
+    // The workspace serializes to the same Blockly JSON used for server saves,
+    // so export/import are just download / deserialize of that format.
+    const handleExportJson = useCallback(() => {
+        const ws = workspaceRef.current;
+        if (!ws) return;
+        const json = JSON.stringify(Blockly.serialization.workspaces.save(ws), null, 2);
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${(fileName || "workspace").replace(/[^\w.-]+/g, "_") || "workspace"}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    }, [fileName]);
+
+    /** Parse + load a workspace JSON string. Returns an error message, or null on
+     *  success. Restores the previous workspace if the imported state fails. */
+    const applyImportedJson = useCallback((raw: string): string | null => {
+        const ws = workspaceRef.current;
+        if (!ws) return pack.workspace.ui.import_error;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let state: any;
+        try { state = JSON.parse(raw); } catch { return pack.workspace.ui.import_error; }
+        if (!state || typeof state !== "object" || !state.blocks) return pack.workspace.ui.import_error;
+        const backup = Blockly.serialization.workspaces.save(ws);
+        try {
+            ws.clear();
+            loadWorkspaceState(ws, state);
+        } catch {
+            ws.clear();
+            try { loadWorkspaceState(ws, backup); } catch { /* leave empty */ }
+            return pack.workspace.ui.import_error;
+        }
+        return null;
+    }, [pack]);
+
+    const handleImportJsonFile = useCallback(async (file: File) => {
+        try {
+            const err = applyImportedJson(await file.text());
+            if (err) { showErrorModal(err); return; }
+            setShowBlocks(false);
+        } catch {
+            showErrorModal(pack.workspace.ui.import_error);
+        }
+    }, [applyImportedJson, showErrorModal, pack]);
+
     const [fileMeta, setFileMeta]   = useState<FileOut | null>(null);
     const [isOwner, setIsOwner]     = useState<boolean | null>(null);
     const isOwnerRef                = useRef<boolean>(false);
@@ -1511,6 +2154,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         registerDynamicArrayBlocks(pack);
         registerFoldRegionBlock(pack);
         registerFuncDefBlock();
+        registerStructDefBlock();
+        registerFieldBlock();
+        registerEmptyValueBlock();
         buildCustomBlockDefs(pack).forEach((def) => {
             const d = def as { type: string };
             if (!Blockly.Blocks[d.type]) {
@@ -1571,13 +2217,25 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const handleBlockChange = (event: Blockly.Events.Abstract) => {
             if (event.isUiEvent) return;
 
-            // The canvas is the source of truth for custom functions: re-derive
-            // the list, (re)register each call block, and sync the (possibly
-            // renamed) function name onto existing call blocks. Field writes are
-            // wrapped so they don't re-trigger this listener.
+            // The canvas is the source of truth for both structs and custom
+            // functions. Structs are derived first so the live `_structSpecs`
+            // (used by the func RET dropdown and field dropdowns) is current.
+            const structSpecs = scanStructs(ws);
+            _structSpecs = structSpecs;
             const specs = scanCustomFuncs(ws);
             Blockly.Events.disable();
             try {
+                for (const spec of structSpecs) {
+                    registerStructBlocks(spec);
+                    // Sync the (possibly renamed) struct name label onto existing
+                    // per-struct blocks (field dropdowns refresh themselves live).
+                    for (const op of ["decl", "ref", "get", "set"] as const) {
+                        const label = op === "decl" ? spec.name : `(${spec.name})`;
+                        for (const sb of ws.getBlocksByType(`struct_${spec.id}_${op}`, false)) {
+                            sb.getField("SLABEL")?.setValue(label);
+                        }
+                    }
+                }
                 for (const spec of specs) {
                     registerCallBlock(spec);
                     for (const cb of ws.getBlocksByType(`custom_func_${spec.id}`, false)) {
@@ -1586,6 +2244,10 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 }
             } finally {
                 Blockly.Events.enable();
+            }
+            if (JSON.stringify(structSpecs) !== JSON.stringify(customStructsRef.current)) {
+                customStructsRef.current = structSpecs;
+                setCustomStructs(structSpecs);
             }
             if (JSON.stringify(specs) !== JSON.stringify(customFuncsRef.current)) {
                 customFuncsRef.current = specs;
@@ -1885,19 +2547,22 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         registerDynamicArrayBlocks(pack);
         registerFoldRegionBlock(pack);
         registerFuncDefBlock();
+        registerStructDefBlock();
+        registerFieldBlock();
+        registerEmptyValueBlock();
         const savedState = Blockly.serialization.workspaces.save(ws);
         ws.clear();
         loadWorkspaceState(ws, savedState);
-        if (ws.getToolbox()) ws.updateToolbox(buildToolboxXml(customFuncs, pack));
+        if (ws.getToolbox()) ws.updateToolbox(buildToolboxXml(customFuncs, customStructs, pack));
     }, [lang, pack]);
 
-    // Update toolbox when custom functions change
+    // Update toolbox when custom functions or structs change
     useEffect(() => {
         const ws = workspaceRef.current;
         if (!ws) return;
         if (!ws.getToolbox()) return;
-        ws.updateToolbox(buildToolboxXml(customFuncs, pack));
-    }, [customFuncs]);
+        ws.updateToolbox(buildToolboxXml(customFuncs, customStructs, pack));
+    }, [customFuncs, customStructs]);
 
     // Dismiss AI popover on outside click
     useEffect(() => {
@@ -2036,7 +2701,10 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const ws = workspaceRef.current;
         if (!ws) return null;
 
-        // Function list is derived from the canvas definition blocks.
+        // Struct + function lists are derived from the canvas definition blocks.
+        // Structs first: the main/func compilers read `_structSpecs` for struct
+        // decl/get/set blocks and field offsets.
+        _structSpecs = scanStructs(ws);
         const funcSpecs = scanCustomFuncs(ws);
         _customFuncSpecs = funcSpecs;
         _bd2Arrays = bd2ArraysRef.current;
@@ -3425,9 +4093,43 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         onChange={updated => setFileMeta(prev => prev ? { ...prev, visibility: updated.visibility } : prev)}
                     />
                 ) : undefined}
+                importPanel={isOwner ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
+                        <div>
+                            <Button variant="secondary" size="sm" leading={<Icon.Upload size={11} />} onClick={() => jsonFileInputRef.current?.click()}>
+                                {pack.workspace.ui.import_json_menu}
+                            </Button>
+                        </div>
+                        <textarea
+                            value={jsonPasteText}
+                            onChange={e => { setJsonPasteText(e.target.value); if (jsonImportError) setJsonImportError(null); }}
+                            placeholder={pack.workspace.ui.import_paste_placeholder}
+                            spellCheck={false}
+                            style={{ width: "100%", height: 200, resize: "vertical", boxSizing: "border-box", padding: token.space.sp3, border: `1px solid ${jsonImportError ? token.color.danger : token.color.border}`, borderRadius: token.radius.sm, background: token.color.bg, color: token.color.fg, fontFamily: token.font.family.mono, fontSize: token.font.size.fs12, lineHeight: 1.5 }}
+                        />
+                        {jsonImportError && (
+                            <p style={{ margin: 0, fontSize: token.font.size.fs12, color: token.color.danger }}>{jsonImportError}</p>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <Button
+                                variant="accent" size="sm" leading={<Icon.Upload size={11} />}
+                                disabled={!jsonPasteText.trim()}
+                                onClick={() => {
+                                    const err = applyImportedJson(jsonPasteText);
+                                    if (err) { setJsonImportError(err); return; }
+                                    setShowBlocks(false);
+                                    setJsonPasteText("");
+                                }}
+                            >
+                                {pack.workspace.ui.import_paste_confirm}
+                            </Button>
+                        </div>
+                    </div>
+                ) : undefined}
                 onClose={() => setShowBlocks(false)}
                 onModeChange={setBlockMode}
                 onCopyToClipboard={(text) => navigator.clipboard.writeText(text)}
+                onExportJson={handleExportJson}
                 onResetWorkspace={() => { handleReset(); setShowBlocks(false); }}
             />}
 
@@ -3505,6 +4207,19 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     </ModalFooter>
                 </Modal>
             )}
+
+            {/* Hidden file picker for the File modal's "Import" tab */}
+            <input
+                ref={jsonFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: "none" }}
+                onChange={e => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";  // allow re-importing the same file
+                    if (file) handleImportJsonFile(file);
+                }}
+            />
 
             {exportToast && (
                 <div style={{

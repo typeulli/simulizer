@@ -294,6 +294,11 @@ export type langpack = {
             block_nav_title: string,
             stat_run_time: string,
             export_cpp_menu: string,
+            download_button: string,
+            import_json_menu: string,
+            import_paste_placeholder: string,
+            import_paste_confirm: string,
+            import_error: string,
         },
         toolbox: {
             int: string,
@@ -626,6 +631,7 @@ export type langpack = {
         // wasm
         wasm_return_i32: string[],
         wasm_return_f64: string[],
+        wasm_return_struct: string[],
         wasm_func_main: string[],
     },
 
@@ -660,6 +666,17 @@ export type langpack = {
         custom_func_def_tooltip: string,
         custom_func_add_param: string,
         custom_func_remove_param: string,
+        struct_def_label: string,
+        struct_def_fields_label: string,
+        struct_def_tooltip: string,
+        struct_field_label: string,
+        struct_decl_assign_label: string,
+        struct_decl_tooltip: string,
+        struct_ref_tooltip: string,
+        struct_get_tooltip: string,
+        struct_set_tooltip: string,
+        empty_value_label: string,
+        empty_value_tooltip: string,
     },
 };
 export default langpack;

@@ -7,7 +7,7 @@ import { Modal, ModalBody } from "@/components/organisms/Modal";
 import { token } from "@/components/tokens";
 import langpack from "@/lang/lang";
 
-type BlockMode = "export" | "share";
+type BlockMode = "export" | "import" | "share";
 
 interface BlockManagerModalProps {
     open: boolean;
@@ -15,9 +15,11 @@ interface BlockManagerModalProps {
     blockData: string;
     pack: langpack;
     sharePanel?: React.ReactNode;
+    importPanel?: React.ReactNode;
     onClose: () => void;
     onModeChange: (mode: BlockMode) => void;
     onCopyToClipboard: (text: string) => void;
+    onExportJson?: () => void;
     onResetWorkspace: () => void;
 }
 
@@ -27,9 +29,11 @@ export function BlockManagerModal({
     blockData,
     pack,
     sharePanel,
+    importPanel,
     onClose,
     onModeChange,
     onCopyToClipboard,
+    onExportJson,
     onResetWorkspace,
 }: BlockManagerModalProps) {
     if (!open) return null;
@@ -37,6 +41,9 @@ export function BlockManagerModal({
     const tabs: { mode: BlockMode; label: string; icon: React.ReactNode }[] = [
         { mode: "export", label: pack.workspace.ui.export_button, icon: <Icon.File size={11} /> },
     ];
+    if (importPanel) {
+        tabs.push({ mode: "import", label: pack.workspace.ui.import_button, icon: <Icon.Upload size={11} /> });
+    }
     if (sharePanel) {
         tabs.push({ mode: "share", label: pack.workspace.ui.share_button, icon: <Icon.Globe size={11} /> });
     }
@@ -65,12 +72,21 @@ export function BlockManagerModal({
                     <>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderBottom: `1px solid ${token.color.border}`, flexShrink: 0 }}>
                             <Button variant="ghost" size="sm" leading={<Icon.Check size={11} />} onClick={() => onCopyToClipboard(blockData)}>{pack.workspace.ui.copy_button}</Button>
+                            {onExportJson && (
+                                <Button variant="ghost" size="sm" leading={<Icon.Download size={11} />} onClick={onExportJson}>{pack.workspace.ui.download_button}</Button>
+                            )}
                             <div style={{ marginLeft: "auto" }}>
                                 <Button variant="danger" size="sm" onClick={onResetWorkspace}>{pack.workspace.ui.reset_button}</Button>
                             </div>
                         </div>
                         <pre style={{ overflow: "auto", flex: 1, margin: 0, padding: "16px", fontSize: token.font.size.fs11, color: token.color.fgMuted, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-all", fontFamily: token.font.family.mono, background: token.color.bgCanvas, minHeight: 300 }}>{blockData}</pre>
                     </>
+                )}
+
+                {mode === "import" && importPanel && (
+                    <div style={{ padding: token.space.sp4, minHeight: 300 }}>
+                        {importPanel}
+                    </div>
                 )}
 
                 {mode === "share" && sharePanel && (

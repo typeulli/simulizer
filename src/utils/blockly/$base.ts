@@ -140,6 +140,16 @@ export interface CompileCtx {
     }>;
     bd2Arrays?:       Map<string, { offset: number; count: number }>;
     bd3Arrays?:       Map<string, { offset: number; count: number }>;
+    // Shadow stack for structs: when a function allocates/copies structs it gets
+    // a per-invocation frame (so recursion works and structs pass by value).
+    structStack?: {
+        fp:        simulizer.Local;   // frame pointer ($__fp)
+        spSave:    simulizer.Local;   // caller's stack pointer ($__sp_save)
+        spGlobal:  simulizer.Global;  // module stack pointer ($__sp)
+        offset:    number;            // bump offset within the frame
+        retTmpI32?: simulizer.Local;
+        retTmpF64?: simulizer.Local;
+    };
     breakStack:       string[];
     blockToExpr:      (block: Blockly.Block | null, ctx: CompileCtx) => simulizer.Expr | null;
     stmtBlockToExpr:  (block: Blockly.Block       , ctx: CompileCtx) => simulizer.Expr | null;

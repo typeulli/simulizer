@@ -288,7 +288,12 @@
       "build_os_aria": "빌드 대상 OS 선택",
       "block_nav_title": "클릭하여 관련 블록으로 이동",
       "stat_run_time": "실행 시간",
-      "export_cpp_menu": "C++ 파일로 내보내기"
+      "export_cpp_menu": "C++ 파일로 내보내기",
+      "download_button": "다운로드",
+      "import_json_menu": "JSON 파일에서 불러오기",
+      "import_paste_placeholder": "워크스페이스 JSON을 여기에 붙여넣으세요…",
+      "import_paste_confirm": "불러오기",
+      "import_error": "유효하지 않은 워크스페이스 JSON입니다."
     },
     "toolbox": {
       "int": "정수",
@@ -301,7 +306,7 @@
       "vector": "벡터",
       "debug": "디버그",
       "boundary": "경계 데이터",
-      "cast": "타입 변환",
+      "cast": "타입",
       "func": "함수",
       "func_btn": "⊕ 커스텀 함수 관리",
       "boundary_btn": "⊕ 경계 데이터 관리",
@@ -851,6 +856,9 @@
     "wasm_return_f64": [
       "반환 실수 %1"
     ],
+    "wasm_return_struct": [
+      "반환 struct %1"
+    ],
     "wasm_func_main": [
       "함수 main → %1",
       "본문 %1"
@@ -897,6 +905,17 @@
     "custom_func_def_param_label": "매개변수",
     "custom_func_def_tooltip": "커스텀 함수 (우클릭으로 파라미터 추가/삭제)",
     "custom_func_add_param": "파라미터 추가",
-    "custom_func_remove_param": "파라미터 삭제"
+    "custom_func_remove_param": "파라미터 삭제",
+    "struct_def_label": "struct",
+    "struct_def_fields_label": "필드",
+    "struct_def_tooltip": "struct 정의 — 안에 필드 블록을 쌓으세요",
+    "struct_field_label": "필드",
+    "struct_decl_assign_label": "←",
+    "struct_decl_tooltip": "struct 변수 선언 (struct 값으로 초기화 가능)",
+    "struct_ref_tooltip": "struct 값",
+    "struct_get_tooltip": "struct 필드 읽기",
+    "struct_set_tooltip": "struct 필드 쓰기",
+    "empty_value_label": "빈 값",
+    "empty_value_tooltip": "선택한 타입의 기본/빈 값"
   }
 }
