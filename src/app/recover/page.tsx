@@ -5,13 +5,12 @@ import { useRouter } from "next/navigation";
 import { token } from "@/components/tokens";
 import { Button } from "@/components/atoms/Button";
 import { Logo } from "@/components/atoms/Logo";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 import { type RecoveryUserOut, getRecoveryUser, confirmRecover, cancelRecover } from "@/lib/authapi";
 
 export default function RecoverPage() {
     const router = useRouter();
-    const [, , pack] = useLanguagePack();
-    const t = pack.recover;
+    const t = useTranslations("recover");
 
     const [user, setUser] = useState<RecoveryUserOut | null>(null);
     const [loading, setLoading] = useState(true);
@@ -44,7 +43,7 @@ export default function RecoverPage() {
             await cancelRecover();
             router.replace("/login");
         } catch {
-            setCancelError(t.cancel_error);
+            setCancelError(t("cancel_error"));
             setCancelling(false);
         }
     }
@@ -111,20 +110,20 @@ export default function RecoverPage() {
                         borderRadius: token.radius.md, fontSize: token.font.size.fs12,
                         color: token.color.danger, textAlign: "center", lineHeight: 1.6,
                     }}>
-                        {t.deleted_badge}
+                        {t("deleted_badge")}
                         <br />
                         <span style={{ fontWeight: 600 }}>
-                            {t.days_remaining.replace("{n}", String(user.days_remaining))}
+                            {t("days_remaining", { n: user.days_remaining })}
                         </span>
                     </div>
 
                     <div style={{ textAlign: "center", fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.6 }}>
-                        {t.question}<br />{t.question_sub}
+                        {t("question")}<br />{t("question_sub")}
                     </div>
 
                     {/* Recover button */}
                     <Button variant="primary" onClick={handleRecover} disabled={busy} style={{ width: "100%" }}>
-                        {confirming ? t.recovering_button : t.recover_button}
+                        {confirming ? t("recovering_button") : t("recover_button")}
                     </Button>
 
                     {/* Cancel / hard delete */}
@@ -138,7 +137,7 @@ export default function RecoverPage() {
                                 textDecoration: "underline", padding: 0,
                             }}
                         >
-                            {t.cancel_link}
+                            {t("cancel_link")}
                         </button>
                     ) : (
                         <div style={{
@@ -147,7 +146,7 @@ export default function RecoverPage() {
                             background: token.color.dangerSoft, display: "flex", flexDirection: "column", gap: token.space.sp3,
                         }}>
                             <div style={{ fontSize: token.font.size.fs12, color: token.color.danger, fontWeight: 600 }}>
-                                {t.cancel_confirm}
+                                {t("cancel_confirm")}
                             </div>
                             {cancelError && (
                                 <div style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>
@@ -156,10 +155,10 @@ export default function RecoverPage() {
                             )}
                             <div style={{ display: "flex", gap: token.space.sp2 }}>
                                 <Button variant="danger" size="sm" disabled={busy} onClick={handleCancel}>
-                                    {cancelling ? t.deleting_button : t.delete_now_button}
+                                    {cancelling ? t("deleting_button") : t("delete_now_button")}
                                 </Button>
                                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => setShowCancelConfirm(false)}>
-                                    {t.cancel_button}
+                                    {t("cancel_button")}
                                 </Button>
                             </div>
                         </div>

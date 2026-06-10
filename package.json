@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "build:lib": "node src/lib/treediff/build.js && node src/lib/bctool2d/build.js && node src/lib/bctool3d/build.js",
-    "build:dist": "node esbuild.console.mjs --minify"
+    "build:dist": "node esbuild.console.mjs --minify",
+    "gen:i18n-schema": "ts-json-schema-generator --path src/lang/lang.ts --type langpack --out messages/messages.schema.json"
   },
   "dependencies": {
     "@codingame/monaco-vscode-api": "^25.1.2",
@@ -38,6 +39,7 @@
     "monaco-languageclient": "^10.7.0",
     "moo": "^0.5.3",
     "next": "16.2.3",
+    "next-intl": "^4.13.0",
     "plotly.js-dist-min": "^3.5.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -59,6 +61,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "esbuild": "^0.28.0",
     "tailwindcss": "^4",
+    "ts-json-schema-generator": "^2.9.0",
     "typescript": "^5"
   }
 }

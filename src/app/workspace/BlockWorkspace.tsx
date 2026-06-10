@@ -40,7 +40,7 @@ import { ErrorModal } from "@/components/workspace-modals/ErrorModal";
 import { LatexOcrModal } from "@/components/workspace-modals/LatexOcrModal";
 
 import { useConsolePanel } from "@/components/console";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useLocale, useMessages } from "next-intl";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import langpack from "@/lang/lang";
 import { xmlF64Blocks } from "@/utils/blockly/f64";
@@ -492,7 +492,7 @@ function registerCallBlock(spec: CustomFuncSpec) {
             else { this.setPreviousStatement(true); this.setNextStatement(true); }
             this.setColour(290);
             this.setInputsInline(params.length <= 2);
-            this.setTooltip((_langPack?.workspace.blocks.custom_func_call_tooltip ?? "call $0").replace("$0", name));
+            this.setTooltip((_langPack?.workspace.blocks.custom_func_call_tooltip ?? "call {0}").replace("{0}", name));
         },
     };
 }
@@ -1212,7 +1212,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             },
             onerror(err) {
                 if ((err as Error)?.name !== "AbortError") {
-                    setChatOutput(prev => prev + "\n\n" + pack.workspace.ai.error_prefix.replace("$0", err instanceof Error ? err.message : String(err)));
+                    setChatOutput(prev => prev + "\n\n" + pack.workspace.ai.error_prefix.replace("{0}", err instanceof Error ? err.message : String(err)));
                 }
                 setChatStreaming(false);
                 throw err; // fetchEventSource 재시도 방지
@@ -1226,7 +1226,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [showBlocks, setShowBlocks] = useState(false);
     const [blockData, setBlockData]   = useState<string>("");
     const [blockMode, setBlockMode]   = useState<"export" | "share">("export");
-    const [lang, , pack, langReady]   = useLanguagePack();
+    const lang = useLocale();
+    const pack = useMessages();
+    const langReady = true;
 
     const [fileId, setFileId]       = useState<string | null>(null);
     const [fileName, setFileName]   = useState<string>("");
@@ -1287,9 +1289,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             }
             setExportCppOpen(false);
             const href = `/workspace?file=${created!.id}`;
-            showExportToast(pack.workspace.logs.export_created.replace("$0", candidate), href);
+            showExportToast(pack.workspace.logs.export_created.replace("{0}", candidate), href);
         } catch (err) {
-            showExportToast(pack.workspace.logs.export_failed.replace("$0", err instanceof Error ? err.message : String(err)));
+            showExportToast(pack.workspace.logs.export_failed.replace("{0}", err instanceof Error ? err.message : String(err)));
         } finally {
             setExporting(false);
         }
@@ -1398,7 +1400,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
         if (msg.type === "result") {
             setResult(msg.value);
-            currentAddLog("success", (_langPack?.workspace.logs.result_value ?? "🎉 Result: $0").replace("$0", String(msg.value)));
+            currentAddLog("success", (_langPack?.workspace.logs.result_value ?? "🎉 Result: {0}").replace("{0}", String(msg.value)));
             return;
         }
 
@@ -1417,7 +1419,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (pendingBackendSwitchRef.current) {
                 setTfBackend(pendingBackendSwitchRef.current.previous);
                 pendingBackendSwitchRef.current = null;
-                currentAddLog("error", currentPack.workspace.logs.error_prefix.replace("$0", msg.message));
+                currentAddLog("error", currentPack.workspace.logs.error_prefix.replace("{0}", msg.message));
                 return;
             }
 
@@ -1431,7 +1433,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 return;
             }
 
-            currentAddLog("error", currentPack.workspace.logs.error_prefix.replace("$0", msg.message));
+            currentAddLog("error", currentPack.workspace.logs.error_prefix.replace("{0}", msg.message));
         }
     }, []);
 
@@ -1444,7 +1446,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             return;
         }
 
-        currentAddLog("error", currentPack.workspace.logs.worker_error.replace("$0", e.message));
+        currentAddLog("error", currentPack.workspace.logs.worker_error.replace("{0}", e.message));
     }, []);
 
     const createWasmWorker = useCallback(() => {
@@ -1559,7 +1561,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     entries.push({
                         level: "error",
                         kind: "duplicate_decl",
-                        message: pack.workspace.infos.var_redeclared.replace("$0", name).replace("$1", String(bucket.length)),
+                        message: pack.workspace.infos.var_redeclared.replace("{0}", name).replace("{1}", String(bucket.length)),
                         blockId: bucket[1].blockId,
                     });
                 }
@@ -2055,17 +2057,17 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
         addLog("info",
             pack.workspace.logs.ast_complete
-                .replace("$0", func.ret_type.name)
-                .replace("$1", String(func.locals.length))
+                .replace("{0}", func.ret_type.name)
+                .replace("{1}", String(func.locals.length))
                 .replace("$2", String(func.body.length))
         );
 
         for (const spec of funcSpecs) {
             const defBlock = ws.getAllBlocks(false).find(b => b.type === "custom_func_def" && funcIdOf(b.id) === spec.id);
-            if (!defBlock) { addLog("error", pack.workspace.logs.func_block_not_found.replace("$0", spec.name)); continue; }
+            if (!defBlock) { addLog("error", pack.workspace.logs.func_block_not_found.replace("{0}", spec.name)); continue; }
             const customFunc = buildCustomFunc(defBlock, spec, mod);
             mod.add_func(customFunc);
-            addLog("info", pack.workspace.logs.func_compile_complete.replace("$0", spec.name));
+            addLog("info", pack.workspace.logs.func_compile_complete.replace("{0}", spec.name));
         }
 
         const allImports: simulizer.ImportDef[] = [
@@ -2207,7 +2209,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             addLog("info", pack.workspace.logs.wat_compiling);
             setRunState("running");
             const wasm = await mod.generate_wasm();
-            addLog("info", pack.workspace.logs.wasm_complete.replace("$0", String(wasm.byteLength)));
+            addLog("info", pack.workspace.logs.wasm_complete.replace("{0}", String(wasm.byteLength)));
 
             addLog("info", pack.workspace.logs.running_worker);
             setRunState("running");
@@ -2221,7 +2223,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             });
         } catch (err) {
             if ((err as Error).name !== "AbortError") {
-                addLog("error", pack.workspace.logs.error_prefix.replace("$0", err instanceof Error ? err.message : String(err)));
+                addLog("error", pack.workspace.logs.error_prefix.replace("{0}", err instanceof Error ? err.message : String(err)));
                 setRunState("error");
             }
             console.error(err);
@@ -2389,7 +2391,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const name = newBd2Name.trim() || file.name.replace(/\.bin$/i, "");
         if (!name) { alert(pack.workspace.alerts.name_required); return; }
         if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert(pack.workspace.alerts.name_charset); return; }
-        if (bd2ArraysRef.current.some(b => b.name === name)) { alert(pack.workspace.alerts.name_in_use.replace("$0", name)); return; }
+        if (bd2ArraysRef.current.some(b => b.name === name)) { alert(pack.workspace.alerts.name_in_use.replace("{0}", name)); return; }
         const reader = new FileReader();
         reader.onload = (ev) => {
             const buf = ev.target?.result as ArrayBuffer;
@@ -2430,7 +2432,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             } else {
                 // Legacy interleaved format: 56 bytes per element
                 if (buf.byteLength % BD2_ELEM_BYTES !== 0) {
-                    alert(pack.workspace.alerts.file_size_invalid.replace("$0", "56").replace("$1", String(buf.byteLength)));
+                    alert(pack.workspace.alerts.file_size_invalid.replace("{0}", "56").replace("{1}", String(buf.byteLength)));
                     return;
                 }
                 count = buf.byteLength / BD2_ELEM_BYTES;
@@ -2460,7 +2462,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const name = newBd3Name.trim() || file.name.replace(/\.bin$/i, "");
         if (!name) { alert(pack.workspace.alerts.name_required); return; }
         if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert(pack.workspace.alerts.name_charset); return; }
-        if (bd3ArraysRef.current.some(b => b.name === name)) { alert(pack.workspace.alerts.name_in_use.replace("$0", name)); return; }
+        if (bd3ArraysRef.current.some(b => b.name === name)) { alert(pack.workspace.alerts.name_in_use.replace("{0}", name)); return; }
         const reader = new FileReader();
         reader.onload = (ev) => {
             const buf = ev.target?.result as ArrayBuffer;
@@ -2496,7 +2498,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 data = new Float64Array(points);
             } else {
                 if (buf.byteLength % BD3_ELEM_BYTES !== 0) {
-                    alert(pack.workspace.alerts.file_size_invalid.replace("$0", "72").replace("$1", String(buf.byteLength)));
+                    alert(pack.workspace.alerts.file_size_invalid.replace("{0}", "72").replace("{1}", String(buf.byteLength)));
                     return;
                 }
                 data = new Float64Array(buf.slice(0));
@@ -3479,7 +3481,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     </ModalHeader>
                     <ModalBody>
                         <p style={{ margin: 0, fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.55 }}>
-                            {pack.workspace.exportCpp.desc_pre}<b>{pack.workspace.exportCpp.desc_bold}</b>{pack.workspace.exportCpp.desc_post.replace("$0", `('${fileName || "untitled"} (C++)')`)}
+                            {pack.workspace.exportCpp.desc_pre}<b>{pack.workspace.exportCpp.desc_bold}</b>{pack.workspace.exportCpp.desc_post.replace("{0}", `('${fileName || "untitled"} (C++)')`)}
                         </p>
                         <ul style={{ margin: `${token.space.sp3} 0 0 ${token.space.sp4}`, padding: 0, fontSize: token.font.size.fs12, color: token.color.fgSubtle, lineHeight: 1.7 }}>
                             <li>{pack.workspace.exportCpp.bullet1}</li>

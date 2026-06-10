@@ -7,7 +7,7 @@ import { Icon } from "@/components/atoms/Icons";
 import { Divider } from "@/components/atoms/Divider";
 import { useTheme } from "@/hooks/useTheme";
 import { useUser } from "@/hooks/useAuth";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 import { logout } from "@/lib/authapi";
 
 interface UserMenuDropdownProps {
@@ -19,8 +19,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({ onClose, ali
     const { theme, toggleTheme } = useTheme();
     const { user } = useUser();
     const router = useRouter();
-    const [, , pack] = useLanguagePack();
-    const t = pack.topbar;
+    const t = useTranslations("topbar");
 
     async function handleLogout() {
         onClose();
@@ -72,7 +71,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({ onClose, ali
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                 >
                     <Icon.Zap size={14} />
-                    <span>{t.home}</span>
+                    <span>{t("home")}</span>
                 </button>
 
                 <button style={menuBtn}
@@ -81,7 +80,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({ onClose, ali
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                 >
                     <Icon.Book size={14} />
-                    <span>{t.my_drafts}</span>
+                    <span>{t("my_drafts")}</span>
                 </button>
 
                 <Divider style={{ margin: "4px 0", opacity: 0.5 }} />
@@ -95,7 +94,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({ onClose, ali
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: token.color.fgMuted }}>
                         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                     </svg>
-                    <span>{t.account}</span>
+                    <span>{t("account")}</span>
                 </button>
 
                 <button style={menuBtn}
@@ -104,7 +103,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({ onClose, ali
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                 >
                     <Icon.Settings size={14} />
-                    <span>{t.settings}</span>
+                    <span>{t("settings")}</span>
                 </button>
 
                 <button style={menuBtn}
@@ -113,7 +112,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({ onClose, ali
                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                 >
                     {theme === "dark" ? <Icon.Sun size={14} /> : <Icon.Moon size={14} />}
-                    <span>{theme === "dark" ? t.light_mode : t.dark_mode}</span>
+                    <span>{theme === "dark" ? t("light_mode") : t("dark_mode")}</span>
                 </button>
 
                 <Divider style={{ margin: "4px 0", opacity: 0.5 }} />
@@ -127,7 +126,7 @@ export const UserMenuDropdown: React.FC<UserMenuDropdownProps> = ({ onClose, ali
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
-                    <span>{t.log_out}</span>
+                    <span>{t("log_out")}</span>
                 </button>
             </div>
         </>

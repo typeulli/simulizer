@@ -10,7 +10,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 
 import { useTheme } from "@/hooks/useTheme";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useLocale, useMessages } from "next-intl";
+import { setLocaleCookie } from "@/i18n/setLocale";
 import type langpack from "@/lang/lang";
 
 import { Topbar } from "@/components/organisms/Toolbar";
@@ -161,12 +162,13 @@ function BlockBodyLine({ body, types }: { body: AnyBody; types: langpack["types"
 
 export function BlockReference() {
     const { theme, toggleTheme } = useTheme();
-    const [lang, , pack] = useLanguagePack();
+    const lang = useLocale();
+    const pack = useMessages();
     const [query, setQuery] = useState("");
 
     function toggleLang() {
         const next = lang === "ko" ? "en" : "ko";
-        localStorage.setItem("language", next);
+        setLocaleCookie(next);
         window.location.reload();
     }
 

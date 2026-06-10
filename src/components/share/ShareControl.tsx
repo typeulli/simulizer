@@ -5,7 +5,7 @@ import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icons";
 import { setFileVisibility, type FileOut, type FileVisibility } from "@/lib/authapi";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 
 export interface ShareControlProps {
     file: FileOut;
@@ -129,8 +129,7 @@ function OptionRow({ selected, disabled, icon, title, desc, onClick }: OptionRow
 }
 
 export function ShareControl({ file, onChange }: ShareControlProps) {
-    const [, , pack] = useLanguagePack();
-    const t = pack.workspace.ui;
+    const t = useTranslations("workspace.ui");
     const visibility = (file.visibility === "link" ? "link" : "private") as FileVisibility;
     const [pending, setPending] = useState<FileVisibility | null>(null);
     const [copied, setCopied] = useState(false);
@@ -169,16 +168,16 @@ export function ShareControl({ file, onChange }: ShareControlProps) {
                     selected={visibility === "private"}
                     disabled={pending !== null}
                     icon={pending === "private" ? <Spinner size="sm" /> : <LockIcon size={14} />}
-                    title={t.share_state_private}
-                    desc={t.share_state_private_desc}
+                    title={t("share_state_private")}
+                    desc={t("share_state_private_desc")}
                     onClick={() => handleVisibility("private")}
                 />
                 <OptionRow
                     selected={visibility === "link"}
                     disabled={pending !== null}
                     icon={pending === "link" ? <Spinner size="sm" /> : <Icon.Globe size={14} />}
-                    title={t.share_state_link}
-                    desc={t.share_state_link_desc}
+                    title={t("share_state_link")}
+                    desc={t("share_state_link_desc")}
                     onClick={() => handleVisibility("link")}
                 />
             </div>
@@ -228,7 +227,7 @@ export function ShareControl({ file, onChange }: ShareControlProps) {
                             padding: `${token.space.sp25} ${token.space.sp3}`,
                         }}
                     >
-                        {copied ? t.share_link_copied : t.share_copy_link}
+                        {copied ? t("share_link_copied") : t("share_copy_link")}
                     </Button>
                 </div>
             )}

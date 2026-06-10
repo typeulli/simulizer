@@ -4,12 +4,11 @@ import { useRouter } from "next/navigation";
 
 import { Logo } from "@/components/atoms/Logo";
 import { token } from "@/components/tokens";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 
 export default function NotFound() {
     const router = useRouter();
-    const [, , pack] = useLanguagePack();
-    const t = pack.not_found;
+    const t = useTranslations("not_found");
 
     return (
         <div style={{
@@ -30,14 +29,14 @@ export default function NotFound() {
                     WebkitTextFillColor: "transparent",
                     backgroundClip: "text",
                 }}>
-                    {t.code}
+                    {t("code")}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
                     <div style={{ fontSize: token.font.size.fs20, fontWeight: 700, color: token.color.fgStrong, letterSpacing: token.font.tracking.tight }}>
-                        {t.title}
+                        {t("title")}
                     </div>
                     <div style={{ fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.6 }}>
-                        {t.desc}
+                        {t("desc")}
                     </div>
                 </div>
                 <div style={{ display: "flex", gap: token.space.sp2 }}>
@@ -45,13 +44,13 @@ export default function NotFound() {
                         onClick={() => router.back()}
                         style={{ padding: "8px 20px", borderRadius: token.radius.md, background: "transparent", color: token.color.fg, fontWeight: 600, fontSize: token.font.size.fs13, border: `1px solid ${token.color.border}`, cursor: "pointer" }}
                     >
-                        {t.go_back}
+                        {t("go_back")}
                     </button>
                     <button
                         onClick={() => router.replace("/")}
                         style={{ padding: "8px 20px", borderRadius: token.radius.md, background: token.color.accent, color: token.color.fgOnAccent, fontWeight: 600, fontSize: token.font.size.fs13, border: "none", cursor: "pointer" }}
                     >
-                        {t.go_home}
+                        {t("go_home")}
                     </button>
                 </div>
             </div>

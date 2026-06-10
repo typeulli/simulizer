@@ -6,7 +6,9 @@ import { token } from "@/components/tokens";
 import { Icon } from "@/components/atoms/Icons";
 import { Button } from "@/components/atoms/Button";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
+import { isLocale } from "@/i18n/locales";
+import { clearLocaleCookie, readLocaleCookie, setLocaleCookie } from "@/i18n/setLocale";
 import { useAuth } from "@/hooks/useAuth";
 
 
@@ -15,19 +17,15 @@ const LANGUAGES = [
   { code: "ko", name: "Korean", nativeName: "한국어", flag: "🇰🇷" },
 ];
 
-const LS_LANG_KEY = "language";
-
 export default function SettingPage() {
   useAuth();
   const router = useRouter();
-  const [, , pack] = useLanguagePack();
-  const t = pack.setting;
+  const t = useTranslations("setting");
 
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem(LS_LANG_KEY);
-    setSelected(stored ?? "auto");
+    setSelected(readLocaleCookie() ?? "auto");
   }, []);
 
   function handleSelect(code: string) {
@@ -37,9 +35,9 @@ export default function SettingPage() {
   function handleSave() {
     if (!selected) return;
     if (selected === "auto") {
-      localStorage.removeItem(LS_LANG_KEY);
-    } else {
-      localStorage.setItem(LS_LANG_KEY, selected);
+      clearLocaleCookie();
+    } else if (isLocale(selected)) {
+      setLocaleCookie(selected);
     }
     window.location.reload();
   }
@@ -79,14 +77,14 @@ export default function SettingPage() {
             fontFamily: token.font.family.mono
           }}>
             <Icon.Settings size={12} />
-            <span>{t.breadcrumb}</span>
+            <span>{t("breadcrumb")}</span>
           </div>
         </div>
 
         {/* Center: Section Title */}
         <div style={{ display: "flex", justifyContent: "center" }}>
           <span style={{ fontSize: 12, fontWeight: 500, color: token.color.fgSubtle, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            {t.header_title}
+            {t("header_title")}
           </span>
         </div>
 
@@ -117,7 +115,7 @@ export default function SettingPage() {
               e.currentTarget.style.background = token.color.bgSubtle;
             }}
           >
-            <span>{t.back}</span>
+            <span>{t("back")}</span>
           </button>
         </div>
       </header>
@@ -140,7 +138,7 @@ export default function SettingPage() {
               color: token.color.fgStrong,
               letterSpacing: token.font.tracking.tight,
             }}>
-              {t.section_title}
+              {t("section_title")}
             </h1>
             <p style={{
               margin: `${token.space.sp2} 0 0`,
@@ -148,7 +146,7 @@ export default function SettingPage() {
               color: token.color.fgMuted,
               lineHeight: token.font.lineHeight.relaxed,
             }}>
-              {t.section_desc}
+              {t("section_desc")}
             </p>
           </div>
 
@@ -157,8 +155,8 @@ export default function SettingPage() {
             <LanguageOption
               code="auto"
               flag="🌐"
-              label={t.auto_detect}
-              sublabel={t.auto_detect_sub}
+              label={t("auto_detect")}
+              sublabel={t("auto_detect_sub")}
               selected={selected === "auto"}
               onSelect={handleSelect}
             />
@@ -213,7 +211,7 @@ export default function SettingPage() {
                 e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.2)";
               }}
             >
-              {t.save_button}
+              {t("save_button")}
             </Button>
           </div>
 

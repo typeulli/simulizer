@@ -1,0 +1,1023 @@
+{
+  "meta": {
+    "langc": "en",
+    "name": "English"
+  },
+  "types": {
+    "i32": "int",
+    "f64": "float",
+    "bool": "bool",
+    "vec2": "vec2",
+    "vec3": "vec3",
+    "bd2": "bd2",
+    "bd3": "bd3",
+    "void": "void"
+  },
+  "topbar": {
+    "home": "Home",
+    "my_drafts": "My Drafts",
+    "account": "Account",
+    "dark_mode": "Dark mode",
+    "light_mode": "Light mode",
+    "settings": "Settings",
+    "log_out": "Log out"
+  },
+  "messages": {
+    "welcome": "Welcome",
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "alert_title": "Notice",
+    "warning_title": "Warning",
+    "error_title": "Error",
+    "ok_button": "OK",
+    "command_search_placeholder": "Search files…   ( \"$\" for commands )"
+  },
+  "home": {
+    "nav_docs": "Docs",
+    "nav_examples": "Examples",
+    "nav_github": "GitHub",
+    "nav_dashboard": "Dashboard",
+    "nav_login": "Log in",
+    "hero_badge": "WebAssembly · TensorFlow.js · Physics simulation",
+    "hero_title_pre": "No code required.",
+    "hero_title_gradient": "Simulate physics",
+    "hero_title_post": " your way.",
+    "hero_body": "Snap blocks together and they compile to WebAssembly right in your browser — near-native speed, no installation, no syntax to learn.",
+    "cta_dashboard": "Go to dashboard",
+    "cta_start": "Start for free",
+    "cta_guide": "Read Docs",
+    "stat_pipeline_label": "Pipeline",
+    "stat_pipeline_value": "3 steps",
+    "stat_pipeline_sub": "Blocks → AST → WASM",
+    "stat_gpu_label": "GPU acceleration",
+    "stat_gpu_value": "WebGPU",
+    "stat_gpu_sub": "Auto TensorFlow.js backend",
+    "stat_local_label": "Local execution",
+    "stat_local_value": "Offline",
+    "stat_local_sub": "Nothing sent to a server",
+    "feature_blocks_title": "Familiar blocks",
+    "feature_blocks_body_pre": "Instead of i32/f64: ",
+    "feature_blocks_body_bold": "integers, decimals, and matrices",
+    "feature_blocks_body_post": ". The language physicists know.",
+    "feature_speed_title": "Native speed",
+    "feature_speed_body_pre": "Compiled to ",
+    "feature_speed_body_bold": "WebAssembly",
+    "feature_speed_body_post": " right in the browser. Millions of iterations in an instant.",
+    "feature_ai_title": "AI co-pilot",
+    "feature_ai_body_pre": "Describe in natural language and a block program is ",
+    "feature_ai_body_bold": "auto-generated",
+    "feature_ai_body_post": " for you.",
+    "footer_copy": "© 2026 Simulizer · AGPL-3.0",
+    "footer_mode": "Research mode"
+  },
+  "docs": {
+    "open_in_workspace": "Open in workspace"
+  },
+  "login": {
+    "left_title_1": "Physics simulation",
+    "left_title_2": "built with blocks",
+    "left_body": "Design physics simulations with block-based programming — no code required. Compile and run with WebAssembly.",
+    "left_feature_1": "Visual programming with Blockly",
+    "left_feature_2": "Real-time WebAssembly compile & run",
+    "left_feature_3": "Vector field & boundary condition visualization",
+    "left_feature_4": "Integrated AI assistant",
+    "right_title": "Get started",
+    "right_subtitle": "Sign in with your Google account.",
+    "account_deleted_msg": "Your account has been deleted. Thank you for using Simulizer.",
+    "error_oauth_denied": "Login was cancelled.",
+    "error_oauth_failed": "An error occurred during Google login.",
+    "google_button": "Sign in with Google"
+  },
+  "dashboard": {
+    "header_title": "My files",
+    "section_title": "{name}'s files",
+    "new_file_button": "New file",
+    "empty_title": "No files yet",
+    "empty_desc": "Create a new file to get started.",
+    "empty_new_file_button": "Create new file",
+    "card_updated": "Updated {date}",
+    "menu_open": "Open",
+    "menu_rename": "Rename",
+    "menu_duplicate": "Duplicate",
+    "menu_share": "Share",
+    "menu_delete": "Delete",
+    "rename_conflict": "A file with that name already exists.",
+    "badge_link_shared": "Link share",
+    "new_file_type_block_title": "Block File",
+    "new_file_type_block_desc": "Build simulations with blocks.",
+    "new_file_type_clang_title": "C++ File",
+    "new_file_type_clang_desc": "Write C++ code directly.",
+    "new_file_type_import_title": "Import",
+    "new_file_type_import_desc": "Import from a .simulizer / .json / .cpp file.",
+    "badge_clangfile": "C++",
+    "menu_duplicate_cpp": "Duplicate as C++ file",
+    "duplicate_cpp_failed": "Could not duplicate as C++ file",
+    "import_failed": "Could not import the file",
+    "import_unsupported_ext": "Unsupported file extension",
+    "menu_set_thumbnail": "Change thumbnail",
+    "thumbnail_upload_failed": "Failed to upload thumbnail",
+    "thumbnail_not_image": "Only image files are allowed",
+    "thumbnail_too_large": "Thumbnail must be 2 MB or less",
+    "thumbnail_modal_title": "Set thumbnail image",
+    "thumbnail_dropzone_idle": "Click to choose a file, or drop one here",
+    "thumbnail_dropzone_hint": "PNG · JPG · WebP · 2 MB or less",
+    "thumbnail_recommended_size": "Recommended size: about {w} × {h}px",
+    "thumbnail_uploading": "Uploading…",
+    "thumbnail_reset_button": "Reset to default",
+    "thumbnail_reset_failed": "Could not reset thumbnail"
+  },
+  "account": {
+    "breadcrumb": "Account",
+    "header_title": "Account",
+    "row_name": "Name",
+    "row_email": "Email",
+    "row_joined": "Joined",
+    "row_last_login": "Last login",
+    "google_badge": "Connected via Google",
+    "danger_title": "Danger Zone",
+    "danger_desc": "Deleting your account removes all files and data. After 30 days it cannot be undone.",
+    "delete_button": "Delete Account",
+    "confirm_title": "You must sign in with Google again to verify your identity.",
+    "confirm_desc": "After signing in, your account and all files will be deleted immediately.",
+    "confirm_button": "Verify with Google and delete",
+    "deleting_button": "Deleting...",
+    "delete_error": "Failed to delete account. Please try again.",
+    "cancel_button": "Cancel"
+  },
+  "recover": {
+    "deleted_badge": "This account has been deleted.",
+    "days_remaining": "All data will be permanently deleted in {n} days.",
+    "question": "Would you like to recover your account?",
+    "question_sub": "Recovering will restore all your files.",
+    "recover_button": "Recover account",
+    "recovering_button": "Recovering...",
+    "cancel_link": "Proceed with deletion",
+    "cancel_confirm": "Deleting now will permanently erase all files immediately.",
+    "delete_now_button": "Delete now",
+    "deleting_button": "Deleting...",
+    "cancel_error": "Failed to delete. Please try again.",
+    "cancel_button": "Cancel"
+  },
+  "setting": {
+    "breadcrumb": "Settings",
+    "header_title": "Global Preferences",
+    "back": "Back",
+    "section_title": "Language",
+    "section_desc": "Choose the display language for the Simulizer interface.",
+    "auto_detect": "Auto-detect",
+    "auto_detect_sub": "Match your browser language",
+    "save_button": "Save Changes",
+    "saved_button": "✓ Saved",
+    "reload_hint": "Reload the page after saving to apply the new language."
+  },
+  "file_error": {
+    "not_found_title": "Unable to load file",
+    "not_found_desc": "We couldn't load this file. It may have been deleted or the link is invalid.",
+    "forbidden_title": "Access denied",
+    "forbidden_desc": "You don't have permission to access this file. Try asking the owner for access.",
+    "go_dashboard": "Go to Dashboard"
+  },
+  "not_found": {
+    "code": "404",
+    "title": "Page not found",
+    "desc": "The page you're looking for doesn't exist or has been moved.",
+    "go_home": "Go to Home",
+    "go_back": "Go back"
+  },
+  "boundary": {
+    "no_data_error": "No data to run.",
+    "breadcrumb_2d": "Boundary 2D",
+    "breadcrumb_3d": "Boundary 3D"
+  },
+  "workspace": {
+    "compile": {
+      "block_to_ast": "📦 Block → simulizer AST conversion in progress..."
+    },
+    "blocks": {
+      "not": "! {0}",
+      "not_tooltip": "Logical NOT (eqz)",
+      "return_i32": "return int {0}",
+      "return_i32_tooltip": "int return",
+      "return_f64": "return float {0}",
+      "return_f64_tooltip": "float return",
+      "func_main": "function main → {0}",
+      "func_main_body": "body {0}",
+      "func_main_tooltip": "WebAssembly main function",
+      "custom_func_tooltip": "User-defined function: {0}",
+      "custom_func_call_tooltip": "{0} function call"
+    },
+    "ui": {
+      "header_title": "Blocky Simulation",
+      "run_button_running": "⏳ Running...",
+      "run_button": "Compile & Run",
+      "wat_button": "📄 WAT",
+      "blocks_button": "📁 File",
+      "func_button": "⊕ Functions",
+      "reset_button": "↺ Reset",
+      "backend_webgpu": "webgpu",
+      "backend_webgl": "webgl",
+      "backend_cpu": "cpu",
+      "status_waiting": "Waiting",
+      "status_converting": "Converting",
+      "status_running": "Running",
+      "status_done": "Done",
+      "status_error": "Error",
+      "result_header": "Result & Log",
+      "output_label": "Output",
+      "log_placeholder": "▶ Click the Run button to start",
+      "export_button": "Export",
+      "import_button": "Import",
+      "name_input_placeholder": "Name",
+      "save_local_button": "Save Local",
+      "save_file_button": "Save File",
+      "copy_button": "Copy",
+      "open_file_button": "Open File",
+      "apply_button": "Apply",
+      "xml_textarea_placeholder": "Paste XML or open a file...",
+      "func_mgr_title": "⊕ Custom Function Manager",
+      "func_empty_message": "No registered custom functions",
+      "call_insert_button": "insert call",
+      "delete_button": "Delete",
+      "add_func_section": "Add New Function",
+      "func_name_placeholder": "Function name",
+      "add_param_button": "+ Parameter",
+      "add_button": "Add",
+      "wat_viewer_title": "📄 Generated WAT",
+      "canvas_tab_blocks": "Block Mode",
+      "canvas_tab_wat": "WAT Mode",
+      "tools_label": "Tools",
+      "tool_boundary_2d": "Boundary 2D",
+      "tool_boundary_3d": "Boundary 3D",
+      "tool_track": "Track",
+      "console_tab": "Console",
+      "result_tab": "Result",
+      "infos_tab": "Infos",
+      "infos_empty": "Edit blocks to see information.",
+      "wat_empty": "WAT will be generated after running",
+      "backend_initializing": "Initializing backend...",
+      "backend_ready": "Ready",
+      "stat_backend": "Backend",
+      "stat_status": "Status",
+      "stat_run": "Run",
+      "stat_running": "Running...",
+      "stat_done": "Done",
+      "share_button": "Share",
+      "share_dialog_title": "Share file",
+      "share_state_private": "Private",
+      "share_state_link": "Anyone with the link",
+      "share_state_private_desc": "Only you can access this file.",
+      "share_state_link_desc": "Anyone with the link can read and copy it to their workspace.",
+      "share_copy_link": "Copy link",
+      "share_link_copied": "Copied!",
+      "share_readonly_badge": "Read only",
+      "share_duplicate_button": "Copy to my workspace",
+      "share_login_to_duplicate": "Sign in to copy this file.",
+      "const_mgr_title": "⊕ Add Constants",
+      "const_select_hint": "Select constants to add. They will be inserted as one connected block stack.",
+      "const_tab_math": "Math",
+      "const_tab_fundamental": "Fundamental",
+      "const_tab_experimental": "Experimental",
+      "const_search_placeholder": "🔍 Search by name or symbol...",
+      "const_no_results": "No results",
+      "initializing": "Initializing...",
+      "save": "Save",
+      "saving": "Saving...",
+      "save_unsaved": "Unsaved",
+      "save_failed": "Save failed",
+      "build_os_title": "Build target OS",
+      "build_os_aria": "Select build target OS",
+      "block_nav_title": "Click to jump to related block",
+      "stat_run_time": "Run time",
+      "export_cpp_menu": "Export as C++ file"
+    },
+    "toolbox": {
+      "int": "Integer",
+      "float": "Float",
+      "bool": "Boolean",
+      "flow": "Control Flow",
+      "var": "Variable",
+      "array": "Array",
+      "tensor": "Tensor",
+      "vector": "Vector",
+      "debug": "Debug",
+      "boundary": "Boundary Data",
+      "cast": "Type Cast",
+      "func": "Functions",
+      "func_btn": "⊕ Custom Function Manager",
+      "boundary_btn": "⊕ Boundary Data Manager",
+      "float_const_btn": "⊕ Add Constants"
+    },
+    "alerts": {
+      "func_name_required": "Please enter a function name.",
+      "invalid_identifier": "Please enter a valid identifier.",
+      "func_name_exists": "Function name already exists.",
+      "name_required": "Please enter a name.",
+      "xml_parse_error": "JSON parse error: Please enter valid block data.\nError: {0}",
+      "xml_corrupted": "Saved block data is corrupted.\nError: {0}",
+      "name_charset": "Name may contain only letters, digits, and underscores.",
+      "name_in_use": "The name '{0}' is already in use.",
+      "file_size_invalid": "Invalid file size.\nMust be a multiple of {0} (currently {1} bytes)."
+    },
+    "logs": {
+      "main_block_not_found": "wasm_func_main block not found.",
+      "ast_complete": "✅ AST complete — Return: {0}, Local variables: {1}, body: {2} nodes",
+      "func_block_not_found": "Function '{0}' block not found.",
+      "func_compile_complete": "✅ Function '{0}' compilation complete",
+      "wat_generated": "✅ WAT generation complete",
+      "wat_compiling": "🔧 WAT → WASM compiling...",
+      "wasm_complete": "✅ WASM complete ({0} bytes)",
+      "running_worker": "🚀 Running in Worker...",
+      "error_prefix": "❌ {0}",
+      "worker_error": "❌ Worker error: {0}",
+      "input_emcc": "Contains input — compiling to C++ (Asyncify) before running.",
+      "run_aborted": "Execution was aborted.",
+      "result_value": "🎉 Result: {0}",
+      "file_save_failed": "Failed to save the file.",
+      "file_name_conflict": "A file with the same name already exists.",
+      "export_created": "File '{0}' was created.",
+      "export_failed": "Export failed: {0}"
+    },
+    "infos": {
+      "no_return": "Every path needs a return block.",
+      "no_main": "There is no wasm_func_main block.",
+      "var_redeclared": "Variable '{0}' is declared {1} times."
+    },
+    "progress": {
+      "sending": "Sending request...",
+      "preparing_download": "Preparing download...",
+      "download_done": "Download complete"
+    },
+    "ai": {
+      "title": "AI Assistant",
+      "waiting": "Waiting for AI response...",
+      "abort": "Stop",
+      "send": "Send",
+      "placeholder": "Request block program changes... (Enter to send, Shift+Enter for newline)",
+      "streaming": "Generating response...",
+      "idle": "The response will appear here.",
+      "hint": "Ask the AI to modify your block program.",
+      "error_prefix": "[Error] {0}",
+      "apply": "✦ Apply to workspace",
+      "cancel": "Cancel",
+      "diff_added": "■ Added",
+      "diff_removed": "■ Removed",
+      "diff_unchanged": "■ Unchanged"
+    },
+    "input": {
+      "int_label": "Integer input",
+      "float_label": "Real input",
+      "submit": "OK"
+    },
+    "exportCpp": {
+      "menu": "Export as C++ file",
+      "title": "Export as C++ file",
+      "desc_pre": "Convert the current block code to C++ and create a ",
+      "desc_bold": "new file",
+      "desc_post": " {0}.",
+      "bullet1": "The original block file is kept as-is.",
+      "bullet2": "Editing the generated C++ file does not affect the original blocks.",
+      "bullet3": "There is no way to convert the C++ file back to blocks.",
+      "cancel": "Cancel",
+      "exporting": "Converting…",
+      "confirm": "Export as C++ file",
+      "open": "Open"
+    }
+  },
+  "clang": {
+    "lsp_fail_message": "Could not connect to the C++ language server (clangd).\nYou can keep editing without LSP features. Try again with \"$lsp\" from the command palette.",
+    "editor_loading": "Loading editor…",
+    "lsp_fail_title": "LSP connection failed",
+    "lsp_connected_title": "LSP connected",
+    "lsp_already_connected": "The C++ language server is already connected.",
+    "lsp_connecting_title": "Connecting to C++ language server",
+    "lsp_connecting_msg": "Connecting to the C++ language server (clangd)…",
+    "lsp_cancel_hint": "If you cancel, you can keep editing without LSP features.",
+    "lsp_status_connected": "LSP connected",
+    "lsp_status_disconnected": "LSP disconnected · click to reconnect",
+    "lsp_disconnected_short": "disconnected",
+    "project_name_conflict": "A project with the same name already exists.",
+    "no_permission": "You don't have permission.",
+    "file_name_conflict": "A file with the same name already exists.",
+    "folder_name_conflict": "A folder with the same name already exists.",
+    "name_conflict": "An item with the same name already exists.",
+    "entry_must_cpp": "Entry must be a .cpp file.",
+    "file_too_large_1mb": "File is too large (1 MB or less)",
+    "image_only": "Only image files are allowed (.ico / .png / .jpg / .gif / .bmp / .webp).",
+    "file_too_large_4mb": "File is too large (4 MB or less)",
+    "config_json_format_error": "Cannot set the icon due to a config.json format error. Open it as JSON and fix it first.",
+    "external_lib_locked": "External library files cannot be opened: {0}",
+    "config_json_error_title": "config.json error",
+    "progress_sending": "Sending request…",
+    "progress_downloading": "Downloading…",
+    "progress_download_done": "Download complete",
+    "progress_loading": "Loading runtime…",
+    "progress_compiling": "Compiling…",
+    "progress_building": "Building…",
+    "status_loading": "Loading runtime",
+    "status_compiling": "Compiling",
+    "status_running": "Running",
+    "status_done": "Done",
+    "status_error": "Error",
+    "status_waiting": "Waiting",
+    "save_unsaved": "Unsaved",
+    "save_failed": "Save failed",
+    "saving": "Saving...",
+    "save": "Save",
+    "build_settings_title": "Build settings can be changed in config.json",
+    "debug_title": "Debug your C++ code (breakpoints, stepping, variable inspection)",
+    "debug_button": "Debug",
+    "filetree_toggle": "Toggle file tree",
+    "tab_close_aria": "Close {0} tab",
+    "notice_close_aria": "Close notice",
+    "jump_title": "Click to jump to this location",
+    "close": "Close",
+    "delete_entry_title": "Entry file cannot be deleted",
+    "delete_confirm_title": "Confirm deletion",
+    "entry_contains": " currently contains the Entry file, so it cannot be deleted.",
+    "entry_reassign": "Set another file as the Entry and try again.",
+    "delete_with_children": " and its {0} child files — delete them?",
+    "delete_single": " — delete it?",
+    "delete_irreversible": "This action cannot be undone.",
+    "confirm": "OK",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "preview_unavailable": "Preview cannot be displayed.",
+    "dbg_change_failed": "Change failed",
+    "dbg_edit_hint": "Enter to apply, Esc to cancel",
+    "dbg_dblclick_edit": "Double-click to edit value",
+    "dbg_loading": "Loading…",
+    "dbg_no_vars": "No variables in this scope",
+    "dbg_watch_placeholder": "Add expression (variable name)",
+    "dbg_watch_empty": "Add an expression to watch",
+    "dbg_remove": "Remove",
+    "dbg_status_building": "Building debug…",
+    "dbg_status_running": "Running…",
+    "dbg_status_paused": "Paused · {0}",
+    "dbg_status_terminated": "Terminated",
+    "dbg_status_error": "Error",
+    "dbg_status_waiting": "Waiting",
+    "dbg_continue": "Continue (F5)",
+    "dbg_step_over": "Step over",
+    "dbg_step_into": "Step into",
+    "dbg_step_out": "Step out",
+    "dbg_stop": "Stop",
+    "dbg_vars": "Variables",
+    "dbg_vars_hint": "Variables are visible while paused",
+    "dbg_callstack": "Call stack",
+    "dbg_watch": "Watch",
+    "ce_region_detail": "Foldable region",
+    "ce_region_doc": "Inserts a `#pragma region` / `#pragma endregion` pair.",
+    "ce_endregion_detail": "End of foldable region",
+    "ce_open_file": "Open file"
+  },
+  "console": {
+    "mat_zoom": "Click to enlarge",
+    "series_title": "Series",
+    "series_count": "({0})",
+    "series_empty": "(empty)",
+    "series_mat_label": "Matrix"
+  },
+  "block_messages": {
+    "debug_log": [
+      "log %1"
+    ],
+    "debug_graph_array": [
+      "graph %1"
+    ],
+    "debug_graph_array_range": [
+      "graph %1 min:%2 max:%3"
+    ],
+    "debug_series": [
+      "series"
+    ],
+    "debug_set_holder": [
+      "set holder %1"
+    ],
+    "debug_bar": [
+      "progress bar min:%1 max:%2"
+    ],
+    "debug_bar_set": [
+      "bar id:%1 val:%2"
+    ],
+    "flow_if": [
+      "if %1",
+      "then %1"
+    ],
+    "flow_if_else": [
+      "if %1",
+      "then %1",
+      "else %1"
+    ],
+    "flow_while": [
+      "while %1",
+      "do %1"
+    ],
+    "flow_for": [
+      "var %1 = %2 to %3",
+      "do %1"
+    ],
+    "flow_break": [
+      "break"
+    ],
+    "i32_select": [
+      "%1 ? %2 : %3"
+    ],
+    "f64_select": [
+      "%1 ? %2 : %3"
+    ],
+    "local_decl_i32": [
+      "int variable %1 = %2"
+    ],
+    "local_decl_f64": [
+      "float variable %1 = %2"
+    ],
+    "local_get_i32": [
+      "int %1"
+    ],
+    "local_get_f64": [
+      "float %1"
+    ],
+    "local_set_i32": [
+      "int %1 ← %2"
+    ],
+    "local_set_f64": [
+      "float %1 ← %2"
+    ],
+    "local_array_decl_i32": [
+      "int array %1[%2]"
+    ],
+    "local_array_decl_f64": [
+      "float array %1[%2]"
+    ],
+    "array_get_i32": [
+      "%1[%2]"
+    ],
+    "array_get_f64": [
+      "%1[%2]"
+    ],
+    "array_set_i32": [
+      "%1[%2] ← %3"
+    ],
+    "array_set_f64": [
+      "%1[%2] ← %3"
+    ],
+    "array_assign_i32": [
+      "int* %1 ← %2"
+    ],
+    "array_assign_f64": [
+      "float* %1 ← %2"
+    ],
+    "local_array_get_i32": [
+      "int* %1"
+    ],
+    "local_array_get_f64": [
+      "float* %1"
+    ],
+    "array_len_i32": [
+      "len(%1)"
+    ],
+    "array_len_f64": [
+      "len(%1)"
+    ],
+    "tensor_random": [
+      "TENSOR_RANDOM dist:%1 p1:%2 p2:%3 shape:%4"
+    ],
+    "tensor_new": [
+      "tensor (dynamic)"
+    ],
+    "tensor_get": [
+      "TENSOR_GET %1"
+    ],
+    "tensor_save": [
+      "TENSOR %1 = %2"
+    ],
+    "tensor_binop": [
+      "%1 %2 %3"
+    ],
+    "tensor_unop": [
+      "%1 %2"
+    ],
+    "tensor_scale": [
+      "%1 × %2"
+    ],
+    "tensor_set_by_index": [
+      "tensor[index] = value (dynamic)"
+    ],
+    "tensor_get_by_index": [
+      "tensor[index] (dynamic)"
+    ],
+    "tensor_perlin": [
+      "PERLIN_NOISE rows:%1 cols:%2"
+    ],
+    "tensor_show_mat": [
+      "show_mat %1"
+    ],
+    "tensor_grad": [
+      "grad( %1 )"
+    ],
+    "tensor_curl": [
+      "curl( %1 )"
+    ],
+    "tensor_lapl": [
+      "lapl( %1 )"
+    ],
+    "matrix_create": [
+      "matrix rows: %1 cols: %2"
+    ],
+    "matrix_matmul": [
+      "%1 @ %2"
+    ],
+    "matrix_transpose": [
+      "transpose( %1 )"
+    ],
+    "matrix_inverse": [
+      "inverse( %1 )"
+    ],
+    "matrix_det": [
+      "det( %1 )"
+    ],
+    "matrix_trace": [
+      "tr( %1 )"
+    ],
+    "matrix_identity": [
+      "I( %1 )"
+    ],
+    "vec2_literal": [
+      "vec2( %1 , %2 )"
+    ],
+    "vec2_get": [
+      "vec2 %1"
+    ],
+    "vec2_decl": [
+      "vec2 variable %1 = %2"
+    ],
+    "vec2_set": [
+      "vec2 %1 ← %2"
+    ],
+    "vec2_component_set": [
+      "vec2 %1 .%2 ← %3"
+    ],
+    "vec2_x": [
+      "%1 .x"
+    ],
+    "vec2_y": [
+      "%1 .y"
+    ],
+    "vec2_len": [
+      "|%1|"
+    ],
+    "vec2_len_sq": [
+      "|%1|²"
+    ],
+    "vec2_add": [
+      "%1 + %2"
+    ],
+    "vec2_sub": [
+      "%1 - %2"
+    ],
+    "vec2_scale": [
+      "%1 × %2"
+    ],
+    "vec2_neg": [
+      "-%1"
+    ],
+    "vec2_normalize": [
+      "normalize(%1)"
+    ],
+    "vec2_dot": [
+      "dot( %1 , %2 )"
+    ],
+    "vec2_proj_scalar": [
+      "proj( %1 → %2 )"
+    ],
+    "vec2_proj_vec": [
+      "proj_vec( %1 → %2 )"
+    ],
+    "vec3_literal": [
+      "vec3( %1 , %2 , %3 )"
+    ],
+    "vec3_get": [
+      "vec3 %1"
+    ],
+    "vec3_decl": [
+      "vec3 variable %1 = %2"
+    ],
+    "vec3_set": [
+      "vec3 %1 ← %2"
+    ],
+    "vec3_component_set": [
+      "vec3 %1 .%2 ← %3"
+    ],
+    "vec3_x": [
+      "%1 .x"
+    ],
+    "vec3_y": [
+      "%1 .y"
+    ],
+    "vec3_z": [
+      "%1 .z"
+    ],
+    "vec3_len": [
+      "|%1|"
+    ],
+    "vec3_len_sq": [
+      "|%1|²"
+    ],
+    "vec3_add": [
+      "%1 + %2"
+    ],
+    "vec3_sub": [
+      "%1 - %2"
+    ],
+    "vec3_scale": [
+      "%1 × %2"
+    ],
+    "vec3_neg": [
+      "-%1"
+    ],
+    "vec3_normalize": [
+      "normalize(%1)"
+    ],
+    "vec3_dot": [
+      "dot( %1 , %2 )"
+    ],
+    "vec3_cross": [
+      "%1 × %2"
+    ],
+    "vec3_proj_scalar": [
+      "proj( %1 → %2 )"
+    ],
+    "vec3_proj_vec": [
+      "proj_vec( %1 → %2 )"
+    ],
+    "bool_const": [
+      "%1"
+    ],
+    "bool_binop": [
+      "%1 %2 %3"
+    ],
+    "bool_not": [
+      "! %1"
+    ],
+    "i32_const": [
+      "int %1"
+    ],
+    "i32_binop": [
+      "int %1 %2 %3"
+    ],
+    "i32_unop": [
+      "int %1 %2"
+    ],
+    "i32_cmp": [
+      "%1 %2 %3"
+    ],
+    "i32_random": [
+      "random int %1 ~ %2"
+    ],
+    "input_i32": [
+      "input int"
+    ],
+    "f64_const": [
+      "float %1"
+    ],
+    "f64_from_i32": [
+      "int → float %1"
+    ],
+    "i32_from_f64": [
+      "float → int %1"
+    ],
+    "f64_binop": [
+      "%1 %2 %3"
+    ],
+    "f64_unop": [
+      "%1 %2"
+    ],
+    "f64_cmp": [
+      "%1 %2 %3"
+    ],
+    "f64_random": [
+      "random [0, 1)"
+    ],
+    "f64_random_range": [
+      "random range %1 ~ %2"
+    ],
+    "input_f64": [
+      "input float"
+    ],
+    "local_decl_bd2": [
+      "declare 2D boundary variable %1"
+    ],
+    "local_decl_bd3": [
+      "declare 3D boundary variable %1"
+    ],
+    "local_get_bd2": [
+      "bd2 %1 . %2"
+    ],
+    "local_get_bd2_point": [
+      "bd2 %1 .point"
+    ],
+    "local_get_bd2_tangent": [
+      "bd2 %1 .tangent"
+    ],
+    "local_get_bd2_normal": [
+      "bd2 %1 .normal"
+    ],
+    "local_get_bd3": [
+      "bd3 %1 . %2"
+    ],
+    "local_get_bd3_point": [
+      "bd3 %1 .point"
+    ],
+    "local_get_bd3_normal": [
+      "bd3 %1 .normal"
+    ],
+    "flow_for_bd2": [
+      "repeat from 2D boundary %1 to %2",
+      "repeat %1"
+    ],
+    "flow_for_bd3": [
+      "repeat from 3D boundary %1 to %2",
+      "repeat %1"
+    ],
+    "latex_expr": [
+      "LaTeX %1"
+    ],
+    "latex_value": [
+      "LaTeX %1"
+    ],
+    "wasm_return_i32": [
+      "return int %1"
+    ],
+    "wasm_return_f64": [
+      "return float %1"
+    ],
+    "wasm_func_main": [
+      "function main → %1",
+      "body %1"
+    ]
+  },
+  "block_tooltips": {
+    "i32_const": "integer constant (32-bit signed)",
+    "i32_binop": "integer binary operation",
+    "i32_unop": "integer unary operation",
+    "i32_cmp": "integer comparison (result: bool)",
+    "i32_random": "random integer in [min, max]",
+    "input_i32": "integer input (C++ run only)",
+    "i32_not": "logical NOT",
+    "f64_const": "real constant (64-bit float)",
+    "f64_from_i32": "int → float conversion",
+    "i32_from_f64": "float → int conversion (truncate)",
+    "f64_binop": "real binary operation",
+    "f64_unop": "real unary operation",
+    "f64_cmp": "real comparison (result: bool)",
+    "f64_random": "random real in [0, 1)",
+    "f64_random_range": "random real in [min, max)",
+    "input_f64": "real input (C++ run only)",
+    "bool_const": "boolean constant (true=1, false=0)",
+    "bool_binop": "logical binary operation (AND / OR / XOR)",
+    "bool_not": "logical NOT",
+    "flow_if": "conditional branch",
+    "flow_if_else": "conditional branch (else)",
+    "flow_while": "while loop",
+    "flow_for": "for loop",
+    "flow_fold_region": "code region (foldable)",
+    "flow_break": "break out of loop",
+    "i32_select": "i32 select (ternary operator)",
+    "f64_select": "f64 select (ternary operator)",
+    "local_decl_i32": "declare int variable",
+    "local_decl_f64": "declare float variable",
+    "local_get_i32": "read int variable",
+    "local_get_f64": "read float variable",
+    "local_set_i32": "assign int variable",
+    "local_set_f64": "assign float variable",
+    "local_array_decl_i32": "declare int array",
+    "local_array_decl_f64": "declare float array",
+    "array_get_i32": "read int array",
+    "array_get_f64": "read float array",
+    "array_set_i32": "write int array",
+    "array_set_f64": "write float array",
+    "array_assign_i32": "int* assignment",
+    "array_assign_f64": "float* assignment",
+    "local_array_get_i32": "int* variable",
+    "local_array_get_f64": "float* variable",
+    "array_len_i32": "int array length",
+    "array_len_f64": "float array length",
+    "tensor_random": "create random tensor (returns id)",
+    "tensor_new": "initialize tensor (returns id)",
+    "tensor_get": "get tensor (returns id)",
+    "tensor_save": "save tensor TENSOR %1 = %2",
+    "tensor_binop": "tensor binary operation",
+    "tensor_unop": "tensor unary operation",
+    "tensor_grad": "gradient ∇f: scalar field [R,C] → vector field [2,R,C]",
+    "tensor_curl": "curl ∇×F: vector field [2,R,C] → scalar field [R,C]",
+    "tensor_lapl": "Laplacian ∇²f: scalar field [R,C] → scalar field [R,C]",
+    "tensor_scale": "tensor scalar multiply %1 × %2",
+    "tensor_set_by_index": "set tensor element",
+    "tensor_get_by_index": "read tensor element",
+    "tensor_perlin": "create Perlin noise vector-field tensor (2, rows, cols)",
+    "tensor_show_mat": "visualize 2D tensor",
+    "matrix_create": "create rows×cols zero matrix (returns tensor id)",
+    "matrix_matmul": "matrix multiply A @ B (returns tensor id)",
+    "matrix_transpose": "transpose Aᵀ (returns tensor id)",
+    "matrix_inverse": "inverse A⁻¹ (returns tensor id)",
+    "matrix_det": "determinant det(A) (returns scalar)",
+    "matrix_trace": "trace tr(A) (returns scalar)",
+    "matrix_identity": "n×n identity matrix (returns tensor id)",
+    "vec2_literal": "create vec2 from two f64 values",
+    "vec2_get": "read vec2 variable",
+    "vec2_decl": "declare and initialize vec2 variable",
+    "vec2_set": "assign vec2 variable",
+    "vec2_component_set": "modify vec2 component",
+    "vec2_x": "x component of vec2",
+    "vec2_y": "y component of vec2",
+    "vec2_len": "vec2 magnitude |v|",
+    "vec2_len_sq": "vec2 magnitude squared |v|²",
+    "vec2_add": "vec2 addition",
+    "vec2_sub": "vec2 subtraction",
+    "vec2_scale": "vec2 scalar multiply",
+    "vec2_neg": "vec2 negation",
+    "vec2_normalize": "vec2 normalize v/|v|",
+    "vec2_dot": "dot product of two vec2",
+    "vec2_proj_scalar": "scalar projection dot(a,b)/|b|",
+    "vec2_proj_vec": "vector projection (dot(a,b)/|b|²)·b",
+    "vec3_literal": "create vec3 from three f64 values",
+    "vec3_get": "read vec3 variable",
+    "vec3_decl": "declare and initialize vec3 variable",
+    "vec3_set": "assign vec3 variable",
+    "vec3_component_set": "modify vec3 component",
+    "vec3_x": "x component of vec3",
+    "vec3_y": "y component of vec3",
+    "vec3_z": "z component of vec3",
+    "vec3_len": "vec3 magnitude |v|",
+    "vec3_len_sq": "vec3 magnitude squared |v|²",
+    "vec3_add": "vec3 addition",
+    "vec3_sub": "vec3 subtraction",
+    "vec3_scale": "vec3 scalar multiply",
+    "vec3_neg": "vec3 negation",
+    "vec3_normalize": "vec3 normalize v/|v|",
+    "vec3_dot": "dot product of two vec3",
+    "vec3_cross": "cross product of two vec3 a × b",
+    "vec3_proj_scalar": "scalar projection dot(a,b)/|b|",
+    "vec3_proj_vec": "vector projection (dot(a,b)/|b|²)·b",
+    "local_decl_bd2": "declare boundary2d loop variable (t, x, y, tx, ty, nx, ny)",
+    "local_get_bd2": "read boundary2d field",
+    "local_get_bd2_point": "boundary2d position vector (x, y) → vec2",
+    "local_get_bd2_tangent": "boundary2d tangent vector (tx, ty) → vec2",
+    "local_get_bd2_normal": "boundary2d normal vector (nx, ny) → vec2",
+    "local_decl_bd3": "declare boundary3d loop variable (u, v, x, y, z, dS, nx, ny, nz)",
+    "local_get_bd3_point": "boundary3d position vector (x, y, z) → vec3",
+    "local_get_bd3_normal": "boundary3d normal vector (nx, ny, nz) → vec3",
+    "local_get_bd3": "read boundary3d field",
+    "flow_for_bd2": "iterate over boundary2d array elements",
+    "flow_for_bd3": "iterate over boundary3d array elements",
+    "debug_log": "print value to console",
+    "debug_graph_array": "plot array graph",
+    "debug_graph_array_range": "plot array graph (fixed range)",
+    "debug_series": "create series panel (returns holder_id)",
+    "debug_set_holder": "set log holder (0 = default console)",
+    "debug_bar": "create progress bar (returns id)",
+    "debug_bar_set": "set progress bar value",
+    "latex_expr": "LaTeX formula → generated code",
+    "latex_value": "LaTeX formula → value expression",
+    "wasm_return_i32": "return int",
+    "wasm_return_f64": "return float",
+    "wasm_func_main": "WebAssembly main function"
+  },
+  "block_dropdowns": {
+    "bool_const": {
+      "VALUE": {
+        "0": "false",
+        "1": "true"
+      }
+    },
+    "bool_binop": {
+      "OP": {
+        "and": "&&",
+        "or": "||",
+        "xor": "XOR"
+      }
+    }
+  },
+  "block_dynamic": {
+    "tensor_new_header": "[tensor]",
+    "tensor_new_dim_label": "dims:",
+    "tensor_new_dim_item": "dim[%1]",
+    "tensor_new_tooltip": "Create tensor — specify dimension sizes and get a tensor id",
+    "tensor_set_tooltip": "Set tensor element",
+    "tensor_get_header": "TENSOR",
+    "tensor_get_dims_label": "dims:",
+    "tensor_get_tooltip": "Read tensor element",
+    "array_literal_size_label": "size:",
+    "array_literal_index": "[%1]",
+    "array_literal_tooltip_i32": "int* literal — fill values and returns pointer",
+    "array_literal_tooltip_f64": "float* literal — fill values and returns pointer",
+    "fold_region_label": "region",
+    "fold_region_tooltip": "code region — fold/unfold the body",
+    "custom_func_def_label": "function",
+    "custom_func_def_body_label": "body",
+    "custom_func_def_param_label": "param",
+    "custom_func_def_tooltip": "custom function (right-click to add/remove parameters)",
+    "custom_func_add_param": "Add parameter",
+    "custom_func_remove_param": "Remove parameter"
+  }
+}

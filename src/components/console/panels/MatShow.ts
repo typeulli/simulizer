@@ -1,4 +1,5 @@
 import { ConsolePanelRenderer } from "../types";
+import { consolePack } from "../consolePack";
 
 interface MatShowState {
     rows: number;
@@ -72,7 +73,7 @@ export class MatShowPanel implements ConsolePanelRenderer {
         img.style.cssText =
             "image-rendering:pixelated;max-width:100%;border:1px solid var(--border);border-radius:2px;" +
             "display:block;cursor:zoom-in;";
-        img.title = "클릭하여 확대";
+        img.title = consolePack()?.console.mat_zoom ?? "Click to enlarge";
         img.addEventListener("click", () => this.openLightbox(img.src));
 
         const info = document.createElement("div");

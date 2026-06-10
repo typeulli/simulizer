@@ -1,4 +1,4 @@
-type langpack = {
+export type langpack = {
     // ── Shared ───────────────────────────────────────────────────────────────
     meta: {
         langc: string,
@@ -31,6 +31,7 @@ type langpack = {
         warning_title: string,
         error_title: string,
         ok_button: string,
+        command_search_placeholder: string,
     },
 
     // ── Pages ─────────────────────────────────────────────────────────────────
@@ -477,6 +478,15 @@ type langpack = {
         ce_region_doc: string,
         ce_endregion_detail: string,
         ce_open_file: string,
+    },
+
+    // ── Console panels ────────────────────────────────────────────────────────
+    console: {
+        mat_zoom: string,
+        series_title: string,
+        series_count: string,
+        series_empty: string,
+        series_mat_label: string,
     },
 
     // ── Block labels (Blockly) ────────────────────────────────────────────────

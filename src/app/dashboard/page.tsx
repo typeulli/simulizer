@@ -8,7 +8,8 @@ import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useLocale, useTranslations } from "next-intl";
+import { setLocaleCookie } from "@/i18n/setLocale";
 import {
     listFiles,
     createFile,
@@ -149,12 +150,14 @@ export default function DashboardPage() {
     const { user, loading: authLoading } = useAuth();
     const router = useRouter();
     const { theme, toggleTheme } = useTheme();
-    const [lang, , pack] = useLanguagePack();
-    const t = pack.dashboard;
+    const t = useTranslations("dashboard");
+    const tWs = useTranslations("workspace.ui");
+
+    const locale = useLocale();
 
     function toggleLang() {
-        const next = lang === "ko" ? "en" : "ko";
-        localStorage.setItem("language", next);
+        const next = locale === "ko" ? "en" : "ko";
+        setLocaleCookie(next);
         window.location.reload();
     }
 
@@ -245,12 +248,12 @@ export default function DashboardPage() {
         let type: FileType;
         if (BLOCK_EXTS.has(ext)) type = "blockfile";
         else if (CLANG_EXTS.has(ext)) type = "clangfile";
-        else { alert(t.import_unsupported_ext); return; }
+        else { alert(t("import_unsupported_ext")); return; }
         // Reject oversized files BEFORE reading — otherwise file.text() loads
         // potentially gigabytes into a JS string and can OOM the tab. Server
         // also enforces MAX_CONTENT_BYTES = 5 MB, but only post-upload.
         if (file.size > 5 * 1024 * 1024) {
-            alert(t.import_failed);
+            alert(t("import_failed"));
             return;
         }
 
@@ -304,7 +307,7 @@ export default function DashboardPage() {
             }
             router.push(pathForType(created));
         } catch {
-            alert(t.import_failed);
+            alert(t("import_failed"));
         } finally {
             setCreating(false);
         }
@@ -369,7 +372,7 @@ export default function DashboardPage() {
             }
             setFiles(prev => [created!, ...prev]);
         } catch {
-            alert(t.duplicate_cpp_failed);
+            alert(t("duplicate_cpp_failed"));
         }
     }
 
@@ -387,8 +390,8 @@ export default function DashboardPage() {
     async function handleThumbnailUpload(file: File): Promise<void> {
         const target = thumbnailModalFile;
         if (!target) return;
-        if (!file.type.startsWith("image/")) throw new Error(t.thumbnail_not_image);
-        if (file.size > 2 * 1024 * 1024) throw new Error(t.thumbnail_too_large);
+        if (!file.type.startsWith("image/")) throw new Error(t("thumbnail_not_image"));
+        if (file.size > 2 * 1024 * 1024) throw new Error(t("thumbnail_too_large"));
         await uploadThumbnail(target.id, file, { manual: true });
         setFiles(prev => prev.map(f => f.id === target.id ? { ...f, thumbnail_custom: true } : f));
         setThumbVersions(prev => ({ ...prev, [target.id]: (prev[target.id] ?? 0) + 1 }));
@@ -416,7 +419,7 @@ export default function DashboardPage() {
             const updated = await renameFile(id, trimmed);
             setFiles(prev => prev.map(f => f.id === id ? { ...f, name: updated.name } : f));
         } catch (err: any) {
-            if (err?.status === 409) alert(t.rename_conflict);
+            if (err?.status === 409) alert(t("rename_conflict"));
         } finally {
             setRenamingId(null);
         }
@@ -454,7 +457,7 @@ export default function DashboardPage() {
                 </div>
 
                 <span className="dashboard-header-title" style={{ fontSize: token.font.size.fs13, fontWeight: 600, color: token.color.fgMuted }}>
-                    {t.header_title}
+                    {t("header_title")}
                 </span>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 16, justifyContent: "flex-end" }}>
@@ -489,7 +492,7 @@ export default function DashboardPage() {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: token.space.sp6 }}>
                     <div>
                         <h1 style={{ margin: 0, fontSize: token.font.size.fs20, fontWeight: 700, letterSpacing: "-0.02em" }}>
-                            {user ? t.section_title.replace("{name}", user.name) : t.header_title}
+                            {user ? t("section_title", { name: user.name }) : t("header_title")}
                         </h1>
                         <p style={{ margin: "4px 0 0", fontSize: token.font.size.fs13, color: token.color.fgSubtle }}>
                             {user?.email}
@@ -504,7 +507,7 @@ export default function DashboardPage() {
                             onClick={() => setPickerAnchor(prev => prev === "header" ? null : "header")}
                             disabled={creating}
                         >
-                            {t.new_file_button}
+                            {t("new_file_button")}
                         </Button>
                         <NewFileMenu
                             open={pickerAnchor === "header"}
@@ -512,9 +515,9 @@ export default function DashboardPage() {
                             onSelect={handleMenuSelect}
                             align="right"
                             options={[
-                                { action: "blockfile", icon: <Icon.Layers size={14} />, title: t.new_file_type_block_title, desc: t.new_file_type_block_desc },
-                                { action: "clangfile", icon: <Icon.File size={14} />,   title: t.new_file_type_clang_title, desc: t.new_file_type_clang_desc },
-                                { action: "import",    icon: <Icon.Download size={14} />, title: t.new_file_type_import_title, desc: t.new_file_type_import_desc },
+                                { action: "blockfile", icon: <Icon.Layers size={14} />, title: t("new_file_type_block_title"), desc: t("new_file_type_block_desc") },
+                                { action: "clangfile", icon: <Icon.File size={14} />,   title: t("new_file_type_clang_title"), desc: t("new_file_type_clang_desc") },
+                                { action: "import",    icon: <Icon.Download size={14} />, title: t("new_file_type_import_title"), desc: t("new_file_type_import_desc") },
                             ]}
                         />
                     </div>
@@ -531,8 +534,8 @@ export default function DashboardPage() {
                     }}>
                         <Icon.File size={40} />
                         <div style={{ textAlign: "center" }}>
-                            <p style={{ margin: 0, fontSize: token.font.size.fs15, fontWeight: 500, color: token.color.fgMuted }}>{t.empty_title}</p>
-                            <p style={{ margin: "4px 0 0", fontSize: token.font.size.fs13 }}>{t.empty_desc}</p>
+                            <p style={{ margin: 0, fontSize: token.font.size.fs15, fontWeight: 500, color: token.color.fgMuted }}>{t("empty_title")}</p>
+                            <p style={{ margin: "4px 0 0", fontSize: token.font.size.fs13 }}>{t("empty_desc")}</p>
                         </div>
                         <div style={{ position: "relative", zIndex: pickerAnchor === "empty" ? 20 : undefined }}>
                             <Button
@@ -543,7 +546,7 @@ export default function DashboardPage() {
                                 onClick={() => setPickerAnchor(prev => prev === "empty" ? null : "empty")}
                                 disabled={creating}
                             >
-                                {t.empty_new_file_button}
+                                {t("empty_new_file_button")}
                             </Button>
                             <NewFileMenu
                                 open={pickerAnchor === "empty"}
@@ -551,9 +554,9 @@ export default function DashboardPage() {
                                 onSelect={handleMenuSelect}
                                 align="center"
                                 options={[
-                                    { action: "blockfile", icon: <Icon.Layers size={14} />, title: t.new_file_type_block_title, desc: t.new_file_type_block_desc },
-                                    { action: "clangfile", icon: <Icon.File size={14} />,   title: t.new_file_type_clang_title, desc: t.new_file_type_clang_desc },
-                                    { action: "import",    icon: <Icon.Download size={14} />, title: t.new_file_type_import_title, desc: t.new_file_type_import_desc },
+                                    { action: "blockfile", icon: <Icon.Layers size={14} />, title: t("new_file_type_block_title"), desc: t("new_file_type_block_desc") },
+                                    { action: "clangfile", icon: <Icon.File size={14} />,   title: t("new_file_type_clang_title"), desc: t("new_file_type_clang_desc") },
+                                    { action: "import",    icon: <Icon.Download size={14} />, title: t("new_file_type_import_title"), desc: t("new_file_type_import_desc") },
                                 ]}
                             />
                         </div>
@@ -616,14 +619,13 @@ export default function DashboardPage() {
                     onUpload={handleThumbnailUpload}
                     onReset={handleThumbnailReset}
                     onClose={() => setThumbnailModalFile(null)}
-                    pack={t}
                 />
             )}
 
             {sharingFile && (
                 <Modal width={420} onClose={() => setSharingFile(null)}>
                     <ModalHeader onClose={() => setSharingFile(null)}>
-                        {pack.workspace.ui.share_dialog_title}
+                        {tWs("share_dialog_title")}
                     </ModalHeader>
                     <ModalBody>
                         <ShareControl
@@ -767,8 +769,7 @@ function FileCard({
     onRename, onDuplicate, onDuplicateAsCpp, onShare, onSetThumbnail, onDelete,
     onRenameChange, onRenameCommit, onRenameCancel,
 }: FileCardProps) {
-    const [, , pack] = useLanguagePack();
-    const t = pack.dashboard;
+    const t = useTranslations("dashboard");
     const menuItem: React.CSSProperties = {
         display: "flex", alignItems: "center", gap: 8,
         padding: "8px 12px", fontSize: token.font.size.fs12,
@@ -874,39 +875,39 @@ function FileCard({
                                     onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                 >
-                                    <Icon.File size={12} /> {t.menu_open}
+                                    <Icon.File size={12} /> {t("menu_open")}
                                 </button>
                                 <button style={menuItem} onClick={onRename}
                                     onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                 >
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> {t.menu_rename}
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> {t("menu_rename")}
                                 </button>
                                 <button style={menuItem} onClick={onDuplicate}
                                     onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                 >
-                                    <Icon.Layers size={12} /> {t.menu_duplicate}
+                                    <Icon.Layers size={12} /> {t("menu_duplicate")}
                                 </button>
                                 {onDuplicateAsCpp && (
                                     <button style={menuItem} onClick={onDuplicateAsCpp}
                                         onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                                         onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                     >
-                                        <Icon.File size={12} /> {t.menu_duplicate_cpp}
+                                        <Icon.File size={12} /> {t("menu_duplicate_cpp")}
                                     </button>
                                 )}
                                 <button style={menuItem} onClick={onShare}
                                     onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                 >
-                                    <Icon.Globe size={12} /> {t.menu_share}
+                                    <Icon.Globe size={12} /> {t("menu_share")}
                                 </button>
                                 <button style={menuItem} onClick={onSetThumbnail}
                                     onMouseEnter={e => (e.currentTarget.style.background = token.color.bgSubtle)}
                                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                 >
-                                    <Icon.Download size={12} /> {t.menu_set_thumbnail}
+                                    <Icon.Download size={12} /> {t("menu_set_thumbnail")}
                                 </button>
                                 <div style={{ height: 1, background: token.color.border, margin: "4px 0" }} />
                                 <button
@@ -915,7 +916,7 @@ function FileCard({
                                     onMouseEnter={e => (e.currentTarget.style.background = token.color.dangerSoft)}
                                     onMouseLeave={e => (e.currentTarget.style.background = "none")}
                                 >
-                                    <Icon.Trash size={12} /> {t.menu_delete}
+                                    <Icon.Trash size={12} /> {t("menu_delete")}
                                 </button>
                             </div>
                         )}
@@ -924,7 +925,7 @@ function FileCard({
 
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle, flex: 1 }}>
-                        {t.card_updated.replace("{date}", formatDate(file.updated_at))}
+                        {t("card_updated", { date: formatDate(file.updated_at) })}
                     </span>
                     {file.type === "clangfile" && (
                         <span style={{
@@ -934,7 +935,7 @@ function FileCard({
                             fontSize: token.font.size.fs10, fontWeight: 600,
                             fontFamily: token.font.family.mono,
                         }}>
-                            {t.badge_clangfile}
+                            {t("badge_clangfile")}
                         </span>
                     )}
                     {file.visibility === "link" && (
@@ -945,7 +946,7 @@ function FileCard({
                             fontSize: token.font.size.fs10, fontWeight: 600,
                         }}>
                             <Icon.Globe size={9} />
-                            {t.badge_link_shared}
+                            {t("badge_link_shared")}
                         </span>
                     )}
                 </div>
@@ -971,10 +972,10 @@ interface ThumbnailUploadModalProps {
     onUpload: (file: File) => Promise<void>;
     onReset: () => Promise<void>;
     onClose: () => void;
-    pack: ReturnType<typeof useLanguagePack>[2]["dashboard"];
 }
 
-function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, onReset, onClose, pack }: ThumbnailUploadModalProps) {
+function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, onReset, onClose }: ThumbnailUploadModalProps) {
+    const t = useTranslations("dashboard");
     const inputRef = useRef<HTMLInputElement>(null);
     const [dragOver, setDragOver] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -982,9 +983,7 @@ function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, o
     const [error, setError] = useState<string | null>(null);
     const busy = uploading || resetting;
 
-    const recHint = pack.thumbnail_recommended_size
-        .replace("{w}", String(recommendedSize.w))
-        .replace("{h}", String(recommendedSize.h));
+    const recHint = t("thumbnail_recommended_size", { w: recommendedSize.w, h: recommendedSize.h });
 
     const handleFile = async (file: File) => {
         setError(null);
@@ -992,7 +991,7 @@ function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, o
         try {
             await onUpload(file);
         } catch (err) {
-            setError(err instanceof Error ? err.message : pack.thumbnail_upload_failed);
+            setError(err instanceof Error ? err.message : t("thumbnail_upload_failed"));
         } finally {
             setUploading(false);
         }
@@ -1004,7 +1003,7 @@ function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, o
         try {
             await onReset();
         } catch (err) {
-            setError(err instanceof Error ? err.message : pack.thumbnail_reset_failed);
+            setError(err instanceof Error ? err.message : t("thumbnail_reset_failed"));
         } finally {
             setResetting(false);
         }
@@ -1013,7 +1012,7 @@ function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, o
     return (
         <Modal width={480} onClose={() => !busy && onClose()}>
             <ModalHeader onClose={() => !busy && onClose()}>
-                {pack.thumbnail_modal_title}
+                {t("thumbnail_modal_title")}
             </ModalHeader>
             <ModalBody>
                 <p style={{ margin: `0 0 ${token.space.sp3} 0`, fontSize: token.font.size.fs12, color: token.color.fgSubtle, fontFamily: token.font.family.mono }}>
@@ -1047,7 +1046,7 @@ function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, o
                     {uploading ? (
                         <>
                             <Spinner size="lg" />
-                            <p style={{ margin: 0, fontSize: token.font.size.fs13, color: token.color.fgMuted }}>{pack.thumbnail_uploading}</p>
+                            <p style={{ margin: 0, fontSize: token.font.size.fs13, color: token.color.fgMuted }}>{t("thumbnail_uploading")}</p>
                         </>
                     ) : (
                         <>
@@ -1063,10 +1062,10 @@ function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, o
                                 <Icon.Download size={20} />
                             </div>
                             <p style={{ margin: 0, fontSize: token.font.size.fs13, fontWeight: 600, color: token.color.fg, textAlign: "center" }}>
-                                {pack.thumbnail_dropzone_idle}
+                                {t("thumbnail_dropzone_idle")}
                             </p>
                             <p style={{ margin: 0, fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
-                                {pack.thumbnail_dropzone_hint}
+                                {t("thumbnail_dropzone_hint")}
                             </p>
                         </>
                     )}
@@ -1095,7 +1094,7 @@ function ThumbnailUploadModal({ fileName, recommendedSize, canReset, onUpload, o
                             onClick={handleReset}
                             disabled={busy}
                         >
-                            {pack.thumbnail_reset_button}
+                            {t("thumbnail_reset_button")}
                         </Button>
                     </div>
                 )}

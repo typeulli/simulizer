@@ -1,5 +1,7 @@
 import { useRef, useCallback } from "react";
+import { useMessages } from "next-intl";
 import { consolePanelRegistry } from "./registry";
+import { setConsolePack } from "./consolePack";
 import {
     LogKind,
     HolderEntry,
@@ -8,6 +10,8 @@ import {
 } from "./types";
 
 export function useConsolePanel() {
+    const pack = useMessages();
+    setConsolePack(pack);
     const logAreaRef = useRef<HTMLDivElement>(null);
     const lastLogTsRef = useRef<number>(0);
     const panelCounterRef = useRef(0);
@@ -230,9 +234,9 @@ export function useConsolePanel() {
         const placeholder = document.createElement("div");
         placeholder.setAttribute("data-placeholder", "");
         placeholder.style.cssText = "color:var(--fg-muted);font-size:12px";
-        placeholder.textContent = "▶ 실행 버튼을 눌러 시작하세요";
+        placeholder.textContent = pack.workspace.ui.log_placeholder;
         area.appendChild(placeholder);
-    }, []);
+    }, [pack]);
 
     return {
         logAreaRef,

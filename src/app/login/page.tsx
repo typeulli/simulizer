@@ -4,14 +4,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Logo } from "@/components/atoms/Logo";
 import { token } from "@/components/tokens";
 import { getMe } from "@/lib/authapi";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 
 const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL;
 
 function LoginContent() {
     const router = useRouter();
-    const [, , pack] = useLanguagePack();
-    const t = pack.login;
+    const t = useTranslations("login");
 
     const searchParams = useSearchParams();
     const errorParam = searchParams.get("error");
@@ -23,8 +22,8 @@ function LoginContent() {
     }, []);
 
     const errorMessage: Record<string, string> = {
-        oauth_denied:         t.error_oauth_denied,
-        oauth_failed:         t.error_oauth_failed,
+        oauth_denied:         t("error_oauth_denied"),
+        oauth_failed:         t("error_oauth_failed"),
     };
 
     return (
@@ -61,7 +60,7 @@ function LoginContent() {
                     WebkitTextFillColor: "transparent",
                     backgroundClip: "text",
                 }}>
-                    {t.left_title_1}<br />{t.left_title_2}
+                    {t("left_title_1")}<br />{t("left_title_2")}
                 </h1>
 
                 <p style={{
@@ -71,11 +70,11 @@ function LoginContent() {
                     margin: "0 0 40px",
                     maxWidth: 400,
                 }}>
-                    {t.left_body}
+                    {t("left_body")}
                 </p>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {[t.left_feature_1, t.left_feature_2, t.left_feature_3, t.left_feature_4].map(feat => (
+                    {[t("left_feature_1"), t("left_feature_2"), t("left_feature_3"), t("left_feature_4")].map(feat => (
                         <div key={feat} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{
                                 width: 6, height: 6, borderRadius: "50%",
@@ -98,10 +97,10 @@ function LoginContent() {
             }}>
                 <div style={{ textAlign: "center", maxWidth: 360 }}>
                     <h2 style={{ fontSize: token.font.size.fs24, fontWeight: 700, margin: "0 0 8px", letterSpacing: "-0.02em" }}>
-                        {t.right_title}
+                        {t("right_title")}
                     </h2>
                     <p style={{ fontSize: token.font.size.fs13, color: token.color.fgMuted, margin: 0, lineHeight: 1.6 }}>
-                        {t.right_subtitle}
+                        {t("right_subtitle")}
                     </p>
                 </div>
 
@@ -118,7 +117,7 @@ function LoginContent() {
                         textAlign: "center",
                         lineHeight: 1.6,
                     }}>
-                        {t.account_deleted_msg}
+                        {t("account_deleted_msg")}
                     </div>
                 )}
 
@@ -169,7 +168,7 @@ function LoginContent() {
                     }}
                 >
                     <GoogleIcon />
-                    {t.google_button}
+                    {t("google_button")}
                 </a>
             </div>
         </div>

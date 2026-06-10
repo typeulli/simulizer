@@ -1,5 +1,6 @@
 import { ConsolePanelRenderer, HolderEntry, LogKind } from "../types";
 import { buildSvg } from "./GraphArray";
+import { consolePack } from "../consolePack";
 
 const logStyle: Record<LogKind, { bg: string; color: string; border: string }> = {
     info:    { bg: "var(--bg-canvas)",    color: "var(--fg)",     border: "var(--accent)"         },
@@ -36,12 +37,12 @@ export class SeriesPanel implements ConsolePanelRenderer {
         const title = document.createElement("span");
         title.style.cssText =
             "font-size:11px;font-family:var(--font-mono);color:var(--fg-muted);font-weight:600";
-        title.textContent = "📊 시리즈";
+        title.textContent = `📊 ${consolePack()?.console.series_title ?? "Series"}`;
 
         this.headerCountEl = document.createElement("span");
         this.headerCountEl.style.cssText =
             "font-size:10px;font-family:var(--font-mono);color:var(--fg-subtle)";
-        this.headerCountEl.textContent = "(0개)";
+        this.headerCountEl.textContent = (consolePack()?.console.series_count ?? "({0})").replace("{0}", "0");
 
         header.appendChild(title);
         header.appendChild(this.headerCountEl);
@@ -95,7 +96,7 @@ export class SeriesPanel implements ConsolePanelRenderer {
         this.contentEl.style.cssText =
             "padding:8px 12px;min-height:34px;font-size:11px;font-family:var(--font-mono);" +
             "line-height:1.55;color:var(--fg-muted);background:var(--bg-canvas)";
-        this.contentEl.textContent = "(비어 있음)";
+        this.contentEl.textContent = consolePack()?.console.series_empty ?? "(empty)";
 
         wrap.appendChild(header);
         wrap.appendChild(nav);
@@ -127,7 +128,7 @@ export class SeriesPanel implements ConsolePanelRenderer {
 
     private updateHeader(): void {
         if (this.headerCountEl)
-            this.headerCountEl.textContent = `(${this.frames.length}개)`;
+            this.headerCountEl.textContent = (consolePack()?.console.series_count ?? "({0})").replace("{0}", String(this.frames.length));
     }
 
     private updateNav(): void {
@@ -146,7 +147,7 @@ export class SeriesPanel implements ConsolePanelRenderer {
         if (!this.contentEl) return;
         if (this.frames.length === 0) {
             this.contentEl.innerHTML = "";
-            this.contentEl.textContent = "(비어 있음)";
+            this.contentEl.textContent = consolePack()?.console.series_empty ?? "(empty)";
             this.contentEl.style.cssText +=
                 ";background:var(--bg-canvas);color:var(--fg-muted);border-left:none;padding:8px 12px";
             return;
@@ -184,7 +185,7 @@ export class SeriesPanel implements ConsolePanelRenderer {
             const meta = document.createElement("div");
             meta.style.cssText =
                 "font-size:10px;color:var(--fg-subtle);margin-bottom:6px;font-family:var(--font-mono)";
-            meta.textContent = `🖼 행렬 ${frame.rows} × ${frame.cols}`;
+            meta.textContent = `🖼 ${consolePack()?.console.series_mat_label ?? "Matrix"} ${frame.rows} × ${frame.cols}`;
             this.contentEl.appendChild(meta);
 
             const img = document.createElement("img");

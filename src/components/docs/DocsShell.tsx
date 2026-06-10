@@ -9,7 +9,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 import { useTheme } from "@/hooks/useTheme";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useLocale, useTranslations } from "next-intl";
+import { setLocaleCookie } from "@/i18n/setLocale";
 import { Topbar } from "@/components/organisms/Toolbar";
 import { Text } from "@/components/atoms/Text";
 import { Divider } from "@/components/atoms/Divider";
@@ -26,10 +27,6 @@ const TOP_OFFSET = 88;
 
 function hrefFor(slug: string): string {
     return slug === "" ? "/docs" : `/docs/${slug}`;
-}
-
-function setLangCookie(lang: string) {
-    document.cookie = `language=${lang}; path=/; max-age=${60 * 60 * 24 * 365}`;
 }
 
 const groupLabel: React.CSSProperties = {
@@ -123,24 +120,18 @@ export function DocsShell({
     children: React.ReactNode;
 }) {
     const { theme, toggleTheme } = useTheme();
-    const [lang, , pack] = useLanguagePack();
+    const lang = useLocale();
+    const t = useTranslations();
     const isMobile = useIsMobile();
     const [navOpen, setNavOpen] = useState(false);
 
-    // Keep the server-readable cookie in sync with the client language so
-    // route-level locale resolution matches what the user selected.
-    useEffect(() => {
-        if (lang) setLangCookie(lang);
-    }, [lang]);
-
     function toggleLang() {
         const next = lang === "ko" ? "en" : "ko";
-        localStorage.setItem("language", next);
-        setLangCookie(next);
+        setLocaleCookie(next);
         window.location.reload();
     }
 
-    const uiLocale = lang ?? "ko";
+    const uiLocale = lang;
     const nav = getDocsNav(uiLocale);
 
     return (
@@ -194,7 +185,7 @@ export function DocsShell({
                     <span style={{ display: "inline-flex", alignItems: "center", gap: token.space.sp6 }}>
                         <Link href="/" style={{ textDecoration: "none" }}>
                             <Text variant="body" tone="muted" style={{ cursor: "pointer" }}>
-                                {pack.topbar.home}
+                                {t("topbar.home")}
                             </Text>
                         </Link>
                         <Divider orientation="vertical" style={{ height: 16 }} />
@@ -210,7 +201,7 @@ export function DocsShell({
 
             <MobileNavDrawer open={navOpen} onClose={() => setNavOpen(false)}>
                 <Link href="/" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
-                    <Text as="span" variant="body" tone="strong">{pack.topbar.home}</Text>
+                    <Text as="span" variant="body" tone="strong">{t("topbar.home")}</Text>
                 </Link>
                 <Divider />
                 <nav>

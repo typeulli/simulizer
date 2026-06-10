@@ -61,7 +61,7 @@ import {
     type DeviceKind,
 } from "@/lib/compileConfig";
 import { ShareControl } from "@/components/share/ShareControl";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useMessages, useTranslations } from "next-intl";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
@@ -158,7 +158,8 @@ type Props = {
 const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const [, , pack] = useLanguagePack();
+    const tx = useTranslations();
+    const messages = useMessages();
     const { theme } = useTheme();
     const isMobile = useIsMobile();
     const [mobileTab, setMobileTab] = useState<"code" | "result">("code");
@@ -238,7 +239,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         lspConnectingRef.current = false;
         clearLspTimer();
         codeEditorRef.current?.disposeLsp(); // tear down the stalled attempt → work without LSP
-        setLspModal({ kind: "alert", variant: "warning", title: pack.clang.lsp_fail_title, message: pack.clang.lsp_fail_message });
+        setLspModal({ kind: "alert", variant: "warning", title: tx("clang.lsp_fail_title"), message: tx("clang.lsp_fail_message") });
     }, [clearLspTimer]);
 
     const beginLspConnecting = useCallback(() => {
@@ -298,7 +299,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // connect prompt and trigger a fresh connection attempt.
     const handleLspCommand = useCallback(() => {
         if (lspConnectedRef.current) {
-            setLspModal({ kind: "alert", variant: "info", title: pack.clang.lsp_connected_title, message: pack.clang.lsp_already_connected });
+            setLspModal({ kind: "alert", variant: "info", title: tx("clang.lsp_connected_title"), message: tx("clang.lsp_already_connected") });
             return;
         }
         beginLspConnecting();
@@ -478,7 +479,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setFileName(updated.name);
             setFileMeta(prev => prev ? { ...prev, name: updated.name } : prev);
         } catch (err: any) {
-            if (err?.status === 409) setErrorMsg(pack.clang.project_name_conflict);
+            if (err?.status === 409) setErrorMsg(tx("clang.project_name_conflict"));
             if (fileMeta) setFileName(fileMeta.name);
         }
     }, [fileId, fileName, fileMeta]);
@@ -510,12 +511,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (err?.status === 401) {
                 router.push(`/login?next=${encodeURIComponent(`/workspace?file=${fileId}`)}`);
             } else {
-                setErrorMsg(pack.workspace.ui.share_login_to_duplicate);
+                setErrorMsg(tx("workspace.ui.share_login_to_duplicate"));
             }
         } finally {
             setDuplicating(false);
         }
-    }, [fileId, duplicating, router, pack]);
+    }, [fileId, duplicating, router]);
 
     // ─── File-tree operations ─────────────────────────────────────────────
     // Apply a pure transformation to the bundle, persist immediately, and
@@ -538,14 +539,14 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // surface errors back into the input via a return value: returning a
     // string keeps the input open with that message, null commits.
     const handleCreateFile = useCallback((parentPath: string, name: string): string | null => {
-        if (!isOwnerRef.current) return pack.clang.no_permission;
+        if (!isOwnerRef.current) return tx("clang.no_permission");
         const validationErr = validateFileName(name);
         if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
         let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleAddFile(prev.tree, path, "");
-            if (!nextTree) { resultErr = pack.clang.file_name_conflict; return null; }
+            if (!nextTree) { resultErr = tx("clang.file_name_conflict"); return null; }
             return {
                 ...prev,
                 tree: nextTree,
@@ -560,21 +561,21 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, [applyBundleChange]);
 
     const handleCreateFolder = useCallback((parentPath: string, name: string): string | null => {
-        if (!isOwnerRef.current) return pack.clang.no_permission;
+        if (!isOwnerRef.current) return tx("clang.no_permission");
         const validationErr = validateFolderName(name);
         if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
         let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleAddFolder(prev.tree, path);
-            if (!nextTree) { resultErr = pack.clang.folder_name_conflict; return null; }
+            if (!nextTree) { resultErr = tx("clang.folder_name_conflict"); return null; }
             return { ...prev, tree: nextTree };
         });
         return resultErr;
     }, [applyBundleChange]);
 
     const handleRenameNode = useCallback((path: string, newName: string): string | null => {
-        if (!isOwnerRef.current) return pack.clang.no_permission;
+        if (!isOwnerRef.current) return tx("clang.no_permission");
         const { base, dir } = splitPath(path);
         if (newName === base) return null; // no-op
         const isFile = listBundleFiles(pendingBundleRef.current.tree).some(f => f.path === path);
@@ -583,7 +584,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleRenameNode(prev.tree, path, newName);
-            if (!nextTree) { resultErr = pack.clang.name_conflict; return null; }
+            if (!nextTree) { resultErr = tx("clang.name_conflict"); return null; }
             const newPath = dir ? `${dir}/${newName}` : newName;
             const rewrite = (p: string) =>
                 p === path ? newPath
@@ -679,7 +680,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const handleSetAsEntry = useCallback((path: string) => {
         if (!isOwnerRef.current) return;
         if (!path.toLowerCase().endsWith(".cpp")) {
-            window.alert(pack.clang.entry_must_cpp);
+            window.alert(tx("clang.entry_must_cpp"));
             return;
         }
         applyBundleChange(prev => prev.entry === path ? null : { ...prev, entry: path });
@@ -716,7 +717,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         // Cap per-file size at 1 MB. The whole bundle is bounded by the
         // backend's 5 MB content limit; this is a friendlier per-file ceiling.
         if (file.size > 1 * 1024 * 1024) {
-            window.alert(pack.clang.file_too_large_1mb);
+            window.alert(tx("clang.file_too_large_1mb"));
             return;
         }
         const parentPath = uploadParentRef.current;
@@ -725,7 +726,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         const content = binary ? await fileToBase64(file) : await file.text();
         applyBundleChange(prev => {
             const nextTree = bundleAddFile(prev.tree, path, content, binary ? "base64" : undefined);
-            if (!nextTree) { window.alert(pack.clang.file_name_conflict); return null; }
+            if (!nextTree) { window.alert(tx("clang.file_name_conflict")); return null; }
             // Binary assets (icons) aren't editable — add them to the tree
             // without opening an editor tab. Text files open as before.
             if (binary) return { ...prev, tree: nextTree };
@@ -756,11 +757,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         e.target.value = "";
         if (!file || !isOwnerRef.current) return;
         const name = file.name;
-        if (!isBinaryName(name)) { window.alert(pack.clang.image_only); return; }
+        if (!isBinaryName(name)) { window.alert(tx("clang.image_only")); return; }
         const nameErr = validateFileName(name);
         if (nameErr) { window.alert(nameErr); return; }
         // Source images can be larger than a finished .ico (the server converts).
-        if (file.size > 4 * 1024 * 1024) { window.alert(pack.clang.file_too_large_4mb); return; }
+        if (file.size > 4 * 1024 * 1024) { window.alert(tx("clang.file_too_large_4mb")); return; }
         const base64 = await fileToBase64(file);
         const path = `${ICON_DIR}/${name}`;
         // Serialize config.json up front so a parse error aborts before we touch
@@ -771,7 +772,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             compile: compileCfg.options,
             environment: envCfg.environment,
         });
-        if (cfg.error) { window.alert(pack.clang.config_json_format_error); return; }
+        if (cfg.error) { window.alert(tx("clang.config_json_format_error")); return; }
         applyBundleChange(prev => {
             // 1) add (replacing any existing file at the path) the icon under
             //    build/icon — remove+add guarantees base64 encoding even if a
@@ -903,7 +904,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, []);
     const handleUnresolvedDefinition = useCallback((uri: string) => {
         const filename = uri.split(/[/\\]/).pop() || uri;
-        setEditorNotice(pack.clang.external_lib_locked.replace("$0", filename));
+        setEditorNotice(tx("clang.external_lib_locked", { 0: filename }));
         if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
         editorNoticeTimerRef.current = setTimeout(() => setEditorNotice(null), 4500);
     }, []);
@@ -1067,7 +1068,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setRunState("compiling");
 
         if (compileCfg.error) {
-            setConfigAlert({ variant: "warning", title: pack.clang.config_json_error_title, message: compileCfg.error });
+            setConfigAlert({ variant: "warning", title: tx("clang.config_json_error_title"), message: compileCfg.error });
         }
 
         try {
@@ -1129,10 +1130,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (buildState === "building" || buildState === "downloading") return;
 
         setBuildState("building");
-        setBuildProgress({ step: 0, total: 0, message: pack.clang.progress_sending });
+        setBuildProgress({ step: 0, total: 0, message: tx("clang.progress_sending") });
 
         if (compileCfg.error) {
-            setConfigAlert({ variant: "warning", title: pack.clang.config_json_error_title, message: compileCfg.error });
+            setConfigAlert({ variant: "warning", title: tx("clang.config_json_error_title"), message: compileCfg.error });
         }
 
         // Target OS (and the rest of the options) come from config.json; "auto"
@@ -1196,7 +1197,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             });
 
             setBuildState("downloading");
-            setBuildProgress(prev => ({ step: prev?.step ?? 0, total: prev?.total ?? 0, message: pack.clang.progress_downloading }));
+            setBuildProgress(prev => ({ step: prev?.step ?? 0, total: prev?.total ?? 0, message: tx("clang.progress_downloading") }));
 
             const dlRes = await fetch(`${API_BASE}/compile/build/download/${doneUuid}`);
             if (!dlRes.ok) {
@@ -1212,7 +1213,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             URL.revokeObjectURL(url);
 
             setBuildState("done");
-            setBuildProgress(prev => ({ step: prev?.total ?? 0, total: prev?.total ?? 0, message: pack.clang.progress_download_done }));
+            setBuildProgress(prev => ({ step: prev?.total ?? 0, total: prev?.total ?? 0, message: tx("clang.progress_download_done") }));
         } catch (e) {
             setBuildState("error");
             setErrorMsg(e instanceof Error ? e.message : String(e));
@@ -1284,23 +1285,23 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const runDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
     const buildDisabled = runState === "loading" || runState === "compiling" || runState === "running" || buildState === "building" || buildState === "downloading";
     const runLabel =
-        runState === "loading"   ? pack.clang.progress_loading :
-        runState === "compiling" ? pack.clang.progress_compiling :
-        runState === "running"   ? pack.workspace.ui.run_button_running :
-        pack.workspace.ui.run_button;
+        runState === "loading"   ? tx("clang.progress_loading") :
+        runState === "compiling" ? tx("clang.progress_compiling") :
+        runState === "running"   ? tx("workspace.ui.run_button_running") :
+        tx("workspace.ui.run_button");
     const buildLabel =
-        buildState === "building"    ? pack.clang.progress_building :
-        buildState === "downloading" ? pack.clang.progress_downloading :
+        buildState === "building"    ? tx("clang.progress_building") :
+        buildState === "downloading" ? tx("clang.progress_downloading") :
         buildCfg.options.system === "auto" ? "Build" :
         `Build (${SYSTEM_LABEL[buildCfg.options.system]})`;
 
     const runStatusLabel =
-        runState === "loading"   ? pack.clang.status_loading   :
-        runState === "compiling" ? pack.clang.status_compiling :
-        runState === "running"   ? pack.clang.status_running   :
-        runState === "done"      ? pack.clang.status_done      :
-        runState === "error"     ? pack.clang.status_error     :
-        pack.clang.status_waiting;
+        runState === "loading"   ? tx("clang.status_loading")   :
+        runState === "compiling" ? tx("clang.status_compiling") :
+        runState === "running"   ? tx("clang.status_running")   :
+        runState === "done"      ? tx("clang.status_done")      :
+        runState === "error"     ? tx("clang.status_error")     :
+        tx("clang.status_waiting");
 
     const runStatusColor =
         runState === "error"     ? token.color.danger  :
@@ -1373,7 +1374,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             fontFamily: token.font.family.mono,
                             whiteSpace: "nowrap",
                         }}>
-                            {pack.workspace.ui.share_readonly_badge}
+                            {tx("workspace.ui.share_readonly_badge")}
                         </span>
                     )}
                 </div>
@@ -1384,10 +1385,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
                     {!isMobile && <>
                     {isOwner && saveStatus === "unsaved" && (
-                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>{pack.clang.save_unsaved}</span>
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>{tx("clang.save_unsaved")}</span>
                     )}
                     {isOwner && saveStatus === "error" && (
-                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>{pack.clang.save_failed}</span>
+                        <span style={{ fontSize: token.font.size.fs11, color: token.color.danger }}>{tx("clang.save_failed")}</span>
                     )}
                     {isOwner && (
                         <Button
@@ -1397,7 +1398,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             onClick={handleSaveToServer}
                             disabled={saveStatus === "saving" || !fileId}
                         >
-                            {saveStatus === "saving" ? pack.clang.saving : pack.clang.save}
+                            {saveStatus === "saving" ? tx("clang.saving") : tx("clang.save")}
                         </Button>
                     )}
                     {isOwner === false && (
@@ -1408,7 +1409,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             disabled={duplicating || !fileId}
                             leading={duplicating ? <Spinner size="sm" /> : undefined}
                         >
-                            {pack.workspace.ui.share_duplicate_button}
+                            {tx("workspace.ui.share_duplicate_button")}
                         </Button>
                     )}
                     <Button
@@ -1417,7 +1418,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         leading={buildSpinning ? <Spinner size="sm" /> : <Icon.Download size={11} />}
                         onClick={handleBuild}
                         disabled={buildDisabled}
-                        title={pack.clang.build_settings_title}
+                        title={tx("clang.build_settings_title")}
                     >
                         {buildLabel}
                     </Button>
@@ -1431,9 +1432,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             : <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="9" r="4" /><path d="M8 5V3M5 6 3.5 4.5M11 6l1.5-1.5M4 9H2M14 9h-2M5 12l-1.5 1.5M11 12l1.5 1.5" /></svg>}
                         onClick={debug.handleDebug}
                         disabled={debug.status === "compiling" || debug.status === "running"}
-                        title={pack.clang.debug_title}
+                        title={tx("clang.debug_title")}
                     >
-                        {pack.clang.debug_button}
+                        {tx("clang.debug_button")}
                     </Button>
 
                     <button
@@ -1469,7 +1470,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <button
                             type="button"
                             onClick={handleToggleTree}
-                            title={pack.clang.filetree_toggle}
+                            title={tx("clang.filetree_toggle")}
                             aria-pressed={bundle.ui.treeOpen}
                             style={{
                                 display: "inline-flex", alignItems: "center",
@@ -1520,7 +1521,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                             <button
                                                 type="button"
                                                 onClick={e => { e.stopPropagation(); handleTabClose(tab); }}
-                                                aria-label={pack.clang.tab_close_aria.replace("$0", tab.label)}
+                                                aria-label={tx("clang.tab_close_aria", { 0: tab.label })}
                                                 style={{
                                                     marginLeft: 2,
                                                     width: 16,
@@ -1547,11 +1548,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <button
                             type="button"
                             onClick={handleLspCommand}
-                            title={lspConnected ? pack.clang.lsp_status_connected : pack.clang.lsp_status_disconnected}
+                            title={lspConnected ? tx("clang.lsp_status_connected") : tx("clang.lsp_status_disconnected")}
                             style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 4px", border: "none", background: "transparent", cursor: "pointer", color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}
                         >
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
-                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : pack.clang.lsp_disconnected_short}
+                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : tx("clang.lsp_disconnected_short")}
                         </button>
                     </div>
 
@@ -1639,7 +1640,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                             if (editorNoticeTimerRef.current) clearTimeout(editorNoticeTimerRef.current);
                                             setEditorNotice(null);
                                         }}
-                                        aria-label={pack.clang.notice_close_aria}
+                                        aria-label={tx("clang.notice_close_aria")}
                                         style={{
                                             marginLeft: 4,
                                             width: 16,
@@ -1670,12 +1671,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <button onClick={() => setRightTab("console")}
                             style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "console" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "console" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
                         >
-                            <Icon.Terminal size={11} /> {pack.workspace.ui.console_tab}
+                            <Icon.Terminal size={11} /> {tx("workspace.ui.console_tab")}
                         </button>
                         <button onClick={() => setRightTab("infos")}
                             style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "infos" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "infos" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
                         >
-                            {pack.workspace.ui.infos_tab}
+                            {tx("workspace.ui.infos_tab")}
                             {infos.filter(i => i.severity === "error" || i.severity === "warn").length > 0 && (
                                 <span style={{ marginLeft: 2, padding: "1px 5px", borderRadius: 999, background: infos.some(i => i.severity === "error") ? token.color.danger : token.color.warning, color: "#fff", fontSize: token.font.size.fs10, fontWeight: 700, lineHeight: 1.4 }}>
                                     {infos.filter(i => i.severity === "error" || i.severity === "warn").length}
@@ -1685,7 +1686,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <button onClick={() => setRightTab("debug")}
                             style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "debug" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "debug" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
                         >
-                            {pack.clang.debug_button}
+                            {tx("clang.debug_button")}
                             {debugActive && (
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: debug.status === "stopped" ? token.color.warning : token.color.success, display: "inline-block" }} />
                             )}
@@ -1695,7 +1696,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
                         <div style={{ padding: 14, borderBottom: `1px solid ${token.color.borderSubtle}` }}>
                             <div style={{ padding: 14, background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md }}>
-                                <div style={{ fontSize: token.font.size.fs10, textTransform: "uppercase", letterSpacing: "0.06em", color: token.color.fgSubtle, fontWeight: 600 }}>{pack.workspace.ui.output_label}</div>
+                                <div style={{ fontSize: token.font.size.fs10, textTransform: "uppercase", letterSpacing: "0.06em", color: token.color.fgSubtle, fontWeight: 600 }}>{tx("workspace.ui.output_label")}</div>
                                 <div style={{
                                     fontFamily: token.font.family.mono,
                                     fontSize: resultValue !== null ? token.font.size.fs32 : token.font.size.fs24,
@@ -1720,14 +1721,14 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}
                         >
                             <div data-placeholder style={{ padding: "3px 14px", color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>
-                                {pack.workspace.ui.log_placeholder}
+                                {tx("workspace.ui.log_placeholder")}
                             </div>
                         </div>
                         {/* Interactive input prompt (Asyncify run paused on sim_input_*) */}
                         {inputRequest && (
                             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, background: token.color.bgSubtle }}>
                                 <span style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs11, color: token.color.fgMuted, whiteSpace: "nowrap" }}>
-                                    {inputRequest.kind === "i32" ? pack.workspace.input.int_label : pack.workspace.input.float_label}
+                                    {inputRequest.kind === "i32" ? tx("workspace.input.int_label") : tx("workspace.input.float_label")}
                                 </span>
                                 <input
                                     autoFocus
@@ -1738,12 +1739,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     onKeyDown={(e) => { if (e.key === "Enter") submitInput(); }}
                                     style={{ flex: 1, minWidth: 0, padding: "6px 8px", fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, background: token.color.bg, color: token.color.fg, border: `1px solid ${token.color.border}`, borderRadius: 6 }}
                                 />
-                                <Button onClick={submitInput}>{pack.workspace.input.submit}</Button>
+                                <Button onClick={submitInput}>{tx("workspace.input.submit")}</Button>
                             </div>
                         )}
                         <div style={{ padding: "8px 14px", borderTop: `1px solid ${token.color.border}`, fontFamily: token.font.family.mono, fontSize: token.font.size.fs10, color: token.color.fgSubtle, display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: token.color.success, display: "inline-block" }} />
-                            {tfBackend === "initializing" ? pack.workspace.ui.backend_initializing : `${tfBackend} · ${pack.workspace.ui.backend_ready}`}
+                            {tfBackend === "initializing" ? tx("workspace.ui.backend_initializing") : `${tfBackend} · ${tx("workspace.ui.backend_ready")}`}
                         </div>
                     </div>
 
@@ -1751,7 +1752,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
                             {infos.length === 0 ? (
                                 <div style={{ padding: "3px 14px", color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>
-                                    {pack.workspace.ui.infos_empty}
+                                    {tx("workspace.ui.infos_empty")}
                                 </div>
                             ) : infos.map((entry, i) => {
                                 const levelColor =
@@ -1769,7 +1770,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                         key={i}
                                         type="button"
                                         onClick={() => focusInfoEntry(entry)}
-                                        title={pack.clang.jump_title}
+                                        title={tx("clang.jump_title")}
                                         style={{
                                             display: "flex",
                                             alignItems: "flex-start",
@@ -1833,7 +1834,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 }}>
                     {([
                         { id: "code" as const, icon: <Icon.File size={14} />, label: "Code" },
-                        { id: "result" as const, icon: <Icon.Terminal size={14} />, label: pack.workspace.ui.result_tab },
+                        { id: "result" as const, icon: <Icon.Terminal size={14} />, label: tx("workspace.ui.result_tab") },
                     ]).map(({ id, icon, label }) => {
                         const active = mobileTab === id;
                         return (
@@ -1894,7 +1895,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 fontFamily: token.font.family.mono,
                             }}
                         >
-                            {pack.clang.close}
+                            {tx("clang.close")}
                         </button>
                     </div>
                     <pre style={{
@@ -1942,7 +1943,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 mode={managerMode}
                 code={entryCode}
                 fileName={fileName}
-                pack={pack}
+                pack={messages}
                 sharePanel={isOwner && fileMeta ? (
                     <ShareControl
                         file={fileMeta}
@@ -1957,21 +1958,21 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
             {lspModal?.kind === "connecting" && (
                 <Modal width={420}>
-                    <ModalHeader>{pack.clang.lsp_connecting_title}</ModalHeader>
+                    <ModalHeader>{tx("clang.lsp_connecting_title")}</ModalHeader>
                     <ModalBody>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                             <Spinner size="lg" />
                             <div style={{ fontSize: token.font.size.fs13, color: token.color.fg, lineHeight: 1.6 }}>
-                                <div>{pack.clang.lsp_connecting_msg}</div>
+                                <div>{tx("clang.lsp_connecting_msg")}</div>
                                 <div style={{ marginTop: 4, color: token.color.fgMuted, fontSize: token.font.size.fs11 }}>
-                                    {pack.clang.lsp_cancel_hint}
+                                    {tx("clang.lsp_cancel_hint")}
                                 </div>
                             </div>
                         </div>
                     </ModalBody>
                     <ModalFooter>
                         <Button variant="ghost" size="sm" onClick={handleLspCancel}>
-                            {pack.clang.cancel}
+                            {tx("clang.cancel")}
                         </Button>
                     </ModalFooter>
                 </Modal>
@@ -2039,7 +2040,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                         <img src={src} alt={name} width={128} height={128} style={{ display: "block", objectFit: "contain" }} />
                                     </div>
                                 ) : (
-                                    <span style={{ color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>{pack.clang.preview_unavailable}</span>
+                                    <span style={{ color: token.color.fgMuted, fontSize: token.font.size.fs12 }}>{tx("clang.preview_unavailable")}</span>
                                 )}
                                 <span style={{ color: token.color.fgSubtle, fontFamily: token.font.family.mono, fontSize: token.font.size.fs11 }}>{imagePreview}</span>
                             </div>
@@ -2051,17 +2052,17 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             {deleteConfirm && (
                 <Modal width={420} onClose={() => setDeleteConfirm(null)}>
                     <ModalHeader onClose={() => setDeleteConfirm(null)}>
-                        {deleteConfirm.kind === "entry-block" ? pack.clang.delete_entry_title : pack.clang.delete_confirm_title}
+                        {deleteConfirm.kind === "entry-block" ? tx("clang.delete_entry_title") : tx("clang.delete_confirm_title")}
                     </ModalHeader>
                     <ModalBody>
                         {deleteConfirm.kind === "entry-block" ? (
                             <div style={{ fontSize: token.font.size.fs13, color: token.color.fg, lineHeight: 1.6 }}>
                                 <div>
                                     <span style={{ fontFamily: token.font.family.mono }}>{deleteConfirm.path}</span>
-                                    {pack.clang.entry_contains}
+                                    {tx("clang.entry_contains")}
                                 </div>
                                 <div style={{ marginTop: 8, color: token.color.fgMuted }}>
-                                    {pack.clang.entry_reassign}
+                                    {tx("clang.entry_reassign")}
                                 </div>
                             </div>
                         ) : (
@@ -2069,11 +2070,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 <div>
                                     <span style={{ fontFamily: token.font.family.mono }}>{deleteConfirm.path}</span>
                                     {deleteConfirm.affected.length > 1
-                                        ? pack.clang.delete_with_children.replace("$0", String(deleteConfirm.affected.length))
-                                        : pack.clang.delete_single}
+                                        ? tx("clang.delete_with_children", { 0: deleteConfirm.affected.length })
+                                        : tx("clang.delete_single")}
                                 </div>
                                 <div style={{ marginTop: 8, color: token.color.fgMuted, fontSize: token.font.size.fs11 }}>
-                                    {pack.clang.delete_irreversible}
+                                    {tx("clang.delete_irreversible")}
                                 </div>
                             </div>
                         )}
@@ -2081,15 +2082,15 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     <ModalFooter>
                         {deleteConfirm.kind === "entry-block" ? (
                             <Button variant="primary" size="sm" onClick={() => setDeleteConfirm(null)}>
-                                {pack.clang.confirm}
+                                {tx("clang.confirm")}
                             </Button>
                         ) : (
                             <>
                                 <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>
-                                    {pack.clang.cancel}
+                                    {tx("clang.cancel")}
                                 </Button>
                                 <Button variant="danger" size="sm" onClick={confirmDelete}>
-                                    {pack.clang.delete}
+                                    {tx("clang.delete")}
                                 </Button>
                             </>
                         )}

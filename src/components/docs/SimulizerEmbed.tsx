@@ -16,7 +16,7 @@ import * as Blockly from "blockly/core";
 import "blockly/blocks";
 import * as BlocklyEn from "blockly/msg/en";
 
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useLocale, useMessages } from "next-intl";
 import { token } from "@/components/tokens";
 import { Button } from "@/components/atoms/Button";
 import { translateBlockSet, unpack, type BlockSet, type BlockDef } from "@/utils/blockly/$base";
@@ -108,7 +108,8 @@ export function SimulizerEmbed({ fileId }: SimulizerEmbedProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLDivElement>(null);
     const wsRef = useRef<Blockly.WorkspaceSvg | null>(null);
-    const [lang, , pack, packReady] = useLanguagePack();
+    const lang = useLocale();
+    const pack = useMessages() as AnyPack;
     const [state, setState] = useState<State>({ kind: "idle" });
     const [activated, setActivated] = useState(false);
 
@@ -130,7 +131,7 @@ export function SimulizerEmbed({ fileId }: SimulizerEmbedProps) {
     }, [activated]);
 
     useEffect(() => {
-        if (!activated || !packReady || !canvasRef.current) return;
+        if (!activated || !canvasRef.current) return;
 
         const id = fileId.trim();
         if (!id || id === PLACEHOLDER_ID) {
@@ -206,7 +207,7 @@ export function SimulizerEmbed({ fileId }: SimulizerEmbedProps) {
             wsRef.current?.dispose();
             wsRef.current = null;
         };
-    }, [activated, packReady, pack, fileId]);
+    }, [activated, pack, fileId]);
 
     const frame: React.CSSProperties = {
         border: `1px solid ${token.color.border}`,

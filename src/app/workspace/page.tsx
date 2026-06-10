@@ -6,7 +6,7 @@ import { Logo } from "@/components/atoms/Logo";
 import { Spinner } from "@/components/atoms/Spinner";
 import { token } from "@/components/tokens";
 import { getFile, getMe, type FileDetail } from "@/lib/authapi";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 
 import BlockWorkspace from "./BlockWorkspace";
 import ClangWorkspace from "./ClangWorkspace";
@@ -16,7 +16,8 @@ type FileError = "not_found" | "forbidden";
 const WorkspaceRouter: React.FC = () => {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const [, , pack] = useLanguagePack();
+    const tErr = useTranslations("file_error");
+    const tMsg = useTranslations("messages");
 
     const fileParam = searchParams.get("file");
     const exampleParam = searchParams.get("example");
@@ -52,8 +53,7 @@ const WorkspaceRouter: React.FC = () => {
         return () => { cancelled = true; };
     }, [fileParam, exampleParam, router]);
 
-    if (fileError) {
-        const t = pack.file_error;
+    if (fileError) {
         const isForbidden = fileError === "forbidden";
         return (
             <div style={{
@@ -71,17 +71,17 @@ const WorkspaceRouter: React.FC = () => {
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp2 }}>
                         <div style={{ fontSize: token.font.size.fs20, fontWeight: 700, color: token.color.fgStrong, letterSpacing: token.font.tracking.tight }}>
-                            {isForbidden ? t.forbidden_title : t.not_found_title}
+                            {isForbidden ? tErr("forbidden_title") : tErr("not_found_title")}
                         </div>
                         <div style={{ fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.6 }}>
-                            {isForbidden ? t.forbidden_desc : t.not_found_desc}
+                            {isForbidden ? tErr("forbidden_desc") : tErr("not_found_desc")}
                         </div>
                     </div>
                     <button
                         onClick={() => router.replace("/dashboard")}
                         style={{ padding: "8px 20px", borderRadius: token.radius.md, background: token.color.accent, color: token.color.fgOnAccent, fontWeight: 600, fontSize: token.font.size.fs13, border: "none", cursor: "pointer" }}
                     >
-                        {t.go_dashboard}
+                        {tErr("go_dashboard")}
                     </button>
                 </div>
             </div>
@@ -114,7 +114,7 @@ const WorkspaceRouter: React.FC = () => {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, color: token.color.fgSubtle, fontSize: token.font.size.fs13, fontFamily: token.font.family.mono }}>
                     <Spinner size="md" />
-                    <span>Loading…</span>
+                    <span>{tMsg("loading")}</span>
                 </div>
             </div>
         );

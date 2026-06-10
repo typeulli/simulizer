@@ -72,7 +72,7 @@ import "@codingame/monaco-vscode-cpp-default-extension";
 import "@codingame/monaco-vscode-json-default-extension";
 
 import { setupJsonLanguageService } from "./jsonLanguageService";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 
 /** Connection state of the C++ language client, mirrored from vscode-languageclient's `State`. */
 export type LspStatus = "starting" | "running" | "stopped";
@@ -361,7 +361,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     editorCommands,
     viewStateKey,
 }, ref) {
-    const [, , pack] = useLanguagePack();
+    const tClang = useTranslations("clang");
     const colorTheme = theme === "dark" ? "Default Dark Modern" : "Default Light Modern";
 
     // Push theme changes through the vscode configuration service so Monaco
@@ -578,7 +578,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         try {
             const svc = await getService(IQuickInputService);
             const items = filesRef.current.map(f => ({ label: f.path }));
-            const picked = await svc.pick(items, { placeHolder: pack.clang.ce_open_file });
+            const picked = await svc.pick(items, { placeHolder: tClang("ce_open_file") });
             const path = (picked as { label: string } | undefined)?.label;
             if (!path) return;
             const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));

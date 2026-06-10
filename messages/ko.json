@@ -1,0 +1,902 @@
+{
+  "meta": {
+    "langc": "ko",
+    "name": "한국어"
+  },
+  "types": {
+    "i32": "정수",
+    "f64": "실수",
+    "bool": "불리언",
+    "vec2": "벡터2",
+    "vec3": "벡터3",
+    "bd2": "경계조건2D",
+    "bd3": "경계조건3D",
+    "void": "void"
+  },
+  "topbar": {
+    "home": "홈",
+    "my_drafts": "내 Drafts",
+    "account": "계정",
+    "dark_mode": "다크 모드",
+    "light_mode": "라이트 모드",
+    "settings": "설정",
+    "log_out": "로그아웃"
+  },
+  "messages": {
+    "welcome": "환영합니다",
+    "loading": "로딩 중...",
+    "error": "오류가 발생했습니다",
+    "alert_title": "알림",
+    "warning_title": "경고",
+    "error_title": "오류",
+    "ok_button": "확인",
+    "command_search_placeholder": "파일 검색…   ( \"$\" 로 명령 )"
+  },
+  "home": {
+    "nav_docs": "문서",
+    "nav_examples": "예제",
+    "nav_github": "GitHub",
+    "nav_dashboard": "대시보드",
+    "nav_login": "로그인",
+    "hero_badge": "WebAssembly · TensorFlow.js · 물리 시뮬레이션",
+    "hero_title_pre": "코드를 몰라도",
+    "hero_title_gradient": "물리를 시뮬레이션",
+    "hero_title_post": "하세요.",
+    "hero_body": "블록을 끼워 맞추면 브라우저 안에서 WebAssembly로 컴파일되어 네이티브에 가까운 속도로 실행됩니다. 설치할 것도, 배워야 할 문법도 없습니다.",
+    "cta_dashboard": "대시보드로 이동",
+    "cta_start": "무료로 시작하기",
+    "cta_guide": "문서 읽기",
+    "stat_pipeline_label": "파이프라인",
+    "stat_pipeline_value": "3단계",
+    "stat_pipeline_sub": "블록 → AST → WASM",
+    "stat_gpu_label": "GPU 가속",
+    "stat_gpu_value": "WebGPU",
+    "stat_gpu_sub": "TensorFlow.js 자동 백엔드",
+    "stat_local_label": "로컬 실행",
+    "stat_local_value": "오프라인",
+    "stat_local_sub": "서버 전송 없음",
+    "feature_blocks_title": "친숙한 블록",
+    "feature_blocks_body_pre": "i32/f64 대신 ",
+    "feature_blocks_body_bold": "정수·실수·행렬",
+    "feature_blocks_body_post": ". 물리학자에게 익숙한 언어로.",
+    "feature_speed_title": "네이티브 속도",
+    "feature_speed_body_pre": "브라우저에서 바로 ",
+    "feature_speed_body_bold": "WebAssembly",
+    "feature_speed_body_post": "로 컴파일. 루프 수천만 회도 순식간.",
+    "feature_ai_title": "AI 동반",
+    "feature_ai_body_pre": "자연어로 설명하면 블록 프로그램을 ",
+    "feature_ai_body_bold": "자동 생성",
+    "feature_ai_body_post": "합니다.",
+    "footer_copy": "© 2026 Simulizer · AGPL-3.0",
+    "footer_mode": "Research mode"
+  },
+  "docs": {
+    "open_in_workspace": "워크스페이스에서 열기"
+  },
+  "login": {
+    "left_title_1": "블록으로 만드는",
+    "left_title_2": "물리 시뮬레이션",
+    "left_body": "코드 없이 블록 프로그래밍으로 물리 시뮬레이션을 설계하고, WebAssembly로 실행하세요.",
+    "left_feature_1": "Blockly 기반 비주얼 프로그래밍",
+    "left_feature_2": "WebAssembly 실시간 컴파일 & 실행",
+    "left_feature_3": "벡터 필드 · 경계 조건 시각화",
+    "left_feature_4": "AI 어시스턴트 통합",
+    "right_title": "시작하기",
+    "right_subtitle": "Google 계정으로 로그인하세요.",
+    "account_deleted_msg": "계정이 삭제되었어요. 이용해주셔서 감사합니다.",
+    "error_oauth_denied": "로그인이 취소되었어요.",
+    "error_oauth_failed": "Google 로그인 중 오류가 발생했어요.",
+    "google_button": "Google로 로그인"
+  },
+  "dashboard": {
+    "header_title": "내 파일",
+    "section_title": "{name}의 파일",
+    "new_file_button": "새 파일",
+    "empty_title": "파일이 없어요",
+    "empty_desc": "새 파일을 만들어 시작하세요.",
+    "empty_new_file_button": "새 파일 만들기",
+    "card_updated": "수정 {date}",
+    "menu_open": "열기",
+    "menu_rename": "이름 변경",
+    "menu_duplicate": "복제",
+    "menu_share": "공유",
+    "menu_delete": "삭제",
+    "rename_conflict": "같은 이름의 파일이 이미 있어요.",
+    "badge_link_shared": "링크 공유",
+    "new_file_type_block_title": "Block File",
+    "new_file_type_block_desc": "블록을 조립해 시뮬레이션을 만듭니다.",
+    "new_file_type_clang_title": "C++ File",
+    "new_file_type_clang_desc": "C++ 코드를 직접 작성합니다.",
+    "new_file_type_import_title": "불러오기",
+    "new_file_type_import_desc": ".simulizer / .json / .cpp 파일에서 불러옵니다.",
+    "badge_clangfile": "C++",
+    "menu_duplicate_cpp": "C++ 파일로 복제",
+    "duplicate_cpp_failed": "C++ 파일로 복제하지 못했어요",
+    "import_failed": "파일을 불러오지 못했어요",
+    "import_unsupported_ext": "지원하지 않는 확장자입니다",
+    "menu_set_thumbnail": "썸네일 변경",
+    "thumbnail_upload_failed": "썸네일 업로드에 실패했어요",
+    "thumbnail_not_image": "이미지 파일만 업로드할 수 있어요",
+    "thumbnail_too_large": "썸네일은 2MB 이하만 가능해요",
+    "thumbnail_modal_title": "썸네일 이미지 설정",
+    "thumbnail_dropzone_idle": "클릭해서 파일을 선택하거나, 여기로 드래그하세요",
+    "thumbnail_dropzone_hint": "PNG · JPG · WebP · 2MB 이하",
+    "thumbnail_recommended_size": "권장 사이즈: 약 {w} × {h}px",
+    "thumbnail_uploading": "업로드 중…",
+    "thumbnail_reset_button": "기본 이미지로 되돌리기",
+    "thumbnail_reset_failed": "기본 이미지로 되돌리지 못했어요"
+  },
+  "account": {
+    "breadcrumb": "계정",
+    "header_title": "Account",
+    "row_name": "이름",
+    "row_email": "이메일",
+    "row_joined": "가입일",
+    "row_last_login": "마지막 로그인",
+    "google_badge": "Google 계정으로 연결됨",
+    "danger_title": "위험 구역",
+    "danger_desc": "계정을 삭제하면 모든 파일과 데이터가 삭제됩니다. 삭제 후 30일이 지나면 되돌릴 수 없습니다.",
+    "delete_button": "계정 삭제",
+    "confirm_title": "본인 확인을 위해 Google 계정으로 다시 로그인해야 합니다.",
+    "confirm_desc": "로그인 후 계정과 모든 파일이 즉시 삭제됩니다.",
+    "confirm_button": "Google로 본인 확인 후 삭제",
+    "deleting_button": "삭제 중...",
+    "delete_error": "계정 삭제에 실패했어요. 다시 시도해주세요.",
+    "cancel_button": "취소"
+  },
+  "recover": {
+    "deleted_badge": "탈퇴한 계정입니다.",
+    "days_remaining": "{n}일 후 모든 데이터가 영구 삭제됩니다.",
+    "question": "계정을 복구하시겠어요?",
+    "question_sub": "복구하면 기존 파일을 그대로 사용할 수 있습니다.",
+    "recover_button": "계정 복구하기",
+    "recovering_button": "복구 중...",
+    "cancel_link": "복구하지 않고 삭제 진행",
+    "cancel_confirm": "지금 삭제하면 모든 파일이 즉시 영구 삭제됩니다.",
+    "delete_now_button": "지금 바로 삭제",
+    "deleting_button": "삭제 중...",
+    "cancel_error": "삭제에 실패했어요. 다시 시도해주세요.",
+    "cancel_button": "취소"
+  },
+  "setting": {
+    "breadcrumb": "설정",
+    "header_title": "전역 설정",
+    "back": "뒤로",
+    "section_title": "언어",
+    "section_desc": "Simulizer 인터페이스의 표시 언어를 선택하세요.",
+    "auto_detect": "자동 감지",
+    "auto_detect_sub": "브라우저 언어와 일치",
+    "save_button": "저장",
+    "saved_button": "✓ 저장됨",
+    "reload_hint": "저장 후 새로고침하면 새 언어가 적용됩니다."
+  },
+  "file_error": {
+    "not_found_title": "파일을 확인할 수 없습니다",
+    "not_found_desc": "해당 파일을 확인할 수 없어요. 삭제되었거나 잘못된 링크일 수 있습니다.",
+    "forbidden_title": "접근 권한이 없습니다",
+    "forbidden_desc": "이 파일에 접근할 수 있는 권한이 없어요. 소유자에게 권한을 요청해 보세요.",
+    "go_dashboard": "대시보드로 가기"
+  },
+  "not_found": {
+    "code": "404",
+    "title": "페이지를 찾을 수 없습니다",
+    "desc": "요청하신 페이지가 존재하지 않거나 이동되었습니다.",
+    "go_home": "홈으로 가기",
+    "go_back": "이전 페이지"
+  },
+  "boundary": {
+    "no_data_error": "실행할 데이터가 없습니다.",
+    "breadcrumb_2d": "경계조건 2D",
+    "breadcrumb_3d": "경계조건 3D"
+  },
+  "workspace": {
+    "compile": {
+      "block_to_ast": "📦 블록 → simulizer AST 변환 중..."
+    },
+    "blocks": {
+      "not": "! {0}",
+      "not_tooltip": "논리 NOT (eqz)",
+      "return_i32": "반환 정수 {0}",
+      "return_i32_tooltip": "정수 반환",
+      "return_f64": "반환 실수 {0}",
+      "return_f64_tooltip": "실수 반환",
+      "func_main": "함수 main → {0}",
+      "func_main_body": "본문 {0}",
+      "func_main_tooltip": "WebAssembly main 함수",
+      "custom_func_tooltip": "사용자 정의 함수: {0}",
+      "custom_func_call_tooltip": "{0} 함수 호출"
+    },
+    "ui": {
+      "header_title": "Blocky Simulation",
+      "run_button_running": "⏳ 실행 중...",
+      "run_button": "컴파일 & 실행",
+      "wat_button": "📄 WAT",
+      "blocks_button": "📁 파일",
+      "func_button": "⊕ 함수",
+      "reset_button": "↺ 초기화",
+      "backend_webgpu": "webgpu",
+      "backend_webgl": "webgl",
+      "backend_cpu": "cpu",
+      "status_waiting": "대기",
+      "status_converting": "변환 중",
+      "status_running": "실행 중",
+      "status_done": "완료",
+      "status_error": "오류",
+      "result_header": "결과 & 로그",
+      "output_label": "Output",
+      "log_placeholder": "▶ 실행 버튼을 눌러 시작하세요",
+      "export_button": "내보내기",
+      "import_button": "불러오기",
+      "name_input_placeholder": "이름",
+      "save_local_button": "로컬 저장",
+      "save_file_button": "파일 저장",
+      "copy_button": "복사",
+      "open_file_button": "파일 열기",
+      "apply_button": "적용",
+      "xml_textarea_placeholder": "XML을 붙여넣거나 파일을 여세요...",
+      "func_mgr_title": "⊕ 커스텀 함수 관리",
+      "func_empty_message": "등록된 커스텀 함수 없음",
+      "call_insert_button": "call 삽입",
+      "delete_button": "삭제",
+      "add_func_section": "새 함수 추가",
+      "func_name_placeholder": "함수 이름",
+      "add_param_button": "+ 파라미터",
+      "add_button": "추가",
+      "wat_viewer_title": "📄 생성된 WAT",
+      "canvas_tab_blocks": "블록 모드",
+      "canvas_tab_wat": "WAT 모드",
+      "tools_label": "도구",
+      "tool_boundary_2d": "경계조건 2D",
+      "tool_boundary_3d": "경계조건 3D",
+      "tool_track": "트래킹",
+      "console_tab": "콘솔",
+      "result_tab": "결과",
+      "infos_tab": "정보",
+      "infos_empty": "블록을 편집하면 정보가 표시됩니다.",
+      "wat_empty": "실행 후 WAT가 생성됩니다",
+      "backend_initializing": "백엔드 초기화 중...",
+      "backend_ready": "준비됨",
+      "stat_backend": "백엔드",
+      "stat_status": "상태",
+      "stat_run": "실행",
+      "stat_running": "중...",
+      "stat_done": "완료",
+      "share_button": "공유",
+      "share_dialog_title": "파일 공유",
+      "share_state_private": "비공개",
+      "share_state_link": "링크가 있는 모든 사용자",
+      "share_state_private_desc": "나만 이 파일에 접근할 수 있어요.",
+      "share_state_link_desc": "링크를 가진 누구나 읽고 자기 워크스페이스로 복제할 수 있어요.",
+      "share_copy_link": "링크 복사",
+      "share_link_copied": "복사됨!",
+      "share_readonly_badge": "읽기 전용",
+      "share_duplicate_button": "내 워크스페이스로 복제",
+      "share_login_to_duplicate": "복제하려면 로그인이 필요해요.",
+      "const_mgr_title": "⊕ 상수 추가",
+      "const_select_hint": "추가할 상수를 선택하세요. 선택한 상수들은 연결된 블록 더미로 추가됩니다.",
+      "const_tab_math": "수학 상수",
+      "const_tab_fundamental": "근본 물리 상수",
+      "const_tab_experimental": "실험 물리 상수",
+      "const_search_placeholder": "🔍 이름이나 기호로 검색...",
+      "const_no_results": "검색 결과가 없습니다",
+      "initializing": "초기화 중...",
+      "save": "저장",
+      "saving": "저장 중...",
+      "save_unsaved": "저장 안됨",
+      "save_failed": "저장 실패",
+      "build_os_title": "빌드 대상 OS",
+      "build_os_aria": "빌드 대상 OS 선택",
+      "block_nav_title": "클릭하여 관련 블록으로 이동",
+      "stat_run_time": "실행 시간",
+      "export_cpp_menu": "C++ 파일로 내보내기"
+    },
+    "toolbox": {
+      "int": "정수",
+      "float": "실수",
+      "bool": "불리언",
+      "flow": "제어 흐름",
+      "var": "지역 변수",
+      "array": "배열",
+      "tensor": "텐서",
+      "vector": "벡터",
+      "debug": "디버그",
+      "boundary": "경계 데이터",
+      "cast": "타입 변환",
+      "func": "함수",
+      "func_btn": "⊕ 커스텀 함수 관리",
+      "boundary_btn": "⊕ 경계 데이터 관리",
+      "float_const_btn": "⊕ 상수 추가"
+    },
+    "alerts": {
+      "func_name_required": "함수 이름을 입력하세요.",
+      "invalid_identifier": "유효한 식별자를 입력하세요.",
+      "func_name_exists": "이미 존재하는 함수 이름입니다.",
+      "name_required": "이름을 입력하세요.",
+      "xml_parse_error": "JSON 파싱 오류: 올바른 블록 데이터를 입력하세요.\n오류: {0}",
+      "xml_corrupted": "저장된 블록 데이터가 손상되었습니다.\n오류: {0}",
+      "name_charset": "이름은 영문자/숫자/밑줄로만 구성되어야 합니다.",
+      "name_in_use": "'{0}' 이름이 이미 사용 중입니다.",
+      "file_size_invalid": "파일 크기가 올바르지 않습니다.\n{0}의 배수여야 합니다 (현재 {1} 바이트)."
+    },
+    "logs": {
+      "main_block_not_found": "wasm_func_main 블록을 찾을 수 없습니다.",
+      "ast_complete": "✅ AST 완료 — 반환: {0}, 지역변수: {1}개, body: {2}노드",
+      "func_block_not_found": "함수 '{0}' 블록을 찾을 수 없습니다.",
+      "func_compile_complete": "✅ 함수 '{0}' 컴파일 완료",
+      "wat_generated": "✅ WAT 생성 완료",
+      "wat_compiling": "🔧 WAT → WASM 컴파일 중...",
+      "wasm_complete": "✅ WASM 완료 ({0} bytes)",
+      "running_worker": "🚀 Worker에서 실행 중...",
+      "error_prefix": "❌ {0}",
+      "worker_error": "❌ Worker 오류: {0}",
+      "input_emcc": "input 포함 — C++(Asyncify)로 컴파일 후 실행합니다.",
+      "run_aborted": "실행이 중단되었습니다.",
+      "result_value": "🎉 결과: {0}",
+      "file_save_failed": "파일 저장에 실패했어요.",
+      "file_name_conflict": "같은 이름의 파일이 이미 있어요.",
+      "export_created": "'{0}' 파일이 만들어졌어요.",
+      "export_failed": "내보내기 실패: {0}"
+    },
+    "infos": {
+      "no_return": "모든 경로에 return 블록이 필요합니다.",
+      "no_main": "wasm_func_main 블록이 없습니다.",
+      "var_redeclared": "변수 '{0}'이(가) {1}번 선언되었습니다."
+    },
+    "progress": {
+      "sending": "요청 전송 중...",
+      "preparing_download": "다운로드 준비 중...",
+      "download_done": "다운로드 완료"
+    },
+    "ai": {
+      "title": "AI 어시스턴트",
+      "waiting": "AI 응답 대기 중...",
+      "abort": "중단",
+      "send": "전송",
+      "placeholder": "블록 프로그램 수정 요청... (Enter 전송, Shift+Enter 줄바꿈)",
+      "streaming": "응답 생성 중...",
+      "idle": "응답이 여기에 표시됩니다.",
+      "hint": "AI에게 블록 프로그램 수정을 요청해 보세요.",
+      "error_prefix": "[오류] {0}",
+      "apply": "✦ 워크스페이스에 적용",
+      "cancel": "취소",
+      "diff_added": "■ 추가됨",
+      "diff_removed": "■ 삭제됨",
+      "diff_unchanged": "■ 변화없음"
+    },
+    "input": {
+      "int_label": "정수 입력",
+      "float_label": "실수 입력",
+      "submit": "확인"
+    },
+    "exportCpp": {
+      "menu": "C++ 파일로 내보내기",
+      "title": "C++ 파일로 내보내기",
+      "desc_pre": "현재 블록 코드를 C++로 변환해 ",
+      "desc_bold": "새 파일",
+      "desc_post": "{0}을 만듭니다.",
+      "bullet1": "원본 블록 파일은 그대로 유지됩니다.",
+      "bullet2": "생성된 C++ 파일을 수정해도 원본 블록에는 반영되지 않습니다.",
+      "bullet3": "C++ 파일을 다시 블록으로 되돌리는 기능은 없습니다.",
+      "cancel": "취소",
+      "exporting": "변환 중…",
+      "confirm": "C++ 파일로 내보내기",
+      "open": "열기"
+    }
+  },
+  "clang": {
+    "lsp_fail_message": "C++ 언어 서버(clangd)에 연결하지 못했어요.\nLSP 기능 없이 편집은 계속할 수 있어요. 명령 팔레트에서 \"$lsp\" 로 다시 시도할 수 있어요.",
+    "editor_loading": "에디터 로드 중…",
+    "lsp_fail_title": "LSP 연결 실패",
+    "lsp_connected_title": "LSP 연결됨",
+    "lsp_already_connected": "C++ 언어 서버가 이미 연결되어 있어요.",
+    "lsp_connecting_title": "C++ 언어 서버 연결 중",
+    "lsp_connecting_msg": "C++ 언어 서버(clangd)에 연결하고 있어요…",
+    "lsp_cancel_hint": "취소하면 LSP 기능 없이 편집을 계속할 수 있어요.",
+    "lsp_status_connected": "LSP 연결됨",
+    "lsp_status_disconnected": "LSP 연결 안됨 · 클릭하여 재연결",
+    "lsp_disconnected_short": "연결 안됨",
+    "project_name_conflict": "같은 이름의 프로젝트가 이미 있어요.",
+    "no_permission": "권한이 없습니다.",
+    "file_name_conflict": "같은 이름의 파일이 이미 있습니다.",
+    "folder_name_conflict": "같은 이름의 폴더가 이미 있습니다.",
+    "name_conflict": "같은 이름이 이미 있습니다.",
+    "entry_must_cpp": "Entry 는 .cpp 파일이어야 합니다.",
+    "file_too_large_1mb": "파일이 너무 큽니다 (1MB 이하)",
+    "image_only": "이미지 파일만 올릴 수 있어요 (.ico / .png / .jpg / .gif / .bmp / .webp).",
+    "file_too_large_4mb": "파일이 너무 큽니다 (4MB 이하)",
+    "config_json_format_error": "config.json 형식 오류로 아이콘을 설정할 수 없어요. JSON 으로 열어 먼저 고쳐주세요.",
+    "external_lib_locked": "외부 라이브러리 파일은 열 수 없습니다: {0}",
+    "config_json_error_title": "config.json 오류",
+    "progress_sending": "요청 전송 중…",
+    "progress_downloading": "다운로드 중…",
+    "progress_download_done": "다운로드 완료",
+    "progress_loading": "런타임 로드 중…",
+    "progress_compiling": "컴파일 중…",
+    "progress_building": "빌드 중…",
+    "status_loading": "런타임 로드 중",
+    "status_compiling": "컴파일 중",
+    "status_running": "실행 중",
+    "status_done": "완료",
+    "status_error": "오류",
+    "status_waiting": "대기 중",
+    "save_unsaved": "저장 안됨",
+    "save_failed": "저장 실패",
+    "saving": "저장 중...",
+    "save": "저장",
+    "build_settings_title": "빌드 설정은 config.json 에서 변경할 수 있어요",
+    "debug_title": "사용자 C++ 코드를 디버깅합니다 (중단점·단계 실행·변수 검사)",
+    "debug_button": "디버그",
+    "filetree_toggle": "파일 트리 열기/닫기",
+    "tab_close_aria": "{0} 탭 닫기",
+    "notice_close_aria": "알림 닫기",
+    "jump_title": "클릭하여 해당 위치로 이동",
+    "close": "닫기",
+    "delete_entry_title": "Entry 파일은 삭제할 수 없어요",
+    "delete_confirm_title": "삭제 확인",
+    "entry_contains": "은(는) 현재 Entry 파일을 포함하고 있어 삭제할 수 없어요.",
+    "entry_reassign": "다른 파일을 Entry 로 지정한 뒤 다시 시도해주세요.",
+    "delete_with_children": " 와 그 하위 {0}개 파일을 삭제할까요?",
+    "delete_single": " 를 삭제할까요?",
+    "delete_irreversible": "이 동작은 되돌릴 수 없어요.",
+    "confirm": "확인",
+    "cancel": "취소",
+    "delete": "삭제",
+    "preview_unavailable": "미리보기를 표시할 수 없습니다.",
+    "dbg_change_failed": "변경 실패",
+    "dbg_edit_hint": "Enter로 적용, Esc로 취소",
+    "dbg_dblclick_edit": "더블클릭하여 값 변경",
+    "dbg_loading": "로딩…",
+    "dbg_no_vars": "이 범위에 변수가 없습니다",
+    "dbg_watch_placeholder": "식 추가 (변수명)",
+    "dbg_watch_empty": "감시할 식을 추가하세요",
+    "dbg_remove": "제거",
+    "dbg_status_building": "디버그 빌드 중…",
+    "dbg_status_running": "실행 중…",
+    "dbg_status_paused": "일시정지 · {0}",
+    "dbg_status_terminated": "종료됨",
+    "dbg_status_error": "오류",
+    "dbg_status_waiting": "대기 중",
+    "dbg_continue": "계속 (F5)",
+    "dbg_step_over": "단계 건너뛰기",
+    "dbg_step_into": "단계 들어가기",
+    "dbg_step_out": "단계 나가기",
+    "dbg_stop": "중지",
+    "dbg_vars": "변수",
+    "dbg_vars_hint": "일시정지 상태에서 변수를 볼 수 있어요",
+    "dbg_callstack": "호출 스택",
+    "dbg_watch": "감시",
+    "ce_region_detail": "접을 수 있는 영역",
+    "ce_region_doc": "`#pragma region` / `#pragma endregion` 쌍을 삽입합니다.",
+    "ce_endregion_detail": "접을 수 있는 영역의 끝",
+    "ce_open_file": "파일 열기"
+  },
+  "console": {
+    "mat_zoom": "클릭하여 확대",
+    "series_title": "시리즈",
+    "series_count": "({0}개)",
+    "series_empty": "(비어 있음)",
+    "series_mat_label": "행렬"
+  },
+  "block_messages": {
+    "debug_log": [
+      "로그 %1"
+    ],
+    "debug_graph_array": [
+      "그래프 %1"
+    ],
+    "debug_graph_array_range": [
+      "그래프 %1 min:%2 max:%3"
+    ],
+    "debug_series": [
+      "시리즈"
+    ],
+    "debug_set_holder": [
+      "홀더 설정 %1"
+    ],
+    "debug_bar": [
+      "프로그레스 바 min:%1 max:%2"
+    ],
+    "debug_bar_set": [
+      "바 설정 id:%1 값:%2"
+    ],
+    "flow_if": [
+      "만약 %1",
+      "그러면 %1"
+    ],
+    "flow_if_else": [
+      "만약 %1",
+      "그러면 %1",
+      "아니면 %1"
+    ],
+    "flow_while": [
+      "%1 동안",
+      "반복 %1"
+    ],
+    "flow_for": [
+      "변수 %1 = %2부터 %3까지",
+      "반복 %1"
+    ],
+    "flow_break": [
+      "반복 탈출"
+    ],
+    "i32_select": [
+      "%1 ? %2 : %3"
+    ],
+    "f64_select": [
+      "%1 ? %2 : %3"
+    ],
+    "local_decl_i32": [
+      "정수 변수 %1 = %2"
+    ],
+    "local_decl_f64": [
+      "실수 변수 %1 = %2"
+    ],
+    "local_get_i32": [
+      "정수 %1"
+    ],
+    "local_get_f64": [
+      "실수 %1"
+    ],
+    "local_set_i32": [
+      "정수 %1 ← %2"
+    ],
+    "local_set_f64": [
+      "실수 %1 ← %2"
+    ],
+    "local_array_decl_i32": [
+      "정수 배열 %1[%2]"
+    ],
+    "local_array_decl_f64": [
+      "실수 배열 %1[%2]"
+    ],
+    "array_get_i32": [
+      "%1[%2]"
+    ],
+    "array_get_f64": [
+      "%1[%2]"
+    ],
+    "array_set_i32": [
+      "%1[%2] ← %3"
+    ],
+    "array_set_f64": [
+      "%1[%2] ← %3"
+    ],
+    "array_assign_i32": [
+      "정수* %1 ← %2"
+    ],
+    "array_assign_f64": [
+      "실수* %1 ← %2"
+    ],
+    "local_array_get_i32": [
+      "정수* %1"
+    ],
+    "local_array_get_f64": [
+      "실수* %1"
+    ],
+    "array_len_i32": [
+      "len(%1)"
+    ],
+    "array_len_f64": [
+      "len(%1)"
+    ],
+    "tensor_random": [
+      "TENSOR_RANDOM 분포:%1 p1:%2 p2:%3 형태:%4"
+    ],
+    "tensor_new": [
+      "텐서 (동적)"
+    ],
+    "tensor_get": [
+      "TENSOR_GET %1"
+    ],
+    "tensor_save": [
+      "TENSOR %1 = %2"
+    ],
+    "tensor_binop": [
+      "%1 %2 %3"
+    ],
+    "tensor_unop": [
+      "%1 %2"
+    ],
+    "tensor_scale": [
+      "%1 × %2"
+    ],
+    "tensor_set_by_index": [
+      "텐서[인덱스] = 값 (동적)"
+    ],
+    "tensor_get_by_index": [
+      "텐서[인덱스] (동적)"
+    ],
+    "tensor_perlin": [
+      "PERLIN_NOISE 행:%1 열:%2"
+    ],
+    "tensor_show_mat": [
+      "행렬 표시 %1"
+    ],
+    "tensor_grad": [
+      "grad( %1 )"
+    ],
+    "tensor_curl": [
+      "curl( %1 )"
+    ],
+    "tensor_lapl": [
+      "lapl( %1 )"
+    ],
+    "matrix_create": [
+      "matrix rows: %1 cols: %2"
+    ],
+    "matrix_matmul": [
+      "%1 @ %2"
+    ],
+    "matrix_transpose": [
+      "transpose( %1 )"
+    ],
+    "matrix_inverse": [
+      "inverse( %1 )"
+    ],
+    "matrix_det": [
+      "det( %1 )"
+    ],
+    "matrix_trace": [
+      "tr( %1 )"
+    ],
+    "matrix_identity": [
+      "I( %1 )"
+    ],
+    "vec2_literal": [
+      "vec2( %1 , %2 )"
+    ],
+    "vec2_get": [
+      "vec2 %1"
+    ],
+    "vec2_decl": [
+      "2차원 벡터 변수 %1 = %2"
+    ],
+    "vec2_set": [
+      "vec2 %1 ← %2"
+    ],
+    "vec2_component_set": [
+      "vec2 %1 .%2 ← %3"
+    ],
+    "vec2_x": [
+      "%1 .x"
+    ],
+    "vec2_y": [
+      "%1 .y"
+    ],
+    "vec2_len": [
+      "|%1|"
+    ],
+    "vec2_len_sq": [
+      "|%1|²"
+    ],
+    "vec2_add": [
+      "%1 + %2"
+    ],
+    "vec2_sub": [
+      "%1 - %2"
+    ],
+    "vec2_scale": [
+      "%1 × %2"
+    ],
+    "vec2_neg": [
+      "-%1"
+    ],
+    "vec2_normalize": [
+      "normalize(%1)"
+    ],
+    "vec2_dot": [
+      "dot( %1 , %2 )"
+    ],
+    "vec2_proj_scalar": [
+      "proj( %1 → %2 )"
+    ],
+    "vec2_proj_vec": [
+      "proj_vec( %1 → %2 )"
+    ],
+    "vec3_literal": [
+      "vec3( %1 , %2 , %3 )"
+    ],
+    "vec3_get": [
+      "vec3 %1"
+    ],
+    "vec3_decl": [
+      "3차원 벡터 변수 %1 = %2"
+    ],
+    "vec3_set": [
+      "vec3 %1 ← %2"
+    ],
+    "vec3_component_set": [
+      "vec3 %1 .%2 ← %3"
+    ],
+    "vec3_x": [
+      "%1 .x"
+    ],
+    "vec3_y": [
+      "%1 .y"
+    ],
+    "vec3_z": [
+      "%1 .z"
+    ],
+    "vec3_len": [
+      "|%1|"
+    ],
+    "vec3_len_sq": [
+      "|%1|²"
+    ],
+    "vec3_add": [
+      "%1 + %2"
+    ],
+    "vec3_sub": [
+      "%1 - %2"
+    ],
+    "vec3_scale": [
+      "%1 × %2"
+    ],
+    "vec3_neg": [
+      "-%1"
+    ],
+    "vec3_normalize": [
+      "normalize(%1)"
+    ],
+    "vec3_dot": [
+      "dot( %1 , %2 )"
+    ],
+    "vec3_cross": [
+      "%1 × %2"
+    ],
+    "vec3_proj_scalar": [
+      "proj( %1 → %2 )"
+    ],
+    "vec3_proj_vec": [
+      "proj_vec( %1 → %2 )"
+    ],
+    "bool_const": [
+      "%1"
+    ],
+    "bool_binop": [
+      "%1 %2 %3"
+    ],
+    "bool_not": [
+      "! %1"
+    ],
+    "i32_const": [
+      "정수 %1"
+    ],
+    "i32_binop": [
+      "정수 %1 %2 %3"
+    ],
+    "i32_unop": [
+      "정수 %1 %2"
+    ],
+    "i32_cmp": [
+      "%1 %2 %3"
+    ],
+    "i32_random": [
+      "정수 난수 %1 ~ %2"
+    ],
+    "input_i32": [
+      "정수 입력"
+    ],
+    "f64_const": [
+      "실수 %1"
+    ],
+    "f64_from_i32": [
+      "정수 → 실수 %1"
+    ],
+    "i32_from_f64": [
+      "실수 → 정수 %1"
+    ],
+    "f64_binop": [
+      "%1 %2 %3"
+    ],
+    "f64_unop": [
+      "%1 %2"
+    ],
+    "f64_cmp": [
+      "%1 %2 %3"
+    ],
+    "f64_random": [
+      "실수 난수 [0, 1)"
+    ],
+    "f64_random_range": [
+      "실수 난수 %1 ~ %2"
+    ],
+    "input_f64": [
+      "실수 입력"
+    ],
+    "local_decl_bd2": [
+      "2차원 경계조건 변수 %1 선언"
+    ],
+    "local_decl_bd3": [
+      "3차원 경계조건 변수 %1 선언"
+    ],
+    "local_get_bd2": [
+      "경계2D %1 . %2"
+    ],
+    "local_get_bd2_point": [
+      "경계2D %1 .점"
+    ],
+    "local_get_bd2_tangent": [
+      "경계2D %1 .접선"
+    ],
+    "local_get_bd2_normal": [
+      "경계2D %1 .법선"
+    ],
+    "local_get_bd3": [
+      "경계3D %1 . %2"
+    ],
+    "local_get_bd3_point": [
+      "경계3D %1 .점"
+    ],
+    "local_get_bd3_normal": [
+      "경계3D %1 .법선"
+    ],
+    "flow_for_bd2": [
+      "2차원 경계조건 %1 에서 %2 반복",
+      "반복 %1"
+    ],
+    "flow_for_bd3": [
+      "3차원 경계조건 %1 에서 %2 반복",
+      "반복 %1"
+    ],
+    "latex_expr": [
+      "LaTeX %1"
+    ],
+    "latex_value": [
+      "LaTeX %1"
+    ],
+    "wasm_return_i32": [
+      "반환 정수 %1"
+    ],
+    "wasm_return_f64": [
+      "반환 실수 %1"
+    ],
+    "wasm_func_main": [
+      "함수 main → %1",
+      "본문 %1"
+    ]
+  },
+  "block_tooltips": {
+    "i32_not": "논리 NOT",
+    "wasm_return_i32": "정수 반환",
+    "wasm_return_f64": "실수 반환",
+    "wasm_func_main": "WebAssembly main 함수"
+  },
+  "block_dropdowns": {
+    "bool_const": {
+      "VALUE": {
+        "0": "거짓",
+        "1": "참"
+      }
+    },
+    "bool_binop": {
+      "OP": {
+        "and": "그리고",
+        "or": "또는",
+        "xor": "XOR"
+      }
+    }
+  },
+  "block_dynamic": {
+    "tensor_new_header": "[텐서]",
+    "tensor_new_dim_label": "차원:",
+    "tensor_new_dim_item": "dim[%1]",
+    "tensor_new_tooltip": "텐서 생성 — 차원 크기를 지정하면 텐서 id를 반환합니다",
+    "tensor_set_tooltip": "텐서 요소 설정",
+    "tensor_get_header": "TENSOR",
+    "tensor_get_dims_label": "차원:",
+    "tensor_get_tooltip": "텐서 요소 읽기",
+    "array_literal_size_label": "크기:",
+    "array_literal_index": "[%1]",
+    "array_literal_tooltip_i32": "정수* 리터럴 — 값을 채운 뒤 포인터를 반환합니다",
+    "array_literal_tooltip_f64": "실수* 리터럴 — 값을 채운 뒤 포인터를 반환합니다",
+    "fold_region_label": "영역",
+    "fold_region_tooltip": "코드 영역 — 본문을 접거나 펼 수 있습니다",
+    "custom_func_def_label": "함수",
+    "custom_func_def_body_label": "본문",
+    "custom_func_def_param_label": "매개변수",
+    "custom_func_def_tooltip": "커스텀 함수 (우클릭으로 파라미터 추가/삭제)",
+    "custom_func_add_param": "파라미터 추가",
+    "custom_func_remove_param": "파라미터 삭제"
+  }
+}

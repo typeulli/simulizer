@@ -1,5 +1,5 @@
 import React from "react";
-import useLanguagePack from "@/hooks/useLanguagePack";
+import { useTranslations } from "next-intl";
 import { token } from "@/components/tokens";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
 import { Button } from "@/components/atoms/Button";
@@ -77,12 +77,12 @@ export function AlertModal({
     onClose,
     width = 420,
 }: AlertModalProps) {
-    const [, , pack] = useLanguagePack();
+    const t = useTranslations("messages");
     const meta = VARIANT_META[variant];
-    const defaultTitle = variant === "info" ? pack.messages.alert_title
-        : variant === "warning" ? pack.messages.warning_title
-        : pack.messages.error_title;
-    const finalConfirmLabel = confirmLabel ?? pack.messages.ok_button;
+    const defaultTitle = variant === "info" ? t("alert_title")
+        : variant === "warning" ? t("warning_title")
+        : t("error_title");
+    const finalConfirmLabel = confirmLabel ?? t("ok_button");
     return (
         <Modal width={width} onClose={onClose}>
             <ModalHeader onClose={onClose}>

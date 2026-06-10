@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { token } from "@/components/tokens";
 
 export interface CommandItem {
@@ -45,9 +46,11 @@ export function CommandBar({
     files,
     onOpenFile,
     commands,
-    placeholder = '파일 검색…   ( "$" 로 명령 )',
+    placeholder,
     width = 360,
 }: CommandBarProps) {
+    const tMsg = useTranslations("messages");
+    const resolvedPlaceholder = placeholder ?? tMsg("command_search_placeholder");
     const [q, setQ] = useState("");
     const [open, setOpen] = useState(false);
     const [hi, setHi] = useState(0);
@@ -130,7 +133,7 @@ export function CommandBar({
                 onFocus={() => setOpen(true)}
                 onBlur={() => setOpen(false)}
                 onKeyDown={onKeyDown}
-                placeholder={placeholder}
+                placeholder={resolvedPlaceholder}
                 spellCheck={false}
                 style={{ width: "100%", height: 30, padding: "0 10px", fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, color: token.color.fg, background: token.color.bgSubtle, border: `1px solid ${isCommand ? token.color.accent : token.color.border}`, borderRadius: token.radius.md, outline: "none" }}
             />
