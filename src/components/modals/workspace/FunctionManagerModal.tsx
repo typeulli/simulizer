@@ -5,7 +5,7 @@ import { Button } from "@/components/atoms/Button";
 import { Text } from "@/components/atoms/Text";
 import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
 import { token } from "@/components/tokens";
-import langpack from "@/lang/lang";
+import langpack from "@/i18n/lang";
 
 interface FunctionSpec {
     id: string;

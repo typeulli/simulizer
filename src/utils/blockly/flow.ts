@@ -161,7 +161,7 @@ export function xmlFlowBlocks(cat: string) {
  * flow_fold_region — 헤더(NAME)는 항상 보이고, 내부 BODY input은 ▼/▶ 토글로 접고 펼 수 있음.
  * BlockBuilder 의 기본 JSON 정의가 등록되기 전에 호출하여 커스텀 init 으로 덮어쓴다.
  */
-export function registerFoldRegionBlock(pack?: { block_dynamic: import("@/lang/lang").default["block_dynamic"] }) {
+export function registerFoldRegionBlock(pack?: { block_dynamic: import("@/i18n/lang").default["block_dynamic"] }) {
     const d = pack?.block_dynamic;
     const regionLabel = d?.fold_region_label ?? "region";
     const regionTip = d?.fold_region_tooltip ?? "code region — fold/unfold the body";

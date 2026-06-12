@@ -1,4 +1,4 @@
-import type langpack from "@/lang/lang";
+import type langpack from "@/i18n/lang";
 
 declare module "next-intl" {
     interface AppConfig {

@@ -7,9 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "build:lib": "node src/lib/treediff/build.js && node src/lib/bctool2d/build.js && node src/lib/bctool3d/build.js",
-    "build:dist": "node esbuild.console.mjs --minify",
-    "gen:i18n-schema": "ts-json-schema-generator --path src/lang/lang.ts --type langpack --out messages/messages.schema.json"
+    "build:lib": "node scripts/build/treediff.js && node scripts/build/bctool2d.js && node scripts/build/bctool3d.js",
+    "build:dist": "node scripts/build/console.mjs --minify",
+    "gen:i18n-schema": "ts-json-schema-generator --path src/i18n/lang.ts --type langpack --out messages/messages.schema.json"
   },
   "dependencies": {
     "@codingame/monaco-vscode-api": "^25.1.2",
@@ -50,7 +50,11 @@
     "vscode-languageclient": "^9.0.1",
     "vscode-ws-jsonrpc": "^3.5.0",
     "wabt": "^1.0.39",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "y-monaco": "^0.1.6",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^2.1.0",
+    "yjs": "^13.6.31"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -364,7 +364,7 @@ export const TENSOR_BLOCKS: BlockSet = {
         }),
 }
 
-export function registerDynamicTensorBlocks(pack?: { block_dynamic: import("@/lang/lang").default["block_dynamic"] }) {
+export function registerDynamicTensorBlocks(pack?: { block_dynamic: import("@/i18n/lang").default["block_dynamic"] }) {
     const d = pack?.block_dynamic;
     const tensorSetTip   = d?.tensor_set_tooltip ?? "텐서 요소 설정";
     const tensorGetTip   = d?.tensor_get_tooltip ?? "텐서 요소 읽기";

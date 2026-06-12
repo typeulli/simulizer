@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useTheme } from "@/hooks/useTheme";
 import { useLocale, useMessages } from "next-intl";
 import { setLocaleCookie } from "@/i18n/setLocale";
-import type langpack from "@/lang/lang";
+import type langpack from "@/i18n/lang";
 
 import { Topbar } from "@/components/organisms/Toolbar";
 import { Text } from "@/components/atoms/Text";

@@ -231,7 +231,7 @@ function buildArrayLiteralBlock(
     blockType: string,
     elemType: "i32" | "f64",
     colour: string | number,
-    dyn?: import("@/lang/lang").default["block_dynamic"],
+    dyn?: import("@/i18n/lang").default["block_dynamic"],
 ) {
     Blockly.Blocks[blockType] = {
         init(this: Blockly.Block) {
@@ -284,7 +284,7 @@ function buildArrayLiteralBlock(
 }
 
 /** array_literal_i32 / array_literal_f64 동적 블록 등록 */
-export function registerDynamicArrayBlocks(pack?: { block_dynamic: import("@/lang/lang").default["block_dynamic"] }) {
+export function registerDynamicArrayBlocks(pack?: { block_dynamic: import("@/i18n/lang").default["block_dynamic"] }) {
     const dyn = pack?.block_dynamic;
     if (!Blockly.Blocks["array_literal_i32"]) {
         buildArrayLiteralBlock("array_literal_i32", "i32", 120, dyn);

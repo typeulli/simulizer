@@ -1,4 +1,4 @@
-import type langpack from "@/lang/lang";
+import type langpack from "@/i18n/lang";
 
 // The console panels are DOM-direct, non-React classes created lazily via the
 // registry, so they can't consume the language pack through a hook. Instead the

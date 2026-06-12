@@ -146,8 +146,8 @@ function uptimePct(uptime: string): string {
 }
 
 function responseTone(ms: number): Tone {
-    if (ms <= 50) return "success";
-    if (ms <= 200) return "warning";
+    if (ms <= 400) return "success";
+    if (ms <= 700) return "warning";
     return "danger";
 }
 

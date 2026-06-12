@@ -1,27 +1,28 @@
 import { build } from "esbuild";
-import { resolve, dirname } from "path";
+import { resolve, dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, writeFileSync, unlinkSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(__dirname, "..", "..");
 
 await build({
-    entryPoints: ["src/standalone/console/index.ts"],
+    entryPoints: [join(ROOT, "src/standalone/console/index.ts")],
     bundle: true,
-    outfile: "public/dist/console.js",
+    outfile: join(ROOT, "public/dist/console.js"),
     platform: "browser",
     format: "iife",
     globalName: "_SimulizerConsoleModule",
     minify: process.argv.includes("--minify"),
     sourcemap: false,
-    tsconfig: "tsconfig.json",
+    tsconfig: join(ROOT, "tsconfig.json"),
     alias: {
-        "@": resolve(__dirname, "src"),
+        "@": resolve(ROOT, "src"),
     },
 });
 
-const jsPath  = "public/dist/console.js";
-const hppPath = "public/dist/console.hpp";
+const jsPath  = join(ROOT, "public/dist/console.js");
+const hppPath = join(ROOT, "public/dist/console.hpp");
 
 const buf  = readFileSync(jsPath);
 const name = "console_js";

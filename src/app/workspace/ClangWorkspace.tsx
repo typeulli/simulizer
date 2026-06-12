@@ -41,11 +41,11 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { BuildSnackbar } from "@/components/molecules/BuildSnackbar";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { token } from "@/components/tokens";
-import { duplicateFile, renameFile, saveFile, type FileDetail, type FileOut } from "@/lib/authapi";
-import { CppManagerModal } from "@/components/workspace-modals/CppManagerModal";
+import { duplicateFile, renameFile, saveFile, setFileVisibility, type FileDetail, type FileOut } from "@/lib/authapi";
+import { CppManagerModal } from "@/components/modals/workspace/CppManagerModal";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
 import { AlertModal, type AlertVariant } from "@/components/organisms/AlertModal";
-import { CompileSettingsModal } from "@/components/workspace-modals/CompileSettingsModal";
+import { CompileSettingsModal } from "@/components/modals/workspace/CompileSettingsModal";
 import {
     readBuildConfig,
     readCompileConfig,
@@ -61,7 +61,11 @@ import {
     type DeviceKind,
 } from "@/lib/compileConfig";
 import { ShareControl } from "@/components/share/ShareControl";
-import { useMessages, useTranslations } from "next-intl";
+import { useClangCollab } from "./clang/collab/useClangCollab";
+import type { StructureSnapshot } from "./clang/collab/doc";
+import { PresenceBar } from "./clang/collab/PresenceBar";
+import { RemoteCursorStyles } from "./clang/collab/RemoteCursors";
+import { useMessages, useTranslations } from "next-intl";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
@@ -177,6 +181,22 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     const fileIdRef = useRef<string | null>(initialFile.id);
     const isOwnerRef = useRef<boolean>(initialOwner);
+
+    // ─── Collaboration ────────────────────────────────────────────────────
+    // A real-time session is started explicitly by the owner (the "협업" button),
+    // not merely by a file being link-shared. The owner is the session anchor:
+    // backend-live only admits other participants while an owner is present.
+    //   - owner connects iff they started a session (`sessionActive`).
+    //   - a non-owner connects when the file is link-shared, but only actually
+    //     joins if the owner has a session running (else it stays read-only).
+    // `canEdit` generalizes "may modify the project"; persistence stays
+    // owner-driven (saveFile is still gated on isOwner).
+    const [sessionActive, setSessionActive] = useState(false);
+    const visibility = fileMeta?.visibility ?? initialFile.visibility;
+    const collabEnabled = isOwner ? sessionActive : visibility === "link";
+    const collabEnabledRef = useRef(collabEnabled);
+    useEffect(() => { collabEnabledRef.current = collabEnabled; }, [collabEnabled]);
+    const canEditRef = useRef<boolean>(initialOwner);
 
     const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // The latest bundle snapshot the autosave timer should serialize. Using a
@@ -323,11 +343,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 uri: pathToUri(p),
                 label: p,
                 path: p,
-                readOnly: !isOwner,
+                // In a shared session every connected participant is an editor.
+                readOnly: collabEnabled ? false : !isOwner,
                 closable: p !== bundle.entry,
             }));
         return [...bundleTabs, ...systemTabs];
-    }, [bundle.tree, bundle.ui.openTabs, bundle.entry, isOwner, systemTabs]);
+    }, [bundle.tree, bundle.ui.openTabs, bundle.entry, isOwner, collabEnabled, systemTabs]);
 
     // ─── Files passed to the editor (text bundle files) ───────────────────
     // Binary assets (icons) are excluded — Monaco only ever sees source text.
@@ -339,6 +360,17 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     );
 
     // ─── Autosave ─────────────────────────────────────────────────────────
+    // Holds the latest collab API so the (stable) save callbacks can reach it
+    // without being recreated. In a shared session the doc — not the local
+    // bundle — is authoritative for file tree + text contents, so the owner's
+    // save serializes the doc-derived bundle (text edits by peers included).
+    const collabApiRef = useRef<ReturnType<typeof useClangCollab> | null>(null);
+    const serializeForSave = useCallback(() => {
+        const b = pendingBundleRef.current;
+        const api = collabApiRef.current;
+        return serializeBundle(collabEnabledRef.current && api ? api.snapshotBundleForSave(b) : b);
+    }, []);
+
     const scheduleAutosave = useCallback(() => {
         if (!fileIdRef.current || !isOwnerRef.current) return;
         setSaveStatus("unsaved");
@@ -348,13 +380,13 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (!id) return;
             setSaveStatus("saving");
             try {
-                await saveFile(id, serializeBundle(pendingBundleRef.current));
+                await saveFile(id, serializeForSave());
                 setSaveStatus("saved");
             } catch {
                 setSaveStatus("error");
             }
         }, 2000);
-    }, []);
+    }, [serializeForSave]);
 
     // Flush the latest bundle to the server right away. Use this for
     // structural changes (file add/remove/rename, entry change) that the
@@ -365,10 +397,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (!isOwnerRef.current || !fileIdRef.current) return;
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
         setSaveStatus("saving");
-        saveFile(fileIdRef.current, serializeBundle(pendingBundleRef.current))
+        saveFile(fileIdRef.current, serializeForSave())
             .then(() => setSaveStatus("saved"))
             .catch(() => setSaveStatus("error"));
-    }, []);
+    }, [serializeForSave]);
 
     useEffect(() => () => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -455,8 +487,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, [initialFile.content, initialFile.id, initialOwner]);
 
     // ─── Per-file content change from the editor ──────────────────────────
+    // In a shared session the model is bound to its Y.Text (MonacoBinding owns
+    // the CRDT write); this only mirrors the change into the local bundle so the
+    // owner's autosave and non-active-file views stay current.
     const handleEditorTextChanged = useCallback((path: string, content: string) => {
-        if (!isOwnerRef.current) return;
+        if (!canEditRef.current) return;
         const prev = pendingBundleRef.current;
         const nextTree = setFileContent(prev.tree, path, content);
         const next: CppBundle = { ...prev, tree: nextTree };
@@ -494,12 +529,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
         setSaveStatus("saving");
         try {
-            await saveFile(fileId, serializeBundle(pendingBundleRef.current));
+            await saveFile(fileId, serializeForSave());
             setSaveStatus("saved");
         } catch {
             setSaveStatus("error");
         }
-    }, [fileId]);
+    }, [fileId, serializeForSave]);
 
     const handleDuplicateToMine = useCallback(async () => {
         if (!fileId || duplicating) return;
@@ -523,7 +558,13 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // update React state. Returning null from `transform` is the "do nothing"
     // signal. The transform must NOT itself call setBundle/setActiveUri —
     // those happen here.
-    const applyBundleChange = useCallback((transform: (prev: CppBundle) => CppBundle | null) => {
+    // `remap` (rename/move only) maps every old path to its new path so the
+    // collab layer can carry each file's Y.Text across the path change instead
+    // of recreating it (which would lose a peer's in-flight edits).
+    const applyBundleChange = useCallback((
+        transform: (prev: CppBundle) => CppBundle | null,
+        opts?: { remap?: (path: string) => string },
+    ) => {
         const prev = pendingBundleRef.current;
         const next = transform(prev);
         if (!next) return;
@@ -532,14 +573,110 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (next.ui.activeFile !== prev.ui.activeFile) {
             setActiveUri(pathToUri(next.ui.activeFile));
         }
+        // In a shared session, propagate the structural change to peers through
+        // the doc; the owner still persists via flushSave (no-op for peers).
+        const api = collabApiRef.current;
+        if (collabEnabledRef.current && api) {
+            if (opts?.remap) api.remapTexts(opts.remap);
+            api.pushStructure(next);
+        }
         flushSave();
     }, [flushSave]);
+
+    // ─── Collab wiring ────────────────────────────────────────────────────
+    // A peer's structural change → apply tree/entry to the local bundle while
+    // preserving this client's per-user ui (pruning tabs for deleted files).
+    const applyRemoteStructure = useCallback((snapshot: StructureSnapshot) => {
+        const prev = pendingBundleRef.current;
+        const allPaths = new Set(listBundleFiles(snapshot.tree).map(f => f.path));
+        const openTabs = prev.ui.openTabs.filter(p => allPaths.has(p));
+        let activeFile = prev.ui.activeFile;
+        if (!allPaths.has(activeFile)) activeFile = openTabs[openTabs.length - 1] ?? snapshot.entry;
+        if (allPaths.has(activeFile) && !openTabs.includes(activeFile)) openTabs.push(activeFile);
+        const next: CppBundle = {
+            ...prev,
+            tree: snapshot.tree,
+            entry: snapshot.entry,
+            ui: { ...prev.ui, openTabs, activeFile },
+        };
+        pendingBundleRef.current = next;
+        setBundle(next);
+        if (activeFile !== prev.ui.activeFile) setActiveUri(pathToUri(activeFile));
+        // Owner persists peer-driven structural changes.
+        if (isOwnerRef.current) scheduleAutosave();
+    }, [scheduleAutosave]);
+
+    const handleCollabTextsChanged = useCallback(() => {
+        // A peer's Y.Text arrived/left — (re)bind any unbound editor models.
+        codeEditorRef.current?.rebindCollab();
+    }, []);
+
+    const getCurrentBundle = useCallback(() => pendingBundleRef.current, []);
+
+    const collab = useClangCollab({
+        fileId,
+        enabled: collabEnabled,
+        isOwner,
+        getCurrentBundle,
+        onRemoteStructure: applyRemoteStructure,
+        onTextsChanged: handleCollabTextsChanged,
+    });
+    useEffect(() => { collabApiRef.current = collab; }, [collab]);
+
+    // Generalized edit permission. The owner can always edit their project
+    // (solo or hosting a session). A non-owner edits only while actually joined
+    // to a live session (status "connected"); otherwise it's the read-only
+    // saved view. Mirrored into the ref the stable edit handlers read.
+    const inSession = collab.status === "connected";
+    const canEdit = isOwner || inSession;
+    useEffect(() => { canEditRef.current = canEdit; }, [canEdit]);
+
+    // Owner starts/stops a live session. Starting ensures the file is link-shared
+    // (so invitees can open it) and connects as the session anchor; stopping
+    // disconnects, which closes the room for everyone (link stays valid for the
+    // read-only/duplicate view).
+    const [sessionStarting, setSessionStarting] = useState(false);
+    const handleStartSession = useCallback(async () => {
+        if (!isOwner || sessionStarting) return;
+        setSessionStarting(true);
+        try {
+            if ((fileMeta?.visibility ?? initialFile.visibility) !== "link") {
+                const updated = await setFileVisibility(fileId, "link");
+                setFileMeta(updated);
+            }
+            setSessionActive(true);
+        } catch {
+            setErrorMsg(tx("clang.collab_start_failed"));
+        } finally {
+            setSessionStarting(false);
+        }
+    }, [isOwner, sessionStarting, fileMeta, initialFile.visibility, fileId]);
+
+    const handleStopSession = useCallback(() => {
+        setSessionActive(false);
+    }, []);
+
+    // Publish which file this client is viewing (presence).
+    useEffect(() => {
+        collab.setActiveFile(uriToPath(activeUri));
+    }, [activeUri, collab]);
+
+    // Attach/detach the editor's Yjs bindings as the session connects/ends.
+    useEffect(() => {
+        const editor = codeEditorRef.current;
+        if (!editor) return;
+        if (collabEnabled && collab.texts && collab.awareness) {
+            const texts = collab.texts;
+            editor.attachCollab((path) => texts.get(path), collab.awareness);
+            return () => editor.detachCollab();
+        }
+    }, [collabEnabled, collab.texts, collab.awareness, editorReady]);
 
     // FileTree-driven create/rename use inline inputs (VS Code style) and
     // surface errors back into the input via a return value: returning a
     // string keeps the input open with that message, null commits.
     const handleCreateFile = useCallback((parentPath: string, name: string): string | null => {
-        if (!isOwnerRef.current) return tx("clang.no_permission");
+        if (!canEditRef.current) return tx("clang.no_permission");
         const validationErr = validateFileName(name);
         if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
@@ -561,7 +698,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, [applyBundleChange]);
 
     const handleCreateFolder = useCallback((parentPath: string, name: string): string | null => {
-        if (!isOwnerRef.current) return tx("clang.no_permission");
+        if (!canEditRef.current) return tx("clang.no_permission");
         const validationErr = validateFolderName(name);
         if (validationErr) return validationErr;
         const path = parentPath ? `${parentPath}/${name}` : name;
@@ -575,21 +712,21 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, [applyBundleChange]);
 
     const handleRenameNode = useCallback((path: string, newName: string): string | null => {
-        if (!isOwnerRef.current) return tx("clang.no_permission");
+        if (!canEditRef.current) return tx("clang.no_permission");
         const { base, dir } = splitPath(path);
         if (newName === base) return null; // no-op
         const isFile = listBundleFiles(pendingBundleRef.current.tree).some(f => f.path === path);
         const validationErr = isFile ? validateFileName(newName) : validateFolderName(newName);
         if (validationErr) return validationErr;
+        const newPath = dir ? `${dir}/${newName}` : newName;
+        const rewrite = (p: string) =>
+            p === path ? newPath
+            : p.startsWith(path + "/") ? newPath + p.slice(path.length)
+            : p;
         let resultErr: string | null = null;
         applyBundleChange(prev => {
             const nextTree = bundleRenameNode(prev.tree, path, newName);
             if (!nextTree) { resultErr = tx("clang.name_conflict"); return null; }
-            const newPath = dir ? `${dir}/${newName}` : newName;
-            const rewrite = (p: string) =>
-                p === path ? newPath
-                : p.startsWith(path + "/") ? newPath + p.slice(path.length)
-                : p;
             return {
                 ...prev,
                 tree: nextTree,
@@ -600,7 +737,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     openTabs: prev.ui.openTabs.map(rewrite),
                 },
             };
-        });
+        }, { remap: rewrite });
         return resultErr;
     }, [applyBundleChange]);
 
@@ -616,7 +753,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     >(null);
 
     const handleDeleteNode = useCallback((path: string) => {
-        if (!isOwnerRef.current) return;
+        if (!canEditRef.current) return;
         const affected = descendantFilePaths(pendingBundleRef.current.tree, path);
         if (affected.includes(pendingBundleRef.current.entry)) {
             setDeleteConfirm({ kind: "entry-block", path });
@@ -648,9 +785,15 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     }, [applyBundleChange, deleteConfirm]);
 
     const handleMoveNode = useCallback((srcPath: string, destDir: string) => {
-        if (!isOwnerRef.current) return;
+        if (!canEditRef.current) return;
         const srcName = srcPath.split("/").pop()!;
         const newPath = destDir ? `${destDir}/${srcName}` : srcName;
+        // Move shifts every descendant path; prefix-swap entry / activeFile /
+        // openTabs (and the collab Y.Text keys) the same way rename does.
+        const rewrite = (p: string) =>
+            p === srcPath ? newPath
+            : p.startsWith(srcPath + "/") ? newPath + p.slice(srcPath.length)
+            : p;
         applyBundleChange(prev => {
             const nextTree = bundleMoveNode(prev.tree, srcPath, destDir);
             if (!nextTree) {
@@ -658,12 +801,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 // only the collision case is worth surfacing.
                 return null;
             }
-            // Move shifts every descendant path; prefix-swap entry / activeFile /
-            // openTabs the same way rename does.
-            const rewrite = (p: string) =>
-                p === srcPath ? newPath
-                : p.startsWith(srcPath + "/") ? newPath + p.slice(srcPath.length)
-                : p;
             return {
                 ...prev,
                 tree: nextTree,
@@ -674,11 +811,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     openTabs: prev.ui.openTabs.map(rewrite),
                 },
             };
-        });
+        }, { remap: rewrite });
     }, [applyBundleChange]);
 
     const handleSetAsEntry = useCallback((path: string) => {
-        if (!isOwnerRef.current) return;
+        if (!canEditRef.current) return;
         if (!path.toLowerCase().endsWith(".cpp")) {
             window.alert(tx("clang.entry_must_cpp"));
             return;
@@ -698,7 +835,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const iconUploadInputRef = useRef<HTMLInputElement | null>(null);
 
     const handleUploadFile = useCallback((parentPath: string) => {
-        if (!isOwnerRef.current) return;
+        if (!canEditRef.current) return;
         uploadParentRef.current = parentPath;
         if (uploadInputRef.current) {
             // Reset so re-uploading the same filename still triggers change.
@@ -745,7 +882,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // Settings window ".ico 업로드": pick a .ico, store it under build/icon,
     // and point compile.icon at it — all in one persisted change.
     const handleUploadIcon = useCallback(() => {
-        if (!isOwnerRef.current) return;
+        if (!canEditRef.current) return;
         if (iconUploadInputRef.current) {
             iconUploadInputRef.current.value = "";
             iconUploadInputRef.current.click();
@@ -755,7 +892,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const handleIconUploadChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         e.target.value = "";
-        if (!file || !isOwnerRef.current) return;
+        if (!file || !canEditRef.current) return;
         const name = file.name;
         if (!isBinaryName(name)) { window.alert(tx("clang.image_only")); return; }
         const nameErr = validateFileName(name);
@@ -787,6 +924,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (!tree) return null;
             return { ...prev, tree };
         });
+        // In a shared session config.json's content lives in its Y.Text; write
+        // it there (the icon itself is binary and rides the structure snapshot).
+        if (collabEnabledRef.current) collabApiRef.current?.setText(CONFIG_FILENAME, cfg.content);
         // Mirror into the open config.json model, matching writeProjectConfig.
         codeEditorRef.current?.syncModelContent(CONFIG_FILENAME, cfg.content);
     }, [applyBundleChange, buildCfg, compileCfg, envCfg]);
@@ -1226,7 +1366,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const handleOpenConfigJson = useCallback(() => {
         const exists = !!findBundleFile(pendingBundleRef.current.tree, CONFIG_FILENAME);
         if (exists) { handleOpenFile(CONFIG_FILENAME); return; }
-        if (!isOwnerRef.current) return;
+        if (!canEditRef.current) return;
         applyBundleChange(prev => {
             const nextTree = bundleAddFile(prev.tree, CONFIG_FILENAME, defaultConfigJson());
             if (!nextTree) return null;
@@ -1247,7 +1387,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // values are persisted; other top-level keys are preserved. Returns false
     // if the existing file couldn't be parsed (we won't clobber it). Owner-only.
     const writeProjectConfig = useCallback((build: BuildOptions, compile: CompileOptions, environment: EnvironmentOptions): boolean => {
-        if (!isOwnerRef.current) return false;
+        if (!canEditRef.current) return false;
         const existing = findBundleFile(pendingBundleRef.current.tree, CONFIG_FILENAME);
         const { content, error } = serializeProjectConfig(existing?.content ?? null, { build, compile, environment });
         if (error) return false;
@@ -1259,6 +1399,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (!nextTree) return null;
             return { ...prev, tree: nextTree };
         });
+        // config.json is a text file, so in a shared session its content lives in
+        // the Y.Text (the structure snapshot blanks text contents). Write it
+        // there so peers and the owner's save see this programmatic change.
+        if (collabEnabledRef.current) collabApiRef.current?.setText(CONFIG_FILENAME, content);
         // If config.json is open in a tab, mirror the change into its model so
         // the raw view updates live alongside the settings window.
         codeEditorRef.current?.syncModelContent(CONFIG_FILENAME, content);
@@ -1331,6 +1475,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
+            {collabEnabled && <RemoteCursorStyles participants={collab.participants} />}
             {/* ── Top bar ── */}
             <header style={isMobile
                 ? { display: "flex", alignItems: "center", gap: 4, padding: "0 12px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
@@ -1362,7 +1507,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         )}
                         {isOwner && !isMobile && <Icon.Chevron size={11} />}
                     </button>
-                    {isOwner === false && (
+                    {isOwner === false && !collabEnabled && (
                         <span style={{
                             marginLeft: 6,
                             padding: "2px 8px",
@@ -1383,6 +1528,33 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 {!isMobile && <div />}
 
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                    {!isMobile && collabEnabled && (
+                        <PresenceBar participants={collab.participants} status={collab.status} />
+                    )}
+                    {!isMobile && isOwner && (
+                        sessionActive ? (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                leading={<Icon.Globe size={11} />}
+                                onClick={handleStopSession}
+                                title={tx("clang.collab_stop_title")}
+                            >
+                                {tx("clang.collab_stop")}
+                            </Button>
+                        ) : (
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                leading={sessionStarting ? <Spinner size="sm" /> : <Icon.Globe size={11} />}
+                                onClick={handleStartSession}
+                                disabled={sessionStarting}
+                                title={tx("clang.collab_start_title")}
+                            >
+                                {tx("clang.collab_start")}
+                            </Button>
+                        )
+                    )}
                     {!isMobile && <>
                     {isOwner && saveStatus === "unsaved" && (
                         <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>{tx("clang.save_unsaved")}</span>
@@ -1563,7 +1735,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 tree={bundle.tree}
                                 entryPath={bundle.entry}
                                 activePath={bundle.ui.activeFile}
-                                readOnly={!isOwner}
+                                readOnly={!canEdit}
                                 onOpenFile={handleOpenFile}
                                 onCreateFile={handleCreateFile}
                                 onCreateFolder={handleCreateFolder}
@@ -1583,7 +1755,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 entryPath={bundle.entry}
                                 lspWsUrl={LSP_WS_URL}
                                 onTextChanged={handleEditorTextChanged}
-                                readOnly={isOwner === false || isMobile}
+                                readOnly={!canEdit || isMobile}
                                 theme={theme}
                                 onDiagnosticsChanged={handleDiagnosticsChanged}
                                 onActiveModelChanged={handleActiveModelChanged}

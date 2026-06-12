@@ -23,6 +23,9 @@ import type { EditorApp, TextContents } from "monaco-languageclient/editorApp";
 import type { LanguageClientConfig, LanguageClientManager } from "monaco-languageclient/lcwrapper";
 import { State } from "vscode-languageclient/browser.js";
 import * as monaco from "@codingame/monaco-vscode-editor-api";
+import { MonacoBinding } from "y-monaco";
+import type * as Y from "yjs";
+import type { Awareness } from "y-protocols/awareness";
 
 // Custom worker factory: monaco-languageclient's default loaders use bare
 // specifiers that Turbopack can't resolve, and Turbopack only bundles a worker
@@ -300,6 +303,18 @@ export type CodeEditorRef = {
     disposeLsp: () => void;
     /** (Re)start the language client connection. */
     reconnectLsp: () => void;
+    /**
+     * Enter collaborative mode: bind every (current and future) workspace model
+     * to its Y.Text via a MonacoBinding, rendering remote cursors through the
+     * shared awareness. `getText` resolves a workspace path to its Y.Text (may
+     * return undefined before the peer's text has synced — call rebindCollab
+     * once it arrives).
+     */
+    attachCollab: (getText: (path: string) => Y.Text | undefined, awareness: Awareness) => void;
+    /** Bind any owned models that aren't bound yet (after structure/text sync). */
+    rebindCollab: () => void;
+    /** Leave collaborative mode: destroy all bindings. */
+    detachCollab: () => void;
 };
 
 type Props = {
@@ -407,6 +422,49 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     // switches); the stopped-line highlight is a single decoration we move.
     const bpDecorationsRef = useRef<Map<string, string[]>>(new Map());
     const stoppedDecoRef = useRef<{ path: string; ids: string[] } | null>(null);
+
+    // ─── Collaboration (Yjs) bindings ─────────────────────────────────────
+    // When collab is attached, each workspace model is bound to its Y.Text so
+    // edits merge char-by-char and remote cursors render via awareness. One
+    // binding per model (path), sharing the single editor instance.
+    const collabRef = useRef<{ getText: (path: string) => Y.Text | undefined; awareness: Awareness } | null>(null);
+    const collabBindingsRef = useRef<Map<string, MonacoBinding>>(new Map());
+
+    const destroyCollabBinding = useCallback((path: string) => {
+        const b = collabBindingsRef.current.get(path);
+        if (b) {
+            b.destroy();
+            collabBindingsRef.current.delete(path);
+        }
+    }, []);
+
+    const bindModelForPath = useCallback((path: string) => {
+        const collab = collabRef.current;
+        if (!collab) return;
+        if (collabBindingsRef.current.has(path)) return;
+        const yText = collab.getText(path);
+        if (!yText) return; // peer's text not synced yet — rebindCollab retries
+        const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));
+        if (!model) return;
+        const editor = editorRef.current;
+        const editors = new Set(editor ? [editor] : []);
+        // y-monaco is typed against `monaco-editor`, but our model/editor come
+        // from @codingame/monaco-vscode-editor-api (runtime-compatible, separate
+        // .d.ts). Cast to the constructor's expected param types.
+        type BindingArgs = ConstructorParameters<typeof MonacoBinding>;
+        const binding = new MonacoBinding(
+            yText,
+            model as unknown as BindingArgs[1],
+            editors as unknown as BindingArgs[2],
+            collab.awareness,
+        );
+        collabBindingsRef.current.set(path, binding);
+    }, []);
+
+    const rebindAllCollab = useCallback(() => {
+        if (!collabRef.current) return;
+        for (const path of modelOwnedPathsRef.current) bindModelForPath(path);
+    }, [bindModelForPath]);
 
     // Latest files / commands for the palette actions (registered once, read
     // through these refs so updates don't require re-registration).
@@ -644,13 +702,15 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             });
             contentChangeDisposablesRef.current.set(path, disp);
             modelOwnedPathsRef.current.add(path);
+            // In collab mode, bind the freshly-created model to its Y.Text.
+            bindModelForPath(path);
         } else if (model.getValue() !== initialContent) {
             // Programmatic content sync (e.g., after a load). We deliberately
             // do NOT set value back to the model for every prop change — the
             // editor's own content is the source of truth while focused.
         }
         return model;
-    }, []);
+    }, [bindModelForPath]);
 
     // Sync the set of models with the `files` prop. Models for files no longer
     // in the bundle are disposed (after swapping the editor away if active).
@@ -677,6 +737,7 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             const uri = monaco.Uri.parse(pathToUri(path));
             const model = monaco.editor.getModel(uri);
             if (!model) {
+                destroyCollabBinding(path);
                 modelOwnedPathsRef.current.delete(path);
                 contentChangeDisposablesRef.current.get(path)?.dispose();
                 contentChangeDisposablesRef.current.delete(path);
@@ -692,13 +753,14 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
                     swapModelTo(target);
                 }
             }
+            destroyCollabBinding(path);
             contentChangeDisposablesRef.current.get(path)?.dispose();
             contentChangeDisposablesRef.current.delete(path);
             model.dispose();
             void vscodeDeleteFile(uri).catch(() => { /* best-effort */ });
             modelOwnedPathsRef.current.delete(path);
         }
-    }, [files, activeUri, entryPath, ensureModel]);
+    }, [files, activeUri, entryPath, ensureModel, destroyCollabBinding]);
 
     // Sync the active model with `activeUri`. Falls back to the entry's URI
     // when the target model doesn't exist (e.g., a stale path after a rename).
@@ -727,6 +789,9 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         captureDisposablesRef.current = [];
         for (const d of contentChangeDisposablesRef.current.values()) d.dispose();
         contentChangeDisposablesRef.current.clear();
+        for (const b of collabBindingsRef.current.values()) b.destroy();
+        collabBindingsRef.current.clear();
+        collabRef.current = null;
         for (const d of editorActionDisposablesRef.current) d.dispose();
         editorActionDisposablesRef.current = [];
         if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
@@ -862,7 +927,19 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             setEfd(true);
             setTimeout(() => setEfd(false), 0);
         },
-    }), [swapModelTo, emitLspStatus]);
+        attachCollab: (getText, awareness) => {
+            collabRef.current = { getText, awareness };
+            rebindAllCollab();
+        },
+        rebindCollab: () => {
+            rebindAllCollab();
+        },
+        detachCollab: () => {
+            for (const b of collabBindingsRef.current.values()) b.destroy();
+            collabBindingsRef.current.clear();
+            collabRef.current = null;
+        },
+    }), [swapModelTo, emitLspStatus, rebindAllCollab]);
 
     const initialFilesRef = useRef(files);
     const initialActiveUriRef = useRef(activeUri);

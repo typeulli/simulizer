@@ -6,7 +6,7 @@ import { Inline } from "@/components/atoms/layout/Inline";
 import { Text } from "@/components/atoms/Text";
 import { Modal, ModalBody, ModalHeader } from "@/components/organisms/Modal";
 import { token } from "@/components/tokens";
-import langpack from "@/lang/lang";
+import langpack from "@/i18n/lang";
 import { BUILTIN_CONSTS, type BuiltinConst, type ConstCategory } from "@/utils/blockly/locals";
 
 interface ConstManagerModalProps {

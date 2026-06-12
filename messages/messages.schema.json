@@ -1,0 +1,2985 @@
+{
+  "$ref": "#/definitions/langpack",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "langpack": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "additionalProperties": false,
+          "properties": {
+            "breadcrumb": {
+              "type": "string"
+            },
+            "cancel_button": {
+              "type": "string"
+            },
+            "confirm_button": {
+              "type": "string"
+            },
+            "confirm_desc": {
+              "type": "string"
+            },
+            "confirm_title": {
+              "type": "string"
+            },
+            "danger_desc": {
+              "type": "string"
+            },
+            "danger_title": {
+              "type": "string"
+            },
+            "delete_button": {
+              "type": "string"
+            },
+            "delete_error": {
+              "type": "string"
+            },
+            "deleting_button": {
+              "type": "string"
+            },
+            "google_badge": {
+              "type": "string"
+            },
+            "header_title": {
+              "type": "string"
+            },
+            "row_email": {
+              "type": "string"
+            },
+            "row_joined": {
+              "type": "string"
+            },
+            "row_last_login": {
+              "type": "string"
+            },
+            "row_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "breadcrumb",
+            "header_title",
+            "row_name",
+            "row_email",
+            "row_joined",
+            "row_last_login",
+            "google_badge",
+            "danger_title",
+            "danger_desc",
+            "delete_button",
+            "confirm_title",
+            "confirm_desc",
+            "confirm_button",
+            "deleting_button",
+            "delete_error",
+            "cancel_button"
+          ],
+          "type": "object"
+        },
+        "block_dropdowns": {
+          "additionalProperties": false,
+          "properties": {
+            "bool_binop": {
+              "additionalProperties": false,
+              "properties": {
+                "OP": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "and": {
+                      "type": "string"
+                    },
+                    "or": {
+                      "type": "string"
+                    },
+                    "xor": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "and",
+                    "or",
+                    "xor"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "OP"
+              ],
+              "type": "object"
+            },
+            "bool_const": {
+              "additionalProperties": false,
+              "properties": {
+                "VALUE": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "0": {
+                      "type": "string"
+                    },
+                    "1": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "1",
+                    "0"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "VALUE"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "bool_const",
+            "bool_binop"
+          ],
+          "type": "object"
+        },
+        "block_dynamic": {
+          "additionalProperties": false,
+          "properties": {
+            "array_literal_index": {
+              "type": "string"
+            },
+            "array_literal_size_label": {
+              "type": "string"
+            },
+            "array_literal_tooltip_f64": {
+              "type": "string"
+            },
+            "array_literal_tooltip_i32": {
+              "type": "string"
+            },
+            "custom_func_add_param": {
+              "type": "string"
+            },
+            "custom_func_def_body_label": {
+              "type": "string"
+            },
+            "custom_func_def_label": {
+              "type": "string"
+            },
+            "custom_func_def_param_label": {
+              "type": "string"
+            },
+            "custom_func_def_tooltip": {
+              "type": "string"
+            },
+            "custom_func_remove_param": {
+              "type": "string"
+            },
+            "fold_region_label": {
+              "type": "string"
+            },
+            "fold_region_tooltip": {
+              "type": "string"
+            },
+            "tensor_get_dims_label": {
+              "type": "string"
+            },
+            "tensor_get_header": {
+              "type": "string"
+            },
+            "tensor_get_tooltip": {
+              "type": "string"
+            },
+            "tensor_new_dim_item": {
+              "type": "string"
+            },
+            "tensor_new_dim_label": {
+              "type": "string"
+            },
+            "tensor_new_header": {
+              "type": "string"
+            },
+            "tensor_new_tooltip": {
+              "type": "string"
+            },
+            "tensor_set_tooltip": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tensor_new_header",
+            "tensor_new_dim_label",
+            "tensor_new_dim_item",
+            "tensor_new_tooltip",
+            "tensor_set_tooltip",
+            "tensor_get_header",
+            "tensor_get_dims_label",
+            "tensor_get_tooltip",
+            "array_literal_size_label",
+            "array_literal_index",
+            "array_literal_tooltip_i32",
+            "array_literal_tooltip_f64",
+            "fold_region_label",
+            "fold_region_tooltip",
+            "custom_func_def_label",
+            "custom_func_def_body_label",
+            "custom_func_def_param_label",
+            "custom_func_def_tooltip",
+            "custom_func_add_param",
+            "custom_func_remove_param"
+          ],
+          "type": "object"
+        },
+        "block_messages": {
+          "additionalProperties": false,
+          "properties": {
+            "array_assign_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "array_assign_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "array_get_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "array_get_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "array_len_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "array_len_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "array_set_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "array_set_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "bool_binop": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "bool_const": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "bool_not": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "debug_bar": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "debug_bar_set": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "debug_graph_array": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "debug_graph_array_range": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "debug_log": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "debug_series": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "debug_set_holder": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_binop": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_cmp": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_const": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_from_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_random": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_random_range": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_select": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "f64_unop": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "flow_break": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "flow_for": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "flow_for_bd2": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "flow_for_bd3": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "flow_if": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "flow_if_else": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "flow_while": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "i32_binop": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "i32_cmp": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "i32_const": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "i32_from_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "i32_random": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "i32_select": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "i32_unop": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "input_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "input_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "latex_expr": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "latex_value": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_array_decl_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_array_decl_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_array_get_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_array_get_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_decl_bd2": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_decl_bd3": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_decl_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_decl_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_bd2": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_bd2_normal": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_bd2_point": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_bd2_tangent": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_bd3": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_bd3_normal": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_bd3_point": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_get_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_set_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "local_set_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "matrix_create": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "matrix_det": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "matrix_identity": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "matrix_inverse": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "matrix_matmul": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "matrix_trace": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "matrix_transpose": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_binop": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_curl": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_get": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_get_by_index": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_grad": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_lapl": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_new": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_perlin": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_random": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_save": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_scale": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_set_by_index": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_show_mat": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "tensor_unop": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_add": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_component_set": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_decl": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_dot": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_get": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_len": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_len_sq": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_literal": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_neg": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_normalize": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_proj_scalar": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_proj_vec": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_scale": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_set": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_sub": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_x": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec2_y": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_add": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_component_set": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_cross": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_decl": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_dot": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_get": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_len": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_len_sq": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_literal": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_neg": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_normalize": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_proj_scalar": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_proj_vec": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_scale": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_set": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_sub": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_x": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_y": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "vec3_z": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "wasm_func_main": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "wasm_return_f64": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "wasm_return_i32": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "debug_log",
+            "debug_graph_array",
+            "debug_graph_array_range",
+            "debug_series",
+            "debug_set_holder",
+            "debug_bar",
+            "debug_bar_set",
+            "flow_if",
+            "flow_if_else",
+            "flow_while",
+            "flow_for",
+            "flow_break",
+            "i32_select",
+            "f64_select",
+            "local_decl_i32",
+            "local_decl_f64",
+            "local_get_i32",
+            "local_get_f64",
+            "local_set_i32",
+            "local_set_f64",
+            "local_array_decl_i32",
+            "local_array_decl_f64",
+            "array_get_i32",
+            "array_get_f64",
+            "array_set_i32",
+            "array_set_f64",
+            "array_assign_i32",
+            "array_assign_f64",
+            "local_array_get_i32",
+            "local_array_get_f64",
+            "array_len_i32",
+            "array_len_f64",
+            "tensor_random",
+            "tensor_new",
+            "tensor_get",
+            "tensor_save",
+            "tensor_binop",
+            "tensor_unop",
+            "tensor_scale",
+            "tensor_set_by_index",
+            "tensor_get_by_index",
+            "tensor_perlin",
+            "tensor_show_mat",
+            "tensor_grad",
+            "tensor_curl",
+            "tensor_lapl",
+            "matrix_create",
+            "matrix_matmul",
+            "matrix_transpose",
+            "matrix_inverse",
+            "matrix_det",
+            "matrix_trace",
+            "matrix_identity",
+            "vec2_literal",
+            "vec2_get",
+            "vec2_decl",
+            "vec2_set",
+            "vec2_component_set",
+            "vec2_x",
+            "vec2_y",
+            "vec2_len",
+            "vec2_len_sq",
+            "vec2_add",
+            "vec2_sub",
+            "vec2_scale",
+            "vec2_neg",
+            "vec2_normalize",
+            "vec2_dot",
+            "vec2_proj_scalar",
+            "vec2_proj_vec",
+            "vec3_literal",
+            "vec3_get",
+            "vec3_decl",
+            "vec3_set",
+            "vec3_component_set",
+            "vec3_x",
+            "vec3_y",
+            "vec3_z",
+            "vec3_len",
+            "vec3_len_sq",
+            "vec3_add",
+            "vec3_sub",
+            "vec3_scale",
+            "vec3_neg",
+            "vec3_normalize",
+            "vec3_dot",
+            "vec3_cross",
+            "vec3_proj_scalar",
+            "vec3_proj_vec",
+            "bool_const",
+            "bool_binop",
+            "bool_not",
+            "i32_const",
+            "i32_binop",
+            "i32_unop",
+            "i32_cmp",
+            "i32_random",
+            "input_i32",
+            "f64_const",
+            "f64_from_i32",
+            "i32_from_f64",
+            "f64_binop",
+            "f64_unop",
+            "f64_cmp",
+            "f64_random",
+            "f64_random_range",
+            "input_f64",
+            "local_decl_bd2",
+            "local_decl_bd3",
+            "local_get_bd2",
+            "local_get_bd2_point",
+            "local_get_bd2_tangent",
+            "local_get_bd2_normal",
+            "local_get_bd3",
+            "local_get_bd3_point",
+            "local_get_bd3_normal",
+            "flow_for_bd2",
+            "flow_for_bd3",
+            "latex_expr",
+            "latex_value",
+            "wasm_return_i32",
+            "wasm_return_f64",
+            "wasm_func_main"
+          ],
+          "type": "object"
+        },
+        "block_tooltips": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "boundary": {
+          "additionalProperties": false,
+          "properties": {
+            "breadcrumb_2d": {
+              "type": "string"
+            },
+            "breadcrumb_3d": {
+              "type": "string"
+            },
+            "no_data_error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "no_data_error",
+            "breadcrumb_2d",
+            "breadcrumb_3d"
+          ],
+          "type": "object"
+        },
+        "clang": {
+          "additionalProperties": false,
+          "properties": {
+            "build_settings_title": {
+              "type": "string"
+            },
+            "cancel": {
+              "type": "string"
+            },
+            "ce_endregion_detail": {
+              "type": "string"
+            },
+            "ce_open_file": {
+              "type": "string"
+            },
+            "ce_region_detail": {
+              "type": "string"
+            },
+            "ce_region_doc": {
+              "type": "string"
+            },
+            "close": {
+              "type": "string"
+            },
+            "config_json_error_title": {
+              "type": "string"
+            },
+            "config_json_format_error": {
+              "type": "string"
+            },
+            "confirm": {
+              "type": "string"
+            },
+            "dbg_callstack": {
+              "type": "string"
+            },
+            "dbg_change_failed": {
+              "type": "string"
+            },
+            "dbg_continue": {
+              "type": "string"
+            },
+            "dbg_dblclick_edit": {
+              "type": "string"
+            },
+            "dbg_edit_hint": {
+              "type": "string"
+            },
+            "dbg_loading": {
+              "type": "string"
+            },
+            "dbg_no_vars": {
+              "type": "string"
+            },
+            "dbg_remove": {
+              "type": "string"
+            },
+            "dbg_status_building": {
+              "type": "string"
+            },
+            "dbg_status_error": {
+              "type": "string"
+            },
+            "dbg_status_paused": {
+              "type": "string"
+            },
+            "dbg_status_running": {
+              "type": "string"
+            },
+            "dbg_status_terminated": {
+              "type": "string"
+            },
+            "dbg_status_waiting": {
+              "type": "string"
+            },
+            "dbg_step_into": {
+              "type": "string"
+            },
+            "dbg_step_out": {
+              "type": "string"
+            },
+            "dbg_step_over": {
+              "type": "string"
+            },
+            "dbg_stop": {
+              "type": "string"
+            },
+            "dbg_vars": {
+              "type": "string"
+            },
+            "dbg_vars_hint": {
+              "type": "string"
+            },
+            "dbg_watch": {
+              "type": "string"
+            },
+            "dbg_watch_empty": {
+              "type": "string"
+            },
+            "dbg_watch_placeholder": {
+              "type": "string"
+            },
+            "debug_button": {
+              "type": "string"
+            },
+            "debug_title": {
+              "type": "string"
+            },
+            "delete": {
+              "type": "string"
+            },
+            "delete_confirm_title": {
+              "type": "string"
+            },
+            "delete_entry_title": {
+              "type": "string"
+            },
+            "delete_irreversible": {
+              "type": "string"
+            },
+            "delete_single": {
+              "type": "string"
+            },
+            "delete_with_children": {
+              "type": "string"
+            },
+            "editor_loading": {
+              "type": "string"
+            },
+            "entry_contains": {
+              "type": "string"
+            },
+            "entry_must_cpp": {
+              "type": "string"
+            },
+            "entry_reassign": {
+              "type": "string"
+            },
+            "external_lib_locked": {
+              "type": "string"
+            },
+            "file_name_conflict": {
+              "type": "string"
+            },
+            "file_too_large_1mb": {
+              "type": "string"
+            },
+            "file_too_large_4mb": {
+              "type": "string"
+            },
+            "filetree_toggle": {
+              "type": "string"
+            },
+            "folder_name_conflict": {
+              "type": "string"
+            },
+            "image_only": {
+              "type": "string"
+            },
+            "jump_title": {
+              "type": "string"
+            },
+            "lsp_already_connected": {
+              "type": "string"
+            },
+            "lsp_cancel_hint": {
+              "type": "string"
+            },
+            "lsp_connected_title": {
+              "type": "string"
+            },
+            "lsp_connecting_msg": {
+              "type": "string"
+            },
+            "lsp_connecting_title": {
+              "type": "string"
+            },
+            "lsp_disconnected_short": {
+              "type": "string"
+            },
+            "lsp_fail_message": {
+              "type": "string"
+            },
+            "lsp_fail_title": {
+              "type": "string"
+            },
+            "lsp_status_connected": {
+              "type": "string"
+            },
+            "lsp_status_disconnected": {
+              "type": "string"
+            },
+            "name_conflict": {
+              "type": "string"
+            },
+            "no_permission": {
+              "type": "string"
+            },
+            "notice_close_aria": {
+              "type": "string"
+            },
+            "preview_unavailable": {
+              "type": "string"
+            },
+            "progress_building": {
+              "type": "string"
+            },
+            "progress_compiling": {
+              "type": "string"
+            },
+            "progress_download_done": {
+              "type": "string"
+            },
+            "progress_downloading": {
+              "type": "string"
+            },
+            "progress_loading": {
+              "type": "string"
+            },
+            "progress_sending": {
+              "type": "string"
+            },
+            "project_name_conflict": {
+              "type": "string"
+            },
+            "save": {
+              "type": "string"
+            },
+            "save_failed": {
+              "type": "string"
+            },
+            "save_unsaved": {
+              "type": "string"
+            },
+            "saving": {
+              "type": "string"
+            },
+            "status_compiling": {
+              "type": "string"
+            },
+            "status_done": {
+              "type": "string"
+            },
+            "status_error": {
+              "type": "string"
+            },
+            "status_loading": {
+              "type": "string"
+            },
+            "status_running": {
+              "type": "string"
+            },
+            "status_waiting": {
+              "type": "string"
+            },
+            "tab_close_aria": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "lsp_fail_message",
+            "editor_loading",
+            "lsp_fail_title",
+            "lsp_connected_title",
+            "lsp_already_connected",
+            "lsp_connecting_title",
+            "lsp_connecting_msg",
+            "lsp_cancel_hint",
+            "lsp_status_connected",
+            "lsp_status_disconnected",
+            "lsp_disconnected_short",
+            "project_name_conflict",
+            "no_permission",
+            "file_name_conflict",
+            "folder_name_conflict",
+            "name_conflict",
+            "entry_must_cpp",
+            "file_too_large_1mb",
+            "image_only",
+            "file_too_large_4mb",
+            "config_json_format_error",
+            "external_lib_locked",
+            "config_json_error_title",
+            "progress_sending",
+            "progress_downloading",
+            "progress_download_done",
+            "progress_loading",
+            "progress_compiling",
+            "progress_building",
+            "status_loading",
+            "status_compiling",
+            "status_running",
+            "status_done",
+            "status_error",
+            "status_waiting",
+            "save_unsaved",
+            "save_failed",
+            "saving",
+            "save",
+            "build_settings_title",
+            "debug_title",
+            "debug_button",
+            "filetree_toggle",
+            "tab_close_aria",
+            "notice_close_aria",
+            "jump_title",
+            "close",
+            "delete_entry_title",
+            "delete_confirm_title",
+            "entry_contains",
+            "entry_reassign",
+            "delete_with_children",
+            "delete_single",
+            "delete_irreversible",
+            "confirm",
+            "cancel",
+            "delete",
+            "preview_unavailable",
+            "dbg_change_failed",
+            "dbg_edit_hint",
+            "dbg_dblclick_edit",
+            "dbg_loading",
+            "dbg_no_vars",
+            "dbg_watch_placeholder",
+            "dbg_watch_empty",
+            "dbg_remove",
+            "dbg_status_building",
+            "dbg_status_running",
+            "dbg_status_paused",
+            "dbg_status_terminated",
+            "dbg_status_error",
+            "dbg_status_waiting",
+            "dbg_continue",
+            "dbg_step_over",
+            "dbg_step_into",
+            "dbg_step_out",
+            "dbg_stop",
+            "dbg_vars",
+            "dbg_vars_hint",
+            "dbg_callstack",
+            "dbg_watch",
+            "ce_region_detail",
+            "ce_region_doc",
+            "ce_endregion_detail",
+            "ce_open_file"
+          ],
+          "type": "object"
+        },
+        "console": {
+          "additionalProperties": false,
+          "properties": {
+            "mat_zoom": {
+              "type": "string"
+            },
+            "series_count": {
+              "type": "string"
+            },
+            "series_empty": {
+              "type": "string"
+            },
+            "series_mat_label": {
+              "type": "string"
+            },
+            "series_title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mat_zoom",
+            "series_title",
+            "series_count",
+            "series_empty",
+            "series_mat_label"
+          ],
+          "type": "object"
+        },
+        "dashboard": {
+          "additionalProperties": false,
+          "properties": {
+            "badge_clangfile": {
+              "type": "string"
+            },
+            "badge_link_shared": {
+              "type": "string"
+            },
+            "card_updated": {
+              "type": "string"
+            },
+            "duplicate_cpp_failed": {
+              "type": "string"
+            },
+            "empty_desc": {
+              "type": "string"
+            },
+            "empty_new_file_button": {
+              "type": "string"
+            },
+            "empty_title": {
+              "type": "string"
+            },
+            "header_title": {
+              "type": "string"
+            },
+            "import_failed": {
+              "type": "string"
+            },
+            "import_unsupported_ext": {
+              "type": "string"
+            },
+            "menu_delete": {
+              "type": "string"
+            },
+            "menu_duplicate": {
+              "type": "string"
+            },
+            "menu_duplicate_cpp": {
+              "type": "string"
+            },
+            "menu_open": {
+              "type": "string"
+            },
+            "menu_rename": {
+              "type": "string"
+            },
+            "menu_set_thumbnail": {
+              "type": "string"
+            },
+            "menu_share": {
+              "type": "string"
+            },
+            "new_file_button": {
+              "type": "string"
+            },
+            "new_file_type_block_desc": {
+              "type": "string"
+            },
+            "new_file_type_block_title": {
+              "type": "string"
+            },
+            "new_file_type_clang_desc": {
+              "type": "string"
+            },
+            "new_file_type_clang_title": {
+              "type": "string"
+            },
+            "new_file_type_import_desc": {
+              "type": "string"
+            },
+            "new_file_type_import_title": {
+              "type": "string"
+            },
+            "rename_conflict": {
+              "type": "string"
+            },
+            "section_title": {
+              "type": "string"
+            },
+            "thumbnail_dropzone_hint": {
+              "type": "string"
+            },
+            "thumbnail_dropzone_idle": {
+              "type": "string"
+            },
+            "thumbnail_modal_title": {
+              "type": "string"
+            },
+            "thumbnail_not_image": {
+              "type": "string"
+            },
+            "thumbnail_recommended_size": {
+              "type": "string"
+            },
+            "thumbnail_reset_button": {
+              "type": "string"
+            },
+            "thumbnail_reset_failed": {
+              "type": "string"
+            },
+            "thumbnail_too_large": {
+              "type": "string"
+            },
+            "thumbnail_upload_failed": {
+              "type": "string"
+            },
+            "thumbnail_uploading": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "header_title",
+            "section_title",
+            "new_file_button",
+            "empty_title",
+            "empty_desc",
+            "empty_new_file_button",
+            "card_updated",
+            "menu_open",
+            "menu_rename",
+            "menu_duplicate",
+            "menu_share",
+            "menu_delete",
+            "rename_conflict",
+            "badge_link_shared",
+            "new_file_type_block_title",
+            "new_file_type_block_desc",
+            "new_file_type_clang_title",
+            "new_file_type_clang_desc",
+            "new_file_type_import_title",
+            "new_file_type_import_desc",
+            "badge_clangfile",
+            "menu_duplicate_cpp",
+            "duplicate_cpp_failed",
+            "import_failed",
+            "import_unsupported_ext",
+            "menu_set_thumbnail",
+            "thumbnail_upload_failed",
+            "thumbnail_not_image",
+            "thumbnail_too_large",
+            "thumbnail_modal_title",
+            "thumbnail_dropzone_idle",
+            "thumbnail_dropzone_hint",
+            "thumbnail_recommended_size",
+            "thumbnail_uploading",
+            "thumbnail_reset_button",
+            "thumbnail_reset_failed"
+          ],
+          "type": "object"
+        },
+        "docs": {
+          "additionalProperties": false,
+          "properties": {
+            "open_in_workspace": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "open_in_workspace"
+          ],
+          "type": "object"
+        },
+        "file_error": {
+          "additionalProperties": false,
+          "properties": {
+            "forbidden_desc": {
+              "type": "string"
+            },
+            "forbidden_title": {
+              "type": "string"
+            },
+            "go_dashboard": {
+              "type": "string"
+            },
+            "not_found_desc": {
+              "type": "string"
+            },
+            "not_found_title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "not_found_title",
+            "not_found_desc",
+            "forbidden_title",
+            "forbidden_desc",
+            "go_dashboard"
+          ],
+          "type": "object"
+        },
+        "home": {
+          "additionalProperties": false,
+          "properties": {
+            "cta_dashboard": {
+              "type": "string"
+            },
+            "cta_guide": {
+              "type": "string"
+            },
+            "cta_start": {
+              "type": "string"
+            },
+            "feature_ai_body_bold": {
+              "type": "string"
+            },
+            "feature_ai_body_post": {
+              "type": "string"
+            },
+            "feature_ai_body_pre": {
+              "type": "string"
+            },
+            "feature_ai_title": {
+              "type": "string"
+            },
+            "feature_blocks_body_bold": {
+              "type": "string"
+            },
+            "feature_blocks_body_post": {
+              "type": "string"
+            },
+            "feature_blocks_body_pre": {
+              "type": "string"
+            },
+            "feature_blocks_title": {
+              "type": "string"
+            },
+            "feature_speed_body_bold": {
+              "type": "string"
+            },
+            "feature_speed_body_post": {
+              "type": "string"
+            },
+            "feature_speed_body_pre": {
+              "type": "string"
+            },
+            "feature_speed_title": {
+              "type": "string"
+            },
+            "footer_copy": {
+              "type": "string"
+            },
+            "footer_mode": {
+              "type": "string"
+            },
+            "hero_badge": {
+              "type": "string"
+            },
+            "hero_body": {
+              "type": "string"
+            },
+            "hero_title_gradient": {
+              "type": "string"
+            },
+            "hero_title_post": {
+              "type": "string"
+            },
+            "hero_title_pre": {
+              "type": "string"
+            },
+            "nav_dashboard": {
+              "type": "string"
+            },
+            "nav_docs": {
+              "type": "string"
+            },
+            "nav_examples": {
+              "type": "string"
+            },
+            "nav_github": {
+              "type": "string"
+            },
+            "nav_login": {
+              "type": "string"
+            },
+            "stat_gpu_label": {
+              "type": "string"
+            },
+            "stat_gpu_sub": {
+              "type": "string"
+            },
+            "stat_gpu_value": {
+              "type": "string"
+            },
+            "stat_local_label": {
+              "type": "string"
+            },
+            "stat_local_sub": {
+              "type": "string"
+            },
+            "stat_local_value": {
+              "type": "string"
+            },
+            "stat_pipeline_label": {
+              "type": "string"
+            },
+            "stat_pipeline_sub": {
+              "type": "string"
+            },
+            "stat_pipeline_value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "nav_docs",
+            "nav_examples",
+            "nav_github",
+            "nav_dashboard",
+            "nav_login",
+            "hero_badge",
+            "hero_title_pre",
+            "hero_title_gradient",
+            "hero_title_post",
+            "hero_body",
+            "cta_dashboard",
+            "cta_start",
+            "cta_guide",
+            "stat_pipeline_label",
+            "stat_pipeline_value",
+            "stat_pipeline_sub",
+            "stat_gpu_label",
+            "stat_gpu_value",
+            "stat_gpu_sub",
+            "stat_local_label",
+            "stat_local_value",
+            "stat_local_sub",
+            "feature_blocks_title",
+            "feature_blocks_body_pre",
+            "feature_blocks_body_bold",
+            "feature_blocks_body_post",
+            "feature_speed_title",
+            "feature_speed_body_pre",
+            "feature_speed_body_bold",
+            "feature_speed_body_post",
+            "feature_ai_title",
+            "feature_ai_body_pre",
+            "feature_ai_body_bold",
+            "feature_ai_body_post",
+            "footer_copy",
+            "footer_mode"
+          ],
+          "type": "object"
+        },
+        "login": {
+          "additionalProperties": false,
+          "properties": {
+            "account_deleted_msg": {
+              "type": "string"
+            },
+            "error_oauth_denied": {
+              "type": "string"
+            },
+            "error_oauth_failed": {
+              "type": "string"
+            },
+            "google_button": {
+              "type": "string"
+            },
+            "left_body": {
+              "type": "string"
+            },
+            "left_feature_1": {
+              "type": "string"
+            },
+            "left_feature_2": {
+              "type": "string"
+            },
+            "left_feature_3": {
+              "type": "string"
+            },
+            "left_feature_4": {
+              "type": "string"
+            },
+            "left_title_1": {
+              "type": "string"
+            },
+            "left_title_2": {
+              "type": "string"
+            },
+            "right_subtitle": {
+              "type": "string"
+            },
+            "right_title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "left_title_1",
+            "left_title_2",
+            "left_body",
+            "left_feature_1",
+            "left_feature_2",
+            "left_feature_3",
+            "left_feature_4",
+            "right_title",
+            "right_subtitle",
+            "account_deleted_msg",
+            "error_oauth_denied",
+            "error_oauth_failed",
+            "google_button"
+          ],
+          "type": "object"
+        },
+        "messages": {
+          "additionalProperties": false,
+          "properties": {
+            "alert_title": {
+              "type": "string"
+            },
+            "command_search_placeholder": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "error_title": {
+              "type": "string"
+            },
+            "loading": {
+              "type": "string"
+            },
+            "ok_button": {
+              "type": "string"
+            },
+            "warning_title": {
+              "type": "string"
+            },
+            "welcome": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "welcome",
+            "loading",
+            "error",
+            "alert_title",
+            "warning_title",
+            "error_title",
+            "ok_button",
+            "command_search_placeholder"
+          ],
+          "type": "object"
+        },
+        "meta": {
+          "additionalProperties": false,
+          "properties": {
+            "langc": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "langc",
+            "name"
+          ],
+          "type": "object"
+        },
+        "not_found": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "desc": {
+              "type": "string"
+            },
+            "go_back": {
+              "type": "string"
+            },
+            "go_home": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "title",
+            "desc",
+            "go_home",
+            "go_back"
+          ],
+          "type": "object"
+        },
+        "recover": {
+          "additionalProperties": false,
+          "properties": {
+            "cancel_button": {
+              "type": "string"
+            },
+            "cancel_confirm": {
+              "type": "string"
+            },
+            "cancel_error": {
+              "type": "string"
+            },
+            "cancel_link": {
+              "type": "string"
+            },
+            "days_remaining": {
+              "type": "string"
+            },
+            "delete_now_button": {
+              "type": "string"
+            },
+            "deleted_badge": {
+              "type": "string"
+            },
+            "deleting_button": {
+              "type": "string"
+            },
+            "question": {
+              "type": "string"
+            },
+            "question_sub": {
+              "type": "string"
+            },
+            "recover_button": {
+              "type": "string"
+            },
+            "recovering_button": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deleted_badge",
+            "days_remaining",
+            "question",
+            "question_sub",
+            "recover_button",
+            "recovering_button",
+            "cancel_link",
+            "cancel_confirm",
+            "delete_now_button",
+            "deleting_button",
+            "cancel_error",
+            "cancel_button"
+          ],
+          "type": "object"
+        },
+        "setting": {
+          "additionalProperties": false,
+          "properties": {
+            "auto_detect": {
+              "type": "string"
+            },
+            "auto_detect_sub": {
+              "type": "string"
+            },
+            "back": {
+              "type": "string"
+            },
+            "breadcrumb": {
+              "type": "string"
+            },
+            "header_title": {
+              "type": "string"
+            },
+            "reload_hint": {
+              "type": "string"
+            },
+            "save_button": {
+              "type": "string"
+            },
+            "saved_button": {
+              "type": "string"
+            },
+            "section_desc": {
+              "type": "string"
+            },
+            "section_title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "breadcrumb",
+            "header_title",
+            "back",
+            "section_title",
+            "section_desc",
+            "auto_detect",
+            "auto_detect_sub",
+            "save_button",
+            "saved_button",
+            "reload_hint"
+          ],
+          "type": "object"
+        },
+        "topbar": {
+          "additionalProperties": false,
+          "properties": {
+            "account": {
+              "type": "string"
+            },
+            "dark_mode": {
+              "type": "string"
+            },
+            "home": {
+              "type": "string"
+            },
+            "light_mode": {
+              "type": "string"
+            },
+            "log_out": {
+              "type": "string"
+            },
+            "my_drafts": {
+              "type": "string"
+            },
+            "settings": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "home",
+            "my_drafts",
+            "account",
+            "dark_mode",
+            "light_mode",
+            "settings",
+            "log_out"
+          ],
+          "type": "object"
+        },
+        "types": {
+          "additionalProperties": false,
+          "properties": {
+            "bd2": {
+              "type": "string"
+            },
+            "bd3": {
+              "type": "string"
+            },
+            "bool": {
+              "type": "string"
+            },
+            "f64": {
+              "type": "string"
+            },
+            "i32": {
+              "type": "string"
+            },
+            "vec2": {
+              "type": "string"
+            },
+            "vec3": {
+              "type": "string"
+            },
+            "void": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "i32",
+            "f64",
+            "bool",
+            "vec2",
+            "vec3",
+            "bd2",
+            "bd3",
+            "void"
+          ],
+          "type": "object"
+        },
+        "workspace": {
+          "additionalProperties": false,
+          "properties": {
+            "ai": {
+              "additionalProperties": false,
+              "properties": {
+                "abort": {
+                  "type": "string"
+                },
+                "apply": {
+                  "type": "string"
+                },
+                "cancel": {
+                  "type": "string"
+                },
+                "diff_added": {
+                  "type": "string"
+                },
+                "diff_removed": {
+                  "type": "string"
+                },
+                "diff_unchanged": {
+                  "type": "string"
+                },
+                "error_prefix": {
+                  "type": "string"
+                },
+                "hint": {
+                  "type": "string"
+                },
+                "idle": {
+                  "type": "string"
+                },
+                "placeholder": {
+                  "type": "string"
+                },
+                "send": {
+                  "type": "string"
+                },
+                "streaming": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "waiting": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "waiting",
+                "abort",
+                "send",
+                "placeholder",
+                "streaming",
+                "idle",
+                "hint",
+                "error_prefix",
+                "apply",
+                "cancel",
+                "diff_added",
+                "diff_removed",
+                "diff_unchanged"
+              ],
+              "type": "object"
+            },
+            "alerts": {
+              "additionalProperties": false,
+              "properties": {
+                "file_size_invalid": {
+                  "type": "string"
+                },
+                "func_name_exists": {
+                  "type": "string"
+                },
+                "func_name_required": {
+                  "type": "string"
+                },
+                "invalid_identifier": {
+                  "type": "string"
+                },
+                "name_charset": {
+                  "type": "string"
+                },
+                "name_in_use": {
+                  "type": "string"
+                },
+                "name_required": {
+                  "type": "string"
+                },
+                "xml_corrupted": {
+                  "type": "string"
+                },
+                "xml_parse_error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "func_name_required",
+                "invalid_identifier",
+                "func_name_exists",
+                "name_required",
+                "xml_parse_error",
+                "xml_corrupted",
+                "name_charset",
+                "name_in_use",
+                "file_size_invalid"
+              ],
+              "type": "object"
+            },
+            "blocks": {
+              "additionalProperties": false,
+              "properties": {
+                "custom_func_call_tooltip": {
+                  "type": "string"
+                },
+                "custom_func_tooltip": {
+                  "type": "string"
+                },
+                "func_main": {
+                  "type": "string"
+                },
+                "func_main_body": {
+                  "type": "string"
+                },
+                "func_main_tooltip": {
+                  "type": "string"
+                },
+                "not": {
+                  "type": "string"
+                },
+                "not_tooltip": {
+                  "type": "string"
+                },
+                "return_f64": {
+                  "type": "string"
+                },
+                "return_f64_tooltip": {
+                  "type": "string"
+                },
+                "return_i32": {
+                  "type": "string"
+                },
+                "return_i32_tooltip": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "not",
+                "not_tooltip",
+                "return_i32",
+                "return_i32_tooltip",
+                "return_f64",
+                "return_f64_tooltip",
+                "func_main",
+                "func_main_body",
+                "func_main_tooltip",
+                "custom_func_tooltip",
+                "custom_func_call_tooltip"
+              ],
+              "type": "object"
+            },
+            "compile": {
+              "additionalProperties": false,
+              "properties": {
+                "block_to_ast": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "block_to_ast"
+              ],
+              "type": "object"
+            },
+            "exportCpp": {
+              "additionalProperties": false,
+              "properties": {
+                "bullet1": {
+                  "type": "string"
+                },
+                "bullet2": {
+                  "type": "string"
+                },
+                "bullet3": {
+                  "type": "string"
+                },
+                "cancel": {
+                  "type": "string"
+                },
+                "confirm": {
+                  "type": "string"
+                },
+                "desc_bold": {
+                  "type": "string"
+                },
+                "desc_post": {
+                  "type": "string"
+                },
+                "desc_pre": {
+                  "type": "string"
+                },
+                "exporting": {
+                  "type": "string"
+                },
+                "menu": {
+                  "type": "string"
+                },
+                "open": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "menu",
+                "title",
+                "desc_pre",
+                "desc_bold",
+                "desc_post",
+                "bullet1",
+                "bullet2",
+                "bullet3",
+                "cancel",
+                "exporting",
+                "confirm",
+                "open"
+              ],
+              "type": "object"
+            },
+            "infos": {
+              "additionalProperties": false,
+              "properties": {
+                "no_main": {
+                  "type": "string"
+                },
+                "no_return": {
+                  "type": "string"
+                },
+                "var_redeclared": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "no_return",
+                "no_main",
+                "var_redeclared"
+              ],
+              "type": "object"
+            },
+            "input": {
+              "additionalProperties": false,
+              "properties": {
+                "float_label": {
+                  "type": "string"
+                },
+                "int_label": {
+                  "type": "string"
+                },
+                "submit": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "int_label",
+                "float_label",
+                "submit"
+              ],
+              "type": "object"
+            },
+            "logs": {
+              "additionalProperties": false,
+              "properties": {
+                "ast_complete": {
+                  "type": "string"
+                },
+                "error_prefix": {
+                  "type": "string"
+                },
+                "export_created": {
+                  "type": "string"
+                },
+                "export_failed": {
+                  "type": "string"
+                },
+                "file_name_conflict": {
+                  "type": "string"
+                },
+                "file_save_failed": {
+                  "type": "string"
+                },
+                "func_block_not_found": {
+                  "type": "string"
+                },
+                "func_compile_complete": {
+                  "type": "string"
+                },
+                "input_emcc": {
+                  "type": "string"
+                },
+                "main_block_not_found": {
+                  "type": "string"
+                },
+                "result_value": {
+                  "type": "string"
+                },
+                "run_aborted": {
+                  "type": "string"
+                },
+                "running_worker": {
+                  "type": "string"
+                },
+                "wasm_complete": {
+                  "type": "string"
+                },
+                "wat_compiling": {
+                  "type": "string"
+                },
+                "wat_generated": {
+                  "type": "string"
+                },
+                "worker_error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "main_block_not_found",
+                "ast_complete",
+                "func_block_not_found",
+                "func_compile_complete",
+                "wat_generated",
+                "wat_compiling",
+                "wasm_complete",
+                "running_worker",
+                "error_prefix",
+                "worker_error",
+                "input_emcc",
+                "run_aborted",
+                "result_value",
+                "file_save_failed",
+                "file_name_conflict",
+                "export_created",
+                "export_failed"
+              ],
+              "type": "object"
+            },
+            "progress": {
+              "additionalProperties": false,
+              "properties": {
+                "download_done": {
+                  "type": "string"
+                },
+                "preparing_download": {
+                  "type": "string"
+                },
+                "sending": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sending",
+                "preparing_download",
+                "download_done"
+              ],
+              "type": "object"
+            },
+            "toolbox": {
+              "additionalProperties": false,
+              "properties": {
+                "array": {
+                  "type": "string"
+                },
+                "bool": {
+                  "type": "string"
+                },
+                "boundary": {
+                  "type": "string"
+                },
+                "boundary_btn": {
+                  "type": "string"
+                },
+                "cast": {
+                  "type": "string"
+                },
+                "debug": {
+                  "type": "string"
+                },
+                "float": {
+                  "type": "string"
+                },
+                "float_const_btn": {
+                  "type": "string"
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "func": {
+                  "type": "string"
+                },
+                "func_btn": {
+                  "type": "string"
+                },
+                "int": {
+                  "type": "string"
+                },
+                "tensor": {
+                  "type": "string"
+                },
+                "var": {
+                  "type": "string"
+                },
+                "vector": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "int",
+                "float",
+                "bool",
+                "flow",
+                "var",
+                "array",
+                "tensor",
+                "vector",
+                "debug",
+                "boundary",
+                "cast",
+                "func",
+                "func_btn",
+                "boundary_btn",
+                "float_const_btn"
+              ],
+              "type": "object"
+            },
+            "ui": {
+              "additionalProperties": false,
+              "properties": {
+                "add_button": {
+                  "type": "string"
+                },
+                "add_func_section": {
+                  "type": "string"
+                },
+                "add_param_button": {
+                  "type": "string"
+                },
+                "apply_button": {
+                  "type": "string"
+                },
+                "backend_cpu": {
+                  "type": "string"
+                },
+                "backend_initializing": {
+                  "type": "string"
+                },
+                "backend_ready": {
+                  "type": "string"
+                },
+                "backend_webgl": {
+                  "type": "string"
+                },
+                "backend_webgpu": {
+                  "type": "string"
+                },
+                "block_nav_title": {
+                  "type": "string"
+                },
+                "blocks_button": {
+                  "type": "string"
+                },
+                "build_os_aria": {
+                  "type": "string"
+                },
+                "build_os_title": {
+                  "type": "string"
+                },
+                "call_insert_button": {
+                  "type": "string"
+                },
+                "canvas_tab_blocks": {
+                  "type": "string"
+                },
+                "canvas_tab_wat": {
+                  "type": "string"
+                },
+                "console_tab": {
+                  "type": "string"
+                },
+                "const_mgr_title": {
+                  "type": "string"
+                },
+                "const_no_results": {
+                  "type": "string"
+                },
+                "const_search_placeholder": {
+                  "type": "string"
+                },
+                "const_select_hint": {
+                  "type": "string"
+                },
+                "const_tab_experimental": {
+                  "type": "string"
+                },
+                "const_tab_fundamental": {
+                  "type": "string"
+                },
+                "const_tab_math": {
+                  "type": "string"
+                },
+                "copy_button": {
+                  "type": "string"
+                },
+                "delete_button": {
+                  "type": "string"
+                },
+                "export_button": {
+                  "type": "string"
+                },
+                "export_cpp_menu": {
+                  "type": "string"
+                },
+                "func_button": {
+                  "type": "string"
+                },
+                "func_empty_message": {
+                  "type": "string"
+                },
+                "func_mgr_title": {
+                  "type": "string"
+                },
+                "func_name_placeholder": {
+                  "type": "string"
+                },
+                "header_title": {
+                  "type": "string"
+                },
+                "import_button": {
+                  "type": "string"
+                },
+                "infos_empty": {
+                  "type": "string"
+                },
+                "infos_tab": {
+                  "type": "string"
+                },
+                "initializing": {
+                  "type": "string"
+                },
+                "log_placeholder": {
+                  "type": "string"
+                },
+                "name_input_placeholder": {
+                  "type": "string"
+                },
+                "open_file_button": {
+                  "type": "string"
+                },
+                "output_label": {
+                  "type": "string"
+                },
+                "reset_button": {
+                  "type": "string"
+                },
+                "result_header": {
+                  "type": "string"
+                },
+                "result_tab": {
+                  "type": "string"
+                },
+                "run_button": {
+                  "type": "string"
+                },
+                "run_button_running": {
+                  "type": "string"
+                },
+                "save": {
+                  "type": "string"
+                },
+                "save_failed": {
+                  "type": "string"
+                },
+                "save_file_button": {
+                  "type": "string"
+                },
+                "save_local_button": {
+                  "type": "string"
+                },
+                "save_unsaved": {
+                  "type": "string"
+                },
+                "saving": {
+                  "type": "string"
+                },
+                "share_button": {
+                  "type": "string"
+                },
+                "share_copy_link": {
+                  "type": "string"
+                },
+                "share_dialog_title": {
+                  "type": "string"
+                },
+                "share_duplicate_button": {
+                  "type": "string"
+                },
+                "share_link_copied": {
+                  "type": "string"
+                },
+                "share_login_to_duplicate": {
+                  "type": "string"
+                },
+                "share_readonly_badge": {
+                  "type": "string"
+                },
+                "share_state_link": {
+                  "type": "string"
+                },
+                "share_state_link_desc": {
+                  "type": "string"
+                },
+                "share_state_private": {
+                  "type": "string"
+                },
+                "share_state_private_desc": {
+                  "type": "string"
+                },
+                "stat_backend": {
+                  "type": "string"
+                },
+                "stat_done": {
+                  "type": "string"
+                },
+                "stat_run": {
+                  "type": "string"
+                },
+                "stat_run_time": {
+                  "type": "string"
+                },
+                "stat_running": {
+                  "type": "string"
+                },
+                "stat_status": {
+                  "type": "string"
+                },
+                "status_converting": {
+                  "type": "string"
+                },
+                "status_done": {
+                  "type": "string"
+                },
+                "status_error": {
+                  "type": "string"
+                },
+                "status_running": {
+                  "type": "string"
+                },
+                "status_waiting": {
+                  "type": "string"
+                },
+                "tool_boundary_2d": {
+                  "type": "string"
+                },
+                "tool_boundary_3d": {
+                  "type": "string"
+                },
+                "tool_track": {
+                  "type": "string"
+                },
+                "tools_label": {
+                  "type": "string"
+                },
+                "wat_button": {
+                  "type": "string"
+                },
+                "wat_empty": {
+                  "type": "string"
+                },
+                "wat_viewer_title": {
+                  "type": "string"
+                },
+                "xml_textarea_placeholder": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "header_title",
+                "run_button_running",
+                "run_button",
+                "wat_button",
+                "blocks_button",
+                "func_button",
+                "reset_button",
+                "backend_webgpu",
+                "backend_webgl",
+                "backend_cpu",
+                "status_waiting",
+                "status_converting",
+                "status_running",
+                "status_done",
+                "status_error",
+                "result_header",
+                "output_label",
+                "log_placeholder",
+                "export_button",
+                "import_button",
+                "name_input_placeholder",
+                "save_local_button",
+                "save_file_button",
+                "copy_button",
+                "open_file_button",
+                "apply_button",
+                "xml_textarea_placeholder",
+                "func_mgr_title",
+                "func_empty_message",
+                "call_insert_button",
+                "delete_button",
+                "add_func_section",
+                "func_name_placeholder",
+                "add_param_button",
+                "add_button",
+                "wat_viewer_title",
+                "canvas_tab_blocks",
+                "canvas_tab_wat",
+                "tools_label",
+                "tool_boundary_2d",
+                "tool_boundary_3d",
+                "tool_track",
+                "console_tab",
+                "result_tab",
+                "infos_tab",
+                "infos_empty",
+                "wat_empty",
+                "backend_initializing",
+                "backend_ready",
+                "stat_backend",
+                "stat_status",
+                "stat_run",
+                "stat_running",
+                "stat_done",
+                "share_button",
+                "share_dialog_title",
+                "share_state_private",
+                "share_state_link",
+                "share_state_private_desc",
+                "share_state_link_desc",
+                "share_copy_link",
+                "share_link_copied",
+                "share_readonly_badge",
+                "share_duplicate_button",
+                "share_login_to_duplicate",
+                "const_mgr_title",
+                "const_select_hint",
+                "const_tab_math",
+                "const_tab_fundamental",
+                "const_tab_experimental",
+                "const_search_placeholder",
+                "const_no_results",
+                "initializing",
+                "save",
+                "saving",
+                "save_unsaved",
+                "save_failed",
+                "build_os_title",
+                "build_os_aria",
+                "block_nav_title",
+                "stat_run_time",
+                "export_cpp_menu"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "compile",
+            "blocks",
+            "ui",
+            "toolbox",
+            "alerts",
+            "logs",
+            "infos",
+            "progress",
+            "ai",
+            "input",
+            "exportCpp"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "meta",
+        "types",
+        "topbar",
+        "messages",
+        "home",
+        "docs",
+        "login",
+        "dashboard",
+        "account",
+        "recover",
+        "setting",
+        "file_error",
+        "not_found",
+        "boundary",
+        "workspace",
+        "clang",
+        "console",
+        "block_messages",
+        "block_tooltips",
+        "block_dropdowns",
+        "block_dynamic"
+      ],
+      "type": "object"
+    }
+  }
+}

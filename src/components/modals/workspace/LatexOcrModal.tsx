@@ -116,7 +116,12 @@ export function LatexOcrModal({
                         {formulas.length > 0 && (
                             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                 {formulas.map((formula, i) => {
-                                    const html = katex.renderToString(formula, { throwOnError: false, displayMode: true });
+                                    const html = katex.renderToString(formula, {
+                                        throwOnError: false,
+                                        displayMode: true,
+                                        trust: false,
+                                        strict: "warn",
+                                    });
                                     return (
                                         <div
                                             key={i}
