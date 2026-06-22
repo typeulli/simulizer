@@ -1528,8 +1528,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 {!isMobile && <div />}
 
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
-                    {!isMobile && collabEnabled && (
-                        <PresenceBar participants={collab.participants} status={collab.status} />
+                    {collabEnabled && (
+                        <PresenceBar participants={collab.participants} status={collab.status} compact={isMobile} />
                     )}
                     {!isMobile && isOwner && (
                         sessionActive ? (
