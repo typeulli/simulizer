@@ -17,6 +17,24 @@ import { pathToUri, uriToPath } from "./clang/uri";
 import FileTree from "./clang/FileTree";
 import { FileIcon } from "./clang/FileIcon";
 import {
+    useClangAgent,
+    type AgentReadResult,
+    type AgentWriteResult,
+    type AgentEditResult,
+    type AgentListResult,
+    type AgentGlobResult,
+    type AgentGrepResult,
+    type AgentRenameResult,
+    type AgentDeleteResult,
+    type AgentRunResult,
+    type AgentCheckResult,
+} from "./clang/agent/useClangAgent";
+import { AgentPanel } from "./clang/agent/AgentPanel";
+import { DEFAULT_MODEL_ID, type AgentContext } from "./clang/agent/tools";
+import { readLineRange, applyHashEdits, type LineEdit } from "./clang/agent/lines";
+import { globToRegExp, grepFiles } from "./clang/agent/search";
+import { parseCompilerErrors } from "./clang/agent/compile";
+import {
     parseBundle,
     serializeBundle,
     listFiles as listBundleFiles,
@@ -230,7 +248,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         [bundle.tree],
     );
 
-    const [rightTab, setRightTab] = useState<"console" | "infos" | "debug">("console");
+    const [rightTab, setRightTab] = useState<"console" | "infos" | "debug" | "agent">("console");
     const [infos, setInfos] = useState<ClangDiagnostic[]>([]);
     // Interactive input prompt (Asyncify run paused on sim_input_*).
     const [inputRequest, setInputRequest] = useState<{ kind: "i32" | "f64" } | null>(null);
@@ -583,6 +601,232 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         flushSave();
     }, [flushSave]);
 
+    // ─── AI agent ─────────────────────────────────────────────────────────
+    // Browser-side harness (Vercel AI SDK): the model loop runs client-side and
+    // its tool calls act directly on this workspace. Only the LLM call is
+    // proxied through /api/agent/chat (which holds the OpenAI key).
+    const infosRef = useRef(infos);
+    useEffect(() => { infosRef.current = infos; }, [infos]);
+
+    // Whether to include the active file's relative path in the agent context.
+    // The file *content* is never sent (the agent reads it via read_lines); this
+    // only toggles the lightweight path hint. Driven by the AgentPanel checkbox.
+    const [attachActiveFile, setAttachActiveFile] = useState(true);
+    const attachActiveFileRef = useRef(attachActiveFile);
+    useEffect(() => { attachActiveFileRef.current = attachActiveFile; }, [attachActiveFile]);
+
+    // Selected agent model (gpt/gemini). Read through a ref so the request
+    // builder always sends the current choice without recreating the chat.
+    const [modelId, setModelId] = useState<string>(DEFAULT_MODEL_ID);
+    const modelIdRef = useRef(modelId);
+    useEffect(() => { modelIdRef.current = modelId; }, [modelId]);
+
+    // Edit-approval mode: when on, the agent's file changes wait for the user to
+    // click 적용/취소 before they apply. Off (default) = auto-apply.
+    const [approvalRequired, setApprovalRequired] = useState(false);
+    const approvalRequiredRef = useRef(approvalRequired);
+    useEffect(() => { approvalRequiredRef.current = approvalRequired; }, [approvalRequired]);
+
+    // Live snapshot attached to every request. Paths + diagnostics only — no
+    // file content — so it stays small and the server can keep it out of the
+    // cacheable prefix.
+    const getAgentContext = useCallback((): AgentContext => {
+        const b = pendingBundleRef.current;
+        const files = listBundleFiles(b.tree).filter(({ path }) => !isBinaryName(path)).map(f => f.path);
+        return {
+            entry: b.entry,
+            activeFile: attachActiveFileRef.current ? b.ui.activeFile : "",
+            files,
+            diagnostics: infosRef.current.map(d => ({
+                line: d.line,
+                column: d.column,
+                severity: String(d.severity),
+                message: d.message,
+            })),
+        };
+    }, []);
+
+    // read_file tool — whole file as the (line, hash, content) view.
+    const agentReadFile = useCallback((path: string): AgentReadResult => {
+        const f = findBundleFile(pendingBundleRef.current.tree, path);
+        if (!f) return { ok: false, error: `파일을 찾을 수 없습니다: ${path}` };
+        if (isBinaryName(path) || f.encoding === "base64") return { ok: false, error: "바이너리 파일은 읽을 수 없습니다" };
+        const { total, lines } = readLineRange(f.content);
+        return { ok: true, total, lines };
+    }, []);
+
+    // read_lines tool — a 1-based, inclusive line range as (line, hash, content).
+    const agentReadLines = useCallback((path: string, start?: number, end?: number): AgentReadResult => {
+        const f = findBundleFile(pendingBundleRef.current.tree, path);
+        if (!f) return { ok: false, error: `파일을 찾을 수 없습니다: ${path}` };
+        if (isBinaryName(path) || f.encoding === "base64") return { ok: false, error: "바이너리 파일은 읽을 수 없습니다" };
+        const { total, lines } = readLineRange(f.content, start, end);
+        return { ok: true, total, lines };
+    }, []);
+
+    // write_file tool. Routes through applyBundleChange (collab structure push +
+    // owner persist) and, for content, mirrors into the collab doc + open Monaco
+    // model exactly like writeProjectConfig. Gated on canEdit so a read-only
+    // viewer / non-joined peer can't have the agent edit on their behalf.
+    const agentWriteFile = useCallback((path: string, content: string): AgentWriteResult => {
+        if (!canEditRef.current) return { ok: false, error: "편집 권한이 없습니다 (읽기 전용 세션)" };
+        const { base } = splitPath(path);
+        const validationErr = validateFileName(base);
+        if (validationErr) return { ok: false, error: validationErr };
+        if (isBinaryName(path)) return { ok: false, error: "바이너리(이미지) 파일은 편집할 수 없습니다" };
+        const existingNode = findBundleFile(pendingBundleRef.current.tree, path);
+        const before = existingNode && existingNode.encoding !== "base64" ? existingNode.content : "";
+        // Eager dry-run for new files so a path conflict surfaces before approval.
+        if (!existingNode && !bundleAddFile(pendingBundleRef.current.tree, path, content)) {
+            return { ok: false, error: "파일을 생성할 수 없습니다 (경로 충돌)" };
+        }
+        // Side effects deferred to commit() — applied now (auto mode) or on the
+        // user's approval. Re-checks existence against the live tree at commit.
+        const commit = () => {
+            applyBundleChange(prev => {
+                if (findBundleFile(prev.tree, path)) {
+                    return { ...prev, tree: setFileContent(prev.tree, path, content) };
+                }
+                const nextTree = bundleAddFile(prev.tree, path, content);
+                if (!nextTree) return null;
+                return {
+                    ...prev,
+                    tree: nextTree,
+                    ui: {
+                        ...prev.ui,
+                        activeFile: path,
+                        openTabs: prev.ui.openTabs.includes(path) ? prev.ui.openTabs : [...prev.ui.openTabs, path],
+                    },
+                };
+            });
+            if (collabEnabledRef.current) collabApiRef.current?.setText(path, content);
+            codeEditorRef.current?.syncModelContent(path, content);
+        };
+        return { ok: true, before, after: content, commit };
+    }, [applyBundleChange]);
+
+    // edit_file tool. Resolves the model's hash-addressed line edits against the
+    // current file, then overwrites it through the same collab-aware path as
+    // agentWriteFile (edit_file only ever targets existing files).
+    const agentEditFile = useCallback((path: string, edits: LineEdit[]): AgentEditResult => {
+        if (!canEditRef.current) return { ok: false, error: "편집 권한이 없습니다 (읽기 전용 세션)" };
+        const f = findBundleFile(pendingBundleRef.current.tree, path);
+        if (!f) return { ok: false, error: `파일을 찾을 수 없습니다: ${path}` };
+        if (isBinaryName(path) || f.encoding === "base64") return { ok: false, error: "바이너리(이미지) 파일은 편집할 수 없습니다" };
+        const applied = applyHashEdits(f.content, edits);
+        if (!applied.ok) return { ok: false, error: applied.error };
+        const after = applied.content;
+        const commit = () => {
+            applyBundleChange(prev => ({ ...prev, tree: setFileContent(prev.tree, path, after) }));
+            if (collabEnabledRef.current) collabApiRef.current?.setText(path, after);
+            codeEditorRef.current?.syncModelContent(path, after);
+        };
+        return { ok: true, lines: applied.lines, before: f.content, after, commit };
+    }, [applyBundleChange]);
+
+    // list_files / glob / grep — read-only workspace navigation.
+    const agentListFiles = useCallback((): AgentListResult => {
+        const b = pendingBundleRef.current;
+        return { ok: true, entry: b.entry, files: listBundleFiles(b.tree).map(f => f.path) };
+    }, []);
+
+    const agentGlob = useCallback((pattern: string): AgentGlobResult => {
+        let re: RegExp;
+        try { re = globToRegExp(pattern); } catch { return { ok: false, error: `잘못된 glob 패턴: ${pattern}` }; }
+        const matches = listBundleFiles(pendingBundleRef.current.tree).map(f => f.path).filter(p => re.test(p));
+        return { ok: true, matches };
+    }, []);
+
+    const agentGrep = useCallback((pattern: string, path?: string, ignoreCase?: boolean): AgentGrepResult => {
+        let files = listBundleFiles(pendingBundleRef.current.tree)
+            .filter(({ path: p, file }) => !isBinaryName(p) && file.encoding !== "base64")
+            .map(({ path: p, file }) => ({ path: p, content: file.content }));
+        if (path) files = files.filter(f => f.path === path);
+        const r = grepFiles(files, pattern, { ignoreCase, limit: 100 });
+        if (!r.ok) return { ok: false, error: r.error };
+        return { ok: true, matches: r.matches, truncated: r.truncated };
+    }, []);
+
+    // rename_file — rename and/or move, creating the destination folder if needed.
+    // Goes through applyBundleChange with a path remap so the collab layer carries
+    // each file's Y.Text across the path change (same as the file-tree handlers).
+    const agentRenameFile = useCallback((path: string, newPath: string): AgentRenameResult => {
+        if (!canEditRef.current) return { ok: false, error: "편집 권한이 없습니다 (읽기 전용 세션)" };
+        if (path === newPath) return { ok: true };
+        if (!findBundleFile(pendingBundleRef.current.tree, path)) return { ok: false, error: `파일을 찾을 수 없습니다: ${path}` };
+        const { dir: oldDir, base: oldName } = splitPath(path);
+        const { dir: newDir, base: newName } = splitPath(newPath);
+        const nameErr = validateFileName(newName);
+        if (nameErr) return { ok: false, error: nameErr };
+        const rewrite = (p: string) =>
+            p === path ? newPath
+            : p.startsWith(path + "/") ? newPath + p.slice(path.length)
+            : p;
+        // Pure tree transform — shared by the eager dry-run (validate before
+        // approval) and the deferred commit.
+        const transformTree = (tree: CppBundle["tree"]): { tree: CppBundle["tree"] } | { error: string } => {
+            let t = tree;
+            if (newDir !== oldDir) {
+                if (newDir) { const withFolder = bundleAddFolder(t, newDir); if (withFolder) t = withFolder; }
+                const moved = bundleMoveNode(t, path, newDir);
+                if (!moved) return { error: "이동할 수 없습니다 (경로 충돌 또는 잘못된 대상)" };
+                t = moved;
+            }
+            if (newName !== oldName) {
+                const movedPath = newDir ? `${newDir}/${oldName}` : oldName;
+                const renamed = bundleRenameNode(t, movedPath, newName);
+                if (!renamed) return { error: "이름을 변경할 수 없습니다 (이름 충돌)" };
+                t = renamed;
+            }
+            return { tree: t };
+        };
+        const dry = transformTree(pendingBundleRef.current.tree);
+        if ("error" in dry) return { ok: false, error: dry.error };
+        const commit = () => {
+            applyBundleChange(prev => {
+                const r = transformTree(prev.tree);
+                if ("error" in r) return null;
+                return {
+                    ...prev,
+                    tree: r.tree,
+                    entry: rewrite(prev.entry),
+                    ui: {
+                        ...prev.ui,
+                        activeFile: rewrite(prev.ui.activeFile),
+                        openTabs: prev.ui.openTabs.map(rewrite),
+                    },
+                };
+            }, { remap: rewrite });
+        };
+        return { ok: true, commit };
+    }, [applyBundleChange]);
+
+    // delete_file — destructive, so it routes through the same confirmation modal
+    // the UI uses (human-in-the-loop). handleDeleteNode is defined later, so we
+    // reach it through a ref assigned on each render.
+    const requestDeleteRef = useRef<((path: string) => void) | null>(null);
+    const agentDeleteFile = useCallback((path: string): AgentDeleteResult => {
+        if (!canEditRef.current) return { ok: false, error: "편집 권한이 없습니다 (읽기 전용 세션)" };
+        const affected = descendantFilePaths(pendingBundleRef.current.tree, path);
+        if (affected.length === 0) return { ok: false, error: `파일을 찾을 수 없습니다: ${path}` };
+        if (affected.includes(pendingBundleRef.current.entry)) {
+            return { ok: false, error: "진입(entry) 파일은 삭제할 수 없습니다" };
+        }
+        requestDeleteRef.current?.(path);
+        return { ok: true, status: "confirmation_requested" };
+    }, []);
+
+    // run tool — a pending agent run is captured here and fulfilled by
+    // handleWorkerMessage when the worker reports done/error. agentRun itself is
+    // defined after handleRun (it needs the worker + compile flow), and the
+    // useClangAgent hook is instantiated there once every callback exists.
+    const agentRunRef = useRef<{
+        resolve: (r: AgentRunResult) => void;
+        logs: string[];
+        result: string | null;
+        timer: ReturnType<typeof setTimeout> | null;
+    } | null>(null);
+
     // ─── Collab wiring ────────────────────────────────────────────────────
     // A peer's structural change → apply tree/entry to the local bundle while
     // preserving this client's per-user ui (pruning tabs for deleted files).
@@ -761,6 +1005,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         }
         setDeleteConfirm({ kind: "confirm", path, affected });
     }, []);
+    // Let the agent's delete_file tool open the same confirmation modal.
+    requestDeleteRef.current = handleDeleteNode;
 
     const confirmDelete = useCallback(() => {
         const pending = deleteConfirm;
@@ -972,6 +1218,23 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         scheduleAutosave();
     }, [scheduleAutosave]);
 
+    // Click-to-scroll from the agent's tool chips (read_lines / grep / glob).
+    // Opens the file (if needed) and reveals the line. revealAt is a no-op until
+    // the model exists, so re-try across a few frames to catch the open we just
+    // scheduled; repeated reveals of the same line are idempotent.
+    const agentRevealRange = useCallback((path: string, line: number) => {
+        if (isBinaryName(path) || !findBundleFile(pendingBundleRef.current.tree, path)) return;
+        handleOpenFile(path);
+        const uri = pathToUri(path);
+        const target = Math.max(1, line || 1);
+        let tries = 3;
+        const tick = () => {
+            codeEditorRef.current?.revealAt(uri, target);
+            if (--tries > 0) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    }, [handleOpenFile]);
+
     const handleToggleTree = useCallback(() => {
         const prev = pendingBundleRef.current;
         const next: CppBundle = {
@@ -1074,7 +1337,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             pendingBackendSwitchRef.current = null;
             return;
         }
-        if (msg.type === "log") { b.logToHolder(msg.holderId, msg.kind, msg.text); return; }
+        if (msg.type === "log") {
+            b.logToHolder(msg.holderId, msg.kind, msg.text);
+            if (agentRunRef.current) agentRunRef.current.logs.push(`[${msg.kind}] ${msg.text}`);
+            return;
+        }
         if (msg.type === "holder_create") { if (msg.kind === "series") b.addSeries(msg.holderId); return; }
         if (msg.type === "bar_create") { b.addBar(msg.min, msg.max, msg.barId); return; }
         if (msg.type === "bar_set") { b.setBar(msg.barId, msg.val); return; }
@@ -1092,8 +1359,21 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             b.graphToHolder(msg.holderId, msg.data, msg.fixedMin, msg.fixedMax);
             return;
         }
-        if (msg.type === "result") { setResultValue(msg.value); return; }
-        if (msg.type === "done") { setRunState("done"); return; }
+        if (msg.type === "result") {
+            setResultValue(msg.value);
+            if (agentRunRef.current) agentRunRef.current.result = msg.value;
+            return;
+        }
+        if (msg.type === "done") {
+            setRunState("done");
+            const run = agentRunRef.current;
+            if (run) {
+                agentRunRef.current = null;
+                if (run.timer) clearTimeout(run.timer);
+                run.resolve({ ok: true, result: run.result, output: run.logs.join("\n") });
+            }
+            return;
+        }
         if (msg.type === "error") {
             if (pendingBackendSwitchRef.current) {
                 setTfBackend(pendingBackendSwitchRef.current.previous);
@@ -1104,6 +1384,12 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             b.addLog("error", msg.message);
             setErrorMsg(msg.message);
             setRunState("error");
+            const run = agentRunRef.current;
+            if (run) {
+                agentRunRef.current = null;
+                if (run.timer) clearTimeout(run.timer);
+                run.resolve({ ok: false, error: msg.message, output: run.logs.join("\n") });
+            }
             return;
         }
     }, []);
@@ -1235,6 +1521,109 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             setRunState("error");
         }
     }, [bundle.tree, bundle.entry, runState, clearLog, isMobile, compileCfg]);
+
+    // ─── Agent: run tool + hook instantiation ─────────────────────────────
+    // agentRun mirrors handleRun's compile+execute, but resolves a promise when
+    // the run finishes so the agent's `run` tool can return the result + output.
+    // Compile failures resolve here directly; runtime completion (done/error)
+    // resolves via handleWorkerMessage (which fills agentRunRef). 30s watchdog
+    // guards a program that blocks on stdin with no user input.
+    const agentRun = useCallback(async (): Promise<AgentRunResult> => {
+        if (agentRunRef.current) return { ok: false, error: "이미 실행 중입니다" };
+        if (runState === "loading" || runState === "compiling" || runState === "running") {
+            return { ok: false, error: "이미 실행/컴파일 중입니다" };
+        }
+        const worker = workerRef.current;
+        if (!worker) return { ok: false, error: "런타임 워커가 준비되지 않았습니다" };
+
+        clearLog();
+        setErrorMsg(null);
+        setResultValue(null);
+        setInputRequest(null);
+        setRunState("compiling");
+        if (compileCfg.error) {
+            setConfigAlert({ variant: "warning", title: tx("clang.config_json_error_title"), message: compileCfg.error });
+        }
+
+        let wasmBuffer: ArrayBuffer;
+        try {
+            const res = await fetch(`${API_BASE}/compile/emcc`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tree: bundle.tree, entry: bundle.entry }),
+            });
+            if (!res.ok) {
+                const errText = await res.text();
+                let detail = errText;
+                try { detail = JSON.parse(errText).detail ?? errText; } catch { /* leave raw */ }
+                setErrorMsg(detail);
+                setRunState("error");
+                return { ok: false, error: `컴파일 실패: ${detail}` };
+            }
+            wasmBuffer = await res.arrayBuffer();
+        } catch (err) {
+            const m = err instanceof Error ? err.message : String(err);
+            setErrorMsg(m);
+            setRunState("error");
+            return { ok: false, error: `컴파일 요청 실패: ${m}` };
+        }
+
+        return new Promise<AgentRunResult>((resolve) => {
+            const timer = setTimeout(() => {
+                const run = agentRunRef.current;
+                if (!run) return;
+                agentRunRef.current = null;
+                resolve({ ok: false, error: "실행 시간 초과 (30초)", output: run.logs.join("\n") });
+            }, 30000);
+            agentRunRef.current = { resolve, logs: [], result: null, timer };
+            setRunState("running");
+            worker.postMessage({ type: "run", wasmBuffer } satisfies ClangWorkerInMsg, [wasmBuffer]);
+        });
+    }, [runState, bundle.tree, bundle.entry, clearLog, compileCfg, tx]);
+
+    // check_syntax tool — compile-only (no execute). Reuses the emcc compile
+    // endpoint: a successful build (wasm body) means no compile errors; a !ok
+    // response carries the compiler stderr in `detail`, which we parse into
+    // structured diagnostics. Reads the live bundle ref so it sees edits the
+    // agent just made in the same turn. Does not touch the run/worker state.
+    const agentCheckSyntax = useCallback(async (): Promise<AgentCheckResult> => {
+        const b = pendingBundleRef.current;
+        try {
+            const res = await fetch(`${API_BASE}/compile/emcc`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tree: b.tree, entry: b.entry }),
+            });
+            if (res.ok) {
+                await res.arrayBuffer(); // drain the wasm body; we only needed pass/fail
+                return { ok: true, success: true, diagnostics: [], output: "" };
+            }
+            const errText = await res.text();
+            let detail = errText;
+            try { detail = JSON.parse(errText).detail ?? errText; } catch { /* leave raw */ }
+            const knownPaths = listBundleFiles(b.tree).map(f => f.path);
+            return { ok: true, success: false, diagnostics: parseCompilerErrors(detail, knownPaths), output: detail };
+        } catch (err) {
+            return { ok: false, error: `컴파일 요청 실패: ${err instanceof Error ? err.message : String(err)}` };
+        }
+    }, []);
+
+    const agent = useClangAgent({
+        getContext: getAgentContext,
+        getModel: () => modelIdRef.current,
+        getApprovalMode: () => approvalRequiredRef.current,
+        listFiles: agentListFiles,
+        glob: agentGlob,
+        grep: agentGrep,
+        readFile: agentReadFile,
+        readLines: agentReadLines,
+        writeFile: agentWriteFile,
+        editFile: agentEditFile,
+        renameFile: agentRenameFile,
+        deleteFile: agentDeleteFile,
+        run: agentRun,
+        checkSyntax: agentCheckSyntax,
+    });
 
     // Submit the value typed into the input panel; the clang worker resumes the
     // suspended run with it.
@@ -1863,6 +2252,11 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: debug.status === "stopped" ? token.color.warning : token.color.success, display: "inline-block" }} />
                             )}
                         </button>
+                        <button onClick={() => setRightTab("agent")}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "agent" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "agent" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
+                        >
+                            <Icon.Sparkle size={11} /> AI
+                        </button>
                     </div>
 
                     <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
@@ -1992,6 +2386,20 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 codeEditorRef.current?.renderStoppedLine(file, line);
                                 codeEditorRef.current?.revealAt(pathToUri(file), line);
                             }}
+                        />
+                    )}
+
+                    {rightTab === "agent" && (
+                        <AgentPanel
+                            agent={agent}
+                            canEdit={canEdit}
+                            onRevealRange={agentRevealRange}
+                            attachActiveFile={attachActiveFile}
+                            onToggleAttachActiveFile={setAttachActiveFile}
+                            modelId={modelId}
+                            onChangeModel={setModelId}
+                            approvalRequired={approvalRequired}
+                            onToggleApproval={setApprovalRequired}
                         />
                     )}
                 </aside>

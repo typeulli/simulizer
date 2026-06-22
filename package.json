@@ -12,6 +12,9 @@
     "gen:i18n-schema": "ts-json-schema-generator --path src/i18n/lang.ts --type langpack --out messages/messages.schema.json"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.83",
+    "@ai-sdk/openai": "^3.0.73",
+    "@ai-sdk/react": "^3.0.210",
     "@codingame/monaco-vscode-api": "^25.1.2",
     "@codingame/monaco-vscode-configuration-service-override": "^25.1.2",
     "@codingame/monaco-vscode-cpp-default-extension": "^25.1.2",
@@ -32,6 +35,7 @@
     "@typefox/monaco-editor-react": "^7.7.0",
     "@types/katex": "^0.16.8",
     "@types/moo": "^0.5.10",
+    "ai": "^6.0.208",
     "blockly": "^12.5.1",
     "isbot": "^5.1.31",
     "katex": "^0.16.45",
@@ -54,7 +58,8 @@
     "y-monaco": "^0.1.6",
     "y-protocols": "^1.0.7",
     "y-websocket": "^2.1.0",
-    "yjs": "^13.6.31"
+    "yjs": "^13.6.31",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

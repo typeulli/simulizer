@@ -276,6 +276,54 @@ const COMMAND_KEYBINDINGS: Record<string, number[]> = {
     build: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyB],
 };
 
+// registerAction2 writes into monaco's GLOBAL action registry, and disposing the
+// returned disposable does NOT free the command id — so any second registration
+// of e.g. `simulizer.run` throws "Cannot register two commands with the same id".
+// That happens on React StrictMode double-mounts and HMR module swaps. So we
+// register each palette command exactly once for the page's lifetime and route
+// every invocation through a global "host" pointer; re-mounts/HMR just repoint
+// the host at the live editor instance instead of re-registering.
+type PaletteHost = { getCommands: () => EditorCommand[]; openFilePicker: () => void };
+const PALETTE: { registered: boolean; host: PaletteHost | null } =
+    ((globalThis as unknown as { __simulizerPalette?: { registered: boolean; host: PaletteHost | null } })
+        .__simulizerPalette ??= { registered: false, host: null });
+
+function ensurePaletteRegistered(host: PaletteHost): void {
+    PALETTE.host = host; // always repoint at the live instance
+    if (PALETTE.registered) return;
+    PALETTE.registered = true;
+
+    const register = (id: string, title: string, keybinding: number[] | undefined, run: () => void) => {
+        class PaletteAction extends Action2 {
+            constructor() {
+                super({
+                    id: `simulizer.${id}`,
+                    title: { value: title, original: title },
+                    f1: true,
+                    keybinding: keybinding?.length
+                        ? keybinding.map(primary => ({ primary, weight: KeybindingWeight.WorkbenchContrib }))
+                        : undefined,
+                });
+            }
+            run() { run(); }
+        }
+        try { registerAction2(PaletteAction); } catch (e) {
+            console.warn(`[CodeEditor] palette command simulizer.${id} registration skipped`, e);
+        }
+    };
+
+    for (const cmd of host.getCommands()) {
+        register(cmd.id, cmd.label, COMMAND_KEYBINDINGS[cmd.id], () => {
+            const latest = PALETTE.host?.getCommands().find(c => c.id === cmd.id);
+            if (!latest || latest.disabled) return;
+            latest.run();
+        });
+    }
+    register("goToFile", "Go to File…", [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP], () => {
+        PALETTE.host?.openFilePicker();
+    });
+}
+
 // Monaco language id for a workspace file, by extension. `.json` files (e.g.
 // compile.json) get JSON tooling; everything else is treated as C++.
 function languageForPath(path: string): string {
@@ -472,7 +520,6 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
     useEffect(() => { filesRef.current = files; }, [files]);
     const editorCommandsRef = useRef<EditorCommand[]>(editorCommands ?? []);
     useEffect(() => { editorCommandsRef.current = editorCommands ?? []; }, [editorCommands]);
-    const editorActionDisposablesRef = useRef<monaco.IDisposable[]>([]);
 
     // `enforceLanguageClientDispose` controls the connection lifecycle.
     //   - It MUST be `true` at mount: the underlying component always kicks one
@@ -648,40 +695,12 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         }
     }, [swapModelTo]);
 
-    // Register the host's commands (+ Go to File) so they appear in the
-    // workbench command palette (Ctrl+Shift+P / F1). We use registerAction2
-    // with `f1: true` — NOT monaco.editor.addEditorAction, whose standalone
-    // actions don't surface in monaco-vscode's workbench palette. Idempotent:
-    // disposes any prior batch first.
+    // Register the host's commands (+ Go to File) into the workbench command
+    // palette (Ctrl+Shift+P / F1), once per page. Re-mounts/HMR repoint the
+    // global host at this instance rather than re-registering (which would throw
+    // on the duplicate id — see ensurePaletteRegistered).
     const registerEditorCommands = useCallback(() => {
-        for (const d of editorActionDisposablesRef.current) d.dispose();
-        editorActionDisposablesRef.current = [];
-
-        const registerPaletteAction = (id: string, title: string, keybinding: number[] | undefined, handler: () => void) => {
-            class PaletteAction extends Action2 {
-                constructor() {
-                    super({
-                        id: `simulizer.${id}`,
-                        title: { value: title, original: title },
-                        f1: true,
-                        keybinding: keybinding?.length
-                            ? keybinding.map(primary => ({ primary, weight: KeybindingWeight.WorkbenchContrib }))
-                            : undefined,
-                    });
-                }
-                run() { handler(); }
-            }
-            editorActionDisposablesRef.current.push(registerAction2(PaletteAction));
-        };
-
-        for (const cmd of editorCommandsRef.current) {
-            registerPaletteAction(cmd.id, cmd.label, COMMAND_KEYBINDINGS[cmd.id], () => {
-                const latest = editorCommandsRef.current.find(c => c.id === cmd.id);
-                if (!latest || latest.disabled) return;
-                latest.run();
-            });
-        }
-        registerPaletteAction("goToFile", "Go to File…", [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP], () => { void openFilePicker(); });
+        ensurePaletteRegistered({ getCommands: () => editorCommandsRef.current, openFilePicker: () => { void openFilePicker(); } });
     }, [openFilePicker]);
 
     const ensureModel = useCallback((path: string, initialContent: string): monaco.editor.ITextModel => {
@@ -792,8 +811,8 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
         for (const b of collabBindingsRef.current.values()) b.destroy();
         collabBindingsRef.current.clear();
         collabRef.current = null;
-        for (const d of editorActionDisposablesRef.current) d.dispose();
-        editorActionDisposablesRef.current = [];
+        // Palette commands are registered once globally (ensurePaletteRegistered)
+        // and intentionally outlive the instance — nothing to dispose here.
         if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
         editorRef.current = null;
     }, []);

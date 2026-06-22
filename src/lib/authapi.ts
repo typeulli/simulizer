@@ -63,6 +63,16 @@ export async function getMe(): Promise<UserOut> {
     return res.json();
 }
 
+export interface CreditOut {
+    credits: number;
+}
+
+export async function getCredits(): Promise<CreditOut> {
+    const res = await req("/credits/me");
+    if (!res.ok) throw new Error("Failed to get credits");
+    return res.json();
+}
+
 export async function logout(): Promise<void> {
     await req("/auth/logout", { method: "POST" });
 }
