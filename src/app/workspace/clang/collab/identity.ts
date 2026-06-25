@@ -1,9 +1,9 @@
-// Presence identity for awareness. Logged-in users get their account name +
+﻿// Presence identity for awareness. Logged-in users get their account name +
 // picture; everyone else gets a stable-per-session anonymous name. A color is
 // derived deterministically from the name so the same person keeps the same
 // cursor color across reconnects within a session.
 
-import { getMe } from "@/lib/authapi";
+import { getMe } from "@/lib/file";
 
 export type CollabUser = {
     /** Stable id within this client session (account id when logged in). */

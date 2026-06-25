@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -58,8 +58,10 @@ import { Icon } from "@/components/atoms/Icons";
 import { Spinner } from "@/components/atoms/Spinner";
 import { BuildSnackbar } from "@/components/molecules/BuildSnackbar";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
+import { WorkspaceTitleBar } from "@/components/organisms/WorkspaceTitleBar";
+import { WorkspaceFloatingControls } from "@/components/organisms/WorkspaceFloatingControls";
 import { token } from "@/components/tokens";
-import { duplicateFile, renameFile, saveFile, setFileVisibility, type FileDetail, type FileOut } from "@/lib/authapi";
+import { duplicateFile, renameFile, saveFile, setFileVisibility, isDesktop, type FileDetail, type FileOut } from "@/lib/file";
 import { CppManagerModal } from "@/components/modals/workspace/CppManagerModal";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
 import { AlertModal, type AlertVariant } from "@/components/organisms/AlertModal";
@@ -211,7 +213,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     // owner-driven (saveFile is still gated on isOwner).
     const [sessionActive, setSessionActive] = useState(false);
     const visibility = fileMeta?.visibility ?? initialFile.visibility;
-    const collabEnabled = isOwner ? sessionActive : visibility === "link";
+    const collabEnabled = isDesktop ? false : (isOwner ? sessionActive : visibility === "link");
     const collabEnabledRef = useRef(collabEnabled);
     useEffect(() => { collabEnabledRef.current = collabEnabled; }, [collabEnabled]);
     const canEditRef = useRef<boolean>(initialOwner);
@@ -559,8 +561,10 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setDuplicating(true);
         try {
             const dup = await duplicateFile(fileId);
-            router.push(`/workspace?file=${dup.id}`);
+            // Desktop: native duplicateFile already re-opened the copy in place.
+            if (!isDesktop) router.push(`/workspace?file=${dup.id}`);
         } catch (err: any) {
+            if (err?.status === 0) return; // desktop save dialog cancelled
             if (err?.status === 401) {
                 router.push(`/login?next=${encodeURIComponent(`/workspace?file=${fileId}`)}`);
             } else {
@@ -1515,6 +1519,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             }
             const wasmBuffer = await res.arrayBuffer();
             setRunState("running");
+            // Desktop app: toast on a successful compile (web build is unaffected).
+            if (isDesktop) window.__native?.notify("컴파일 성공", "C++ 컴파일이 완료되어 실행을 시작합니다.");
             worker.postMessage({ type: "run", wasmBuffer } satisfies ClangWorkerInMsg, [wasmBuffer]);
         } catch (err) {
             setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -1743,6 +1749,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
             setBuildState("done");
             setBuildProgress(prev => ({ step: prev?.total ?? 0, total: prev?.total ?? 0, message: tx("clang.progress_download_done") }));
+            // Desktop app: toast on a successful EXE build (web build is unaffected).
+            if (isDesktop) window.__native?.notify("빌드 성공", `${downloadName} 빌드가 완료되었습니다.`);
         } catch (e) {
             setBuildState("error");
             setErrorMsg(e instanceof Error ? e.message : String(e));
@@ -1866,10 +1874,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", background: token.color.bg, color: token.color.fg, fontSize: token.font.size.fs13 }}>
             {collabEnabled && <RemoteCursorStyles participants={collab.participants} />}
             {/* ── Top bar ── */}
-            <header style={isMobile
-                ? { display: "flex", alignItems: "center", gap: 4, padding: "0 12px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
-                : { display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
-            }>
+            <WorkspaceTitleBar
+                isMobile={isMobile}
+                left={
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap", flex: isMobile ? 1 : undefined }}>
                     <TopbarBrand compact={isMobile} />
                     {!isMobile && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
@@ -1912,10 +1919,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         </span>
                     )}
                 </div>
-
-                {/* center grid cell — reserved (commands live in the editor's F1 palette) */}
-                {!isMobile && <div />}
-
+                }
+                right={
                 <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
                     {collabEnabled && (
                         <PresenceBar participants={collab.participants} status={collab.status} compact={isMobile} />
@@ -2019,15 +2024,49 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         <span>{runLabel}</span>
                     </button>
                 </div>
-            </header>
+                }
+            />
 
             {/* ── Main 2-column layout ── */}
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 340px", flex: 1, minHeight: 0 }}>
 
                 {/* Editor area */}
-                <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
-                    {/* Editor toolbar (tab strip + tree toggle) */}
-                    <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0, gap: 6 }}>
+                <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden", position: "relative" }}>
+                    {/* Auxiliary controls — floating top-right cluster (LSP · AI · settings) */}
+                    {!isMobile && (
+                    <WorkspaceFloatingControls>
+                        <button
+                            type="button"
+                            onClick={handleLspCommand}
+                            title={lspConnected ? tx("clang.lsp_status_connected") : tx("clang.lsp_status_disconnected")}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}
+                        >
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
+                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : tx("clang.lsp_disconnected_short")}
+                        </button>
+                        {!isDesktop && (
+                            <button
+                                type="button"
+                                onClick={() => setRightTab("agent")}
+                                title="AI"
+                                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "none", borderRadius: token.radius.sm, background: rightTab === "agent" ? token.color.bgSubtle : "transparent", cursor: "pointer", color: rightTab === "agent" ? token.color.fg : token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
+                            >
+                                <Icon.Sparkle size={11} /> AI
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => setSettingsOpen(true)}
+                            title={tx("clang.build_settings_title")}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
+                        >
+                            <Icon.Settings size={12} />
+                        </button>
+                    </WorkspaceFloatingControls>
+                    )}
+                    {/* Editor toolbar (tab strip + tree toggle). Right padding reserves
+                        room for the floating control cluster so tabs don't slide under it. */}
+                    <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 190px 5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0, gap: 6 }}>
                         <button
                             type="button"
                             onClick={handleToggleTree}
@@ -2106,15 +2145,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 );
                             })}
                         </div>
-                        <button
-                            type="button"
-                            onClick={handleLspCommand}
-                            title={lspConnected ? tx("clang.lsp_status_connected") : tx("clang.lsp_status_disconnected")}
-                            style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "2px 4px", border: "none", background: "transparent", cursor: "pointer", color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}
-                        >
-                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
-                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : tx("clang.lsp_disconnected_short")}
-                        </button>
                     </div>
 
                     {/* Tree + editor */}
@@ -2252,11 +2282,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: debug.status === "stopped" ? token.color.warning : token.color.success, display: "inline-block" }} />
                             )}
                         </button>
-                        <button onClick={() => setRightTab("agent")}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "agent" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "agent" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
-                        >
-                            <Icon.Sparkle size={11} /> AI
-                        </button>
+                        {/* AI moved to the floating control cluster (top-right of the editor). */}
                     </div>
 
                     <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
@@ -2389,7 +2415,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         />
                     )}
 
-                    {rightTab === "agent" && (
+                    {!isDesktop && rightTab === "agent" && (
                         <AgentPanel
                             agent={agent}
                             canEdit={canEdit}
@@ -2524,7 +2550,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 code={entryCode}
                 fileName={fileName}
                 pack={messages}
-                sharePanel={isOwner && fileMeta ? (
+                sharePanel={!isDesktop && isOwner && fileMeta ? (
                     <ShareControl
                         file={fileMeta}
                         onChange={updated => setFileMeta(prev => prev ? { ...prev, visibility: updated.visibility } : prev)}

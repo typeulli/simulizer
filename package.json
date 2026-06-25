@@ -9,6 +9,7 @@
     "start": "next start",
     "build:lib": "node scripts/build/treediff.js && node scripts/build/bctool2d.js && node scripts/build/bctool3d.js",
     "build:dist": "node scripts/build/console.mjs --minify",
+    "build:desktop": "node scripts/build/desktop.mjs",
     "gen:i18n-schema": "ts-json-schema-generator --path src/i18n/lang.ts --type langpack --out messages/messages.schema.json"
   },
   "dependencies": {

@@ -1,9 +1,23 @@
 import type { NextConfig } from "next";
+import path from "path";
 import createNextIntlPlugin from "next-intl/plugin";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
+// Desktop build: static HTML export bundled into simulizer.exe (served by the
+// app's embedded localhost HTTP server). Gated by an env flag so the normal web
+// build is completely unaffected.
+const desktop = process.env.SIMULIZER_DESKTOP === "1";
+
 const nextConfig: NextConfig = {
+  ...(desktop
+    ? {
+        output: "export" as const,
+        distDir: "out-desktop",
+        trailingSlash: true, // emit `workspace/index.html` for deterministic local serving
+        images: { unoptimized: true },
+      }
+    : {}),
   reactStrictMode: false,
   serverExternalPackages: [
     "@tensorflow/tfjs",
@@ -31,6 +45,10 @@ const nextConfig: NextConfig = {
     "@codingame/monaco-vscode-cpp-default-extension",
   ],
   turbopack: {
+    // Desktop export builds from a staging copy under frontend/.desktop-build;
+    // point Turbopack's root at the real frontend dir so it resolves the shared
+    // node_modules (one level up) instead of treating the staging dir as root.
+    ...(desktop ? { root: path.resolve(process.cwd(), "..") } : {}),
     resolveAlias: {
       fs: { browser: "./src/lib/empty.ts" },
       path: { browser: "./src/lib/empty.ts" },

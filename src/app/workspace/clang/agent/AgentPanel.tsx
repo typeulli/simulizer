@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 // Chat surface for the in-workspace AI agent. Renders the useChat message
 // stream (assistant text as markdown, tool calls as rich preview cards) and an
 // input box. Lives in the right panel as the "AI" tab.
@@ -8,7 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { token } from "@/components/tokens";
-import { getCredits } from "@/lib/authapi";
+import { getCredits } from "@/lib/file";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Checkbox } from "@/components/atoms/Checkbox";

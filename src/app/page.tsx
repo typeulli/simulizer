@@ -19,8 +19,6 @@ import { BlocklyPreview } from "@/components/organisms/BlocklyPreview";
 import { token } from "@/components/tokens";
 
 import { HeroSeries } from "./_landing/HeroSeries";
-import { PipelineScrolly, type PipelineStage } from "./_landing/PipelineScrolly";
-import { BackendConstellation } from "./_landing/BackendConstellation";
 import { Closing } from "./_landing/Closing";
 import { ScrollyFeatures, type ScrollyStep } from "./_landing/ScrollyFeatures";
 import { VizImage, VizBlocks, VizCode, VizSimstd, VizBackend, VizExe, VizIframe, VizPending } from "./_landing/scrollyVizzes";
@@ -254,138 +252,6 @@ const ADVANCED_STEPS: ScrollyStep[] = [
     },
 ];
 
-const PIPELINE_STAGES: PipelineStage[] = [
-    {
-        id: "pipe-author",
-        num: "01",
-        label: "Author",
-        sub: "block · clang",
-        title: "Two entries, one workspace.",
-        body: <>Blockly로 끼워 만든 트리든, Monaco에서 직접 적은 C++ 소스든, 같은 워크스페이스에서 같은 Run 버튼으로 보냅니다. 입력만 다를 뿐 이후 파이프라인은 한 줄로 흐릅니다.</>,
-        viz: (
-            <VizCode
-                title="workspace input"
-                sub="block · clang"
-                pill={{ label: "any", tone: "wasm" }}
-                lang="cpp"
-                code={`// Block path  ─── Blockly JSON
-{ "blocks": { "blocks": [{
-    "type": "wasm_func_main",
-    "fields": { "RET_TYPE": "i32" },
-    "inputs": { "BODY": { "block": {
-      "type": "local_decl_i32", …
-    }}}
-}]}}
-
-// Clang path  ─── C++ source
-#include "simstd.hpp"
-int worker() {
-    auto a = matrix_create(2, 3);
-    auto c = matrix_matmul(a, matrix_transpose(a));
-    show_mat(c);
-    return 0;
-}`}
-            />
-        ),
-    },
-    {
-        id: "pipe-compile",
-        num: "02",
-        label: "Compile",
-        sub: "wabt · emcc",
-        title: "Both paths land on WASM.",
-        body: <>Block은 JSON → simulizer IR → WAT → <code>wabt</code>로, Clang은 <code>emcc</code>로. 끝에서 둘은 같은 <code>application/wasm</code> 바이트 뭉치가 됩니다.</>,
-        viz: (
-            <VizCode
-                title="WASM bytes"
-                sub="output of either path"
-                pill={{ label: "binary", tone: "wasm" }}
-                lang="cpp"
-                code={`00 61 73 6D 01 00 00 00   ; magic + version
-01 06 01 60 00 01 7F      ; type: () → i32
-03 02 01 00               ; func 0
-07 08 01 04 6D 61 69 6E   ; export "main"
-0A 1E 01 1C 00 41 00 21 00
-   41 01 21 01 02 40 03 40
-   20 01 41 0A 4C 0D 01 20
-   00 20 01 6A 21 00 …    ; (binary main)`}
-            />
-        ),
-    },
-    {
-        id: "pipe-spawn",
-        num: "03",
-        label: "Spawn",
-        sub: "WebAssembly.instantiate",
-        title: "Isolated Worker instance.",
-        body: <>ArrayBuffer는 transferable로 워커에 넘어가 main 스레드에서 곧장 해제됩니다. host import 객체(<code>math · debug · tensor · simstd</code>)와 묶여 <code>WebAssembly.instantiate</code>가 호출됩니다.</>,
-        viz: (
-            <VizCode
-                title="worker boot"
-                sub="WebAssembly.instantiate"
-                pill={{ label: "isolated", tone: "wasm" }}
-                lang="cpp"
-                code={`// (wasm-worker | clang-worker).ts
-const { instance } = await WebAssembly.instantiate(
-    wasmBuffer,
-    {
-        env:    { memory, table },
-        math:   { sin, cos, exp, log, sqrt },
-        debug:  { log, bar, bar_set },
-        tensor: { create, get, save, perlin },
-        simstd: { show_mat, debug_log, … },
-    },
-);
-postMessage({ type: "ready" });`}
-            />
-        ),
-    },
-    {
-        id: "pipe-run",
-        num: "04",
-        label: "Run",
-        sub: "postMessage stream",
-        title: "Messages stream out.",
-        body: <>사용자 진입점(<code>main()</code> 또는 <code>worker()</code>)이 돌면서 host import가 호출됩니다. 각 호출이 <code>postMessage</code>로 흘러나오고, main 스레드는 그동안 그대로 살아 있습니다.</>,
-        viz: (
-            <VizCode
-                title="worker → main"
-                sub="postMessage stream"
-                pill={{ label: "stream", tone: "lsp" }}
-                lang="cpp"
-                code={`postMessage { type: "log",     msg: "i=10, sum=55" }
-postMessage { type: "bar",     id: "iter",  v: 1.0 }
-postMessage { type: "matshow", rows: 2, cols: 2, data: [5,6,6,8] }
-postMessage { type: "visual",  url: blobURL }
-postMessage { type: "result",  value: 55 }
-postMessage { type: "done" }`}
-            />
-        ),
-    },
-    {
-        id: "pipe-render",
-        num: "05",
-        label: "Render",
-        sub: "ConsolePanel routing",
-        title: "Both paths meet here.",
-        body: <>LogArea · ProgressBar · MatShow · SeriesPanel · GraphArray로 라우팅됩니다. 두 path가 같은 ConsolePanel에서 만나, 한 줄짜리 시각화 API 비용이 정확히 0에 수렴합니다.</>,
-        viz: (
-            <VizCode
-                title="result"
-                sub="ConsolePanel routing"
-                pill={{ label: "merged", tone: "gpu" }}
-                lang="cpp"
-                code={`Result        55
-StatusDot     done
-Backend       WebGPU
-Console       1 + 2 + … + 10 = 55
-MatShow       2×2 · [[5 6][6 8]]
-GraphArray    ▁▂▃▅▆▇▇█  (iter trace)`}
-            />
-        ),
-    },
-];
-
 export default function Home() {
     const { theme, toggleTheme } = useTheme();
     const { user, loading } = useUser();
@@ -442,17 +308,14 @@ export default function Home() {
                         <Link href="#cases" style={{ textDecoration: "none" }}>
                             <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>Cases</Text>
                         </Link>
-                        <Link href="#pipeline" style={{ textDecoration: "none" }}>
-                            <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>Pipeline</Text>
-                        </Link>
-                        <Link href="#architecture" style={{ textDecoration: "none" }}>
-                            <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>Architecture</Text>
-                        </Link>
                         <Link href="#stack" style={{ textDecoration: "none" }}>
                             <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>Stack</Text>
                         </Link>
                         <Link href="/docs" style={{ textDecoration: "none" }}>
                             <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>Docs</Text>
+                        </Link>
+                        <Link href="/download" style={{ textDecoration: "none" }}>
+                            <Text as="span" variant="body" tone="muted" style={{ cursor: "pointer" }}>Download</Text>
                         </Link>
                         <Divider orientation="vertical" style={{ height: 16 }} />
                         <Button variant="ghost" size="xs" onClick={toggleTheme} aria-label="Toggle theme">
@@ -471,17 +334,14 @@ export default function Home() {
                 <Link href="#cases" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
                     <Text as="span" variant="body" tone="strong">Cases</Text>
                 </Link>
-                <Link href="#pipeline" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
-                    <Text as="span" variant="body" tone="strong">Pipeline</Text>
-                </Link>
-                <Link href="#architecture" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
-                    <Text as="span" variant="body" tone="strong">Architecture</Text>
-                </Link>
                 <Link href="#stack" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
                     <Text as="span" variant="body" tone="strong">Stack</Text>
                 </Link>
                 <Link href="/docs" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
                     <Text as="span" variant="body" tone="strong">Docs</Text>
+                </Link>
+                <Link href="/download" onClick={() => setNavOpen(false)} style={{ textDecoration: "none" }}>
+                    <Text as="span" variant="body" tone="strong">Download</Text>
                 </Link>
                 <Divider />
                 <Inline gap="sp2">
@@ -751,38 +611,11 @@ int worker() {
                     vizSide="right"
                 />
 
-                {/* ── 06 · COMPILE PIPELINE (scroll-driven horizontal) ── */}
-                <div id="pipeline" />
-                <PipelineScrolly
-                    eyebrow="06 · How it ships"
-                    title={<>JSON. IR.<br />WAT. WASM.</>}
-                    intro="블록이든 C++이든 같은 컴파일러를 통과합니다. 워크스페이스에서 IR과 WAT을 거쳐 WASM 바이트가 되고, Web Worker로 넘어가 실행 결과는 postMessage를 타고 UI 패널까지 흐릅니다."
-                    stages={PIPELINE_STAGES}
-                />
-
-                {/* ── 04 · ARCHITECTURE ─────────────────────────────────── */}
-                <section id="architecture" className="ld-section" style={{ padding: "96px 0" }}>
-                    <div className="ld-container">
-                        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 32, alignItems: "end", marginBottom: 28 }}>
-                            <div>
-                                <div className="ld-eyebrow">07 · Architecture</div>
-                                <h2 style={{ fontSize: "clamp(34px, 4vw, 56px)", fontWeight: 800, letterSpacing: "-0.04em", margin: "12px 0 0", color: token.color.fgStrong, lineHeight: 0.98 }}>
-                                    One frontend.<br />Three backends.
-                                </h2>
-                            </div>
-                            <p style={{ fontSize: 15, color: token.color.fgMuted, lineHeight: 1.75, margin: 0, maxWidth: 540, fontWeight: 500, wordBreak: "keep-all", overflowWrap: "break-word" }}>
-                                AI 서버는 SAM2 트래킹 같은 GPU-heavy 작업, API 서버는 LLM 프록시와 블록 트랜스파일·C++ 컴파일·LaTeX OCR, Auth 서버는 OAuth와 파일 저장소를 맡습니다. 세 서버는 서로 호출하지 않고, 셋을 잇는 건 오직 클라이언트뿐입니다.
-                            </p>
-                        </div>
-                        <BackendConstellation />
-                    </div>
-                </section>
-
                 {/* ── 05 · WHY US (comparison) ──────────────────────────── */}
                 <section className="ld-section" style={{ padding: "96px 0", background: token.color.bgSubtle, borderTop: `1px solid ${token.color.border}`, borderBottom: `1px solid ${token.color.border}` }}>
                     <div className="ld-container">
                         <div style={{ marginBottom: 28 }}>
-                            <div className="ld-eyebrow">08 · Why us</div>
+                            <div className="ld-eyebrow">06 · Why us</div>
                             <h2 style={{ fontSize: "clamp(34px, 4vw, 56px)", fontWeight: 800, letterSpacing: "-0.04em", margin: "12px 0 0", color: token.color.fgStrong, lineHeight: 0.98 }}>
                                 Not MATLAB.<br />Not COMSOL.
                             </h2>
@@ -878,7 +711,7 @@ int worker() {
                 <section id="stack" className="ld-section" style={{ padding: "96px 0" }}>
                     <div className="ld-container">
                         <div style={{ marginBottom: 32 }}>
-                            <div className="ld-eyebrow">09 · Stack</div>
+                            <div className="ld-eyebrow">07 · Stack</div>
                             <h2 style={{ fontSize: "clamp(28px, 3vw, 40px)", fontWeight: 800, letterSpacing: "-0.035em", margin: "12px 0 0", color: token.color.fgStrong, lineHeight: 1.0 }}>
                                 Built with.
                             </h2>
@@ -924,7 +757,7 @@ int worker() {
                 <section className="ld-section" style={{ padding: "96px 0", background: token.color.bgSubtle, borderTop: `1px solid ${token.color.border}`, borderBottom: `1px solid ${token.color.border}` }}>
                     <div className="ld-container">
                         <div style={{ marginBottom: 32 }}>
-                            <div className="ld-eyebrow">10 · Impact</div>
+                            <div className="ld-eyebrow">08 · Impact</div>
                             <h2 style={{ fontSize: "clamp(34px, 4vw, 56px)", fontWeight: 800, letterSpacing: "-0.04em", margin: "12px 0 0", color: token.color.fgStrong, lineHeight: 0.98 }}>
                                 What changes.
                             </h2>

@@ -1,11 +1,11 @@
-"use client";
+﻿"use client";
 import React, { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Logo } from "@/components/atoms/Logo";
 import { Spinner } from "@/components/atoms/Spinner";
 import { token } from "@/components/tokens";
-import { getFile, getMe, type FileDetail } from "@/lib/authapi";
+import { getFile, getMe, isDesktop, type FileDetail } from "@/lib/file";
 import { useTranslations } from "next-intl";
 
 import BlockWorkspace from "./BlockWorkspace";
@@ -25,8 +25,41 @@ const WorkspaceRouter: React.FC = () => {
     const [file, setFile] = useState<FileDetail | null>(null);
     const [isOwner, setIsOwner] = useState<boolean>(false);
     const [fileError, setFileError] = useState<FileError | null>(null);
+    // Desktop: the open project is an absolute file path injected by the host
+    // (simulizer.exe) and switched in place via window.__loadProject.
+    const [projectPath, setProjectPath] = useState<string | null>(
+        () => (isDesktop && typeof window !== "undefined" ? window.__SIMULIZER_PROJECT__ ?? null : null),
+    );
 
+    // Desktop: let the native File menu (and native create/duplicate/rename
+    // flows) re-open a project in place by path.
     useEffect(() => {
+        if (!isDesktop) return;
+        window.__loadProject = (p: string) => setProjectPath(p);
+        return () => { if (window.__loadProject) delete window.__loadProject; };
+    }, []);
+
+    // Desktop project loader (by path).
+    useEffect(() => {
+        if (!isDesktop || !projectPath) return;
+        let cancelled = false;
+        setFileError(null);
+        setFile(null);
+        (async () => {
+            const f = await getFile(projectPath).catch(() => {
+                if (!cancelled) setFileError("not_found");
+                return null;
+            });
+            if (cancelled || !f) return;
+            setIsOwner(true);
+            setFile(f);
+        })();
+        return () => { cancelled = true; };
+    }, [projectPath]);
+
+    // Web project loader (by ?file= / ?example=).
+    useEffect(() => {
+        if (isDesktop) return;
         if (!fileParam && !exampleParam) {
             router.replace("/dashboard");
             return;
@@ -53,7 +86,7 @@ const WorkspaceRouter: React.FC = () => {
         return () => { cancelled = true; };
     }, [fileParam, exampleParam, router]);
 
-    if (fileError) {
+    if (fileError) {
         const isForbidden = fileError === "forbidden";
         return (
             <div style={{
@@ -121,9 +154,9 @@ const WorkspaceRouter: React.FC = () => {
     }
 
     if (file.type === "clangfile") {
-        return <ClangWorkspace initialFile={file} initialOwner={isOwner} />;
+        return <ClangWorkspace key={file.id} initialFile={file} initialOwner={isOwner} />;
     }
-    return <BlockWorkspace initialFile={file} initialOwner={isOwner} />;
+    return <BlockWorkspace key={file.id} initialFile={file} initialOwner={isOwner} />;
 };
 
 export default function WorkspacePage() {

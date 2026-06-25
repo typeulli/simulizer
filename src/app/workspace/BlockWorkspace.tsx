@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import * as Blockly from "blockly/core";
@@ -32,6 +32,8 @@ import { Logo } from "@/components/atoms/Logo";
 import { Spinner } from "@/components/atoms/Spinner";
 import { BuildSnackbar } from "@/components/molecules/BuildSnackbar";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
+import { WorkspaceTitleBar } from "@/components/organisms/WorkspaceTitleBar";
+import { WorkspaceFloatingControls } from "@/components/organisms/WorkspaceFloatingControls";
 import { token } from "@/components/tokens";
 import { BlockManagerModal } from "@/components/modals/workspace/BlockManagerModal";
 import { BoundaryManagerModal } from "@/components/modals/workspace/BoundaryManagerModal";
@@ -58,7 +60,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { WorkerOutMsg } from "@/utils/wasm/wasm-worker";
 import type { ClangWorkerInMsg } from "@/utils/wasm/clang-worker";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
-import { getMe, getFile, saveFile, renameFile, uploadThumbnail, duplicateFile, createFile, type FileOut, type FileDetail } from "@/lib/authapi";
+import { getMe, getFile, saveFile, renameFile, uploadThumbnail, duplicateFile, createFile, isDesktop, type FileOut, type FileDetail } from "@/lib/file";
 import { serializeBundle, makeDefaultBundle, type CppBundle } from "@/lib/cppBundle";
 import { ShareControl } from "@/components/share/ShareControl";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/organisms/Modal";
@@ -3232,8 +3234,10 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         setDuplicating(true);
         try {
             const dup = await duplicateFile(fileId);
-            router.push(`/workspace?file=${dup.id}`);
+            // Desktop: native duplicateFile already re-opened the copy in place.
+            if (!isDesktop) router.push(`/workspace?file=${dup.id}`);
         } catch (err: any) {
+            if (err?.status === 0) return; // desktop save dialog cancelled
             if (err?.status === 401) {
                 router.push(`/login?next=${encodeURIComponent(`/workspace?file=${fileId}`)}`);
             } else {
@@ -3461,12 +3465,10 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 </div>
             )}
 
-            {/* ── Topbar ── */}
-            <header style={isMobile
-                ? { display: "flex", alignItems: "center", gap: 4, padding: "0 12px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
-                : { display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 16px", height: 48, borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0 }
-            }>
-                {/* Brand + filename */}
+            {/* ── Topbar (web: app header · desktop: frameless title bar) ── */}
+            <WorkspaceTitleBar
+                isMobile={isMobile}
+                left={
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap", flex: isMobile ? 1 : undefined }}>
                     <TopbarBrand compact={isMobile} />
 
@@ -3507,12 +3509,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         </span>
                     )}
                 </div>
-
-                {/* Center — reserved (search bar removed) */}
-                {!isMobile && <div />}
-
-
-                {/* Actions */}
+                }
+                right={
                 <div style={{ display:"flex", alignItems:"center", gap:8, justifyContent:"flex-end" }}>
                     {!isMobile && <>
                     {/* Save button (owner only) */}
@@ -3683,17 +3681,19 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         {/* <kbd style={{ padding:"1px 5px", background:"rgba(0,0,0,0.25)", borderRadius:3, fontFamily:token.font.family.mono, fontSize:token.font.size.fs10, color:"rgba(255,255,255,0.7)" }}>⌘↵</kbd> */}
                     </button>
                 </div>
-            </header>
+                }
+            />
 
             {/* ── Main 2-column layout ── */}
             <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 340px", flex:1, minHeight:0 }}>
 
                 {/* Canvas: Blockly (toolbox 포함) */}
-                <main style={{ display: isMobile && mobileTab !== "blocks" ? "none" : "flex", flexDirection:"column", minWidth:0, background:token.color.bgCanvas, overflow:"hidden" }}>
+                <main style={{ display: isMobile && mobileTab !== "blocks" ? "none" : "flex", flexDirection:"column", minWidth:0, background:token.color.bgCanvas, overflow:"hidden", position:"relative" }}>
 
-                    {/* Canvas toolbar */}
-                    <div style={{ display: isMobile ? "none" : "flex", alignItems:"center", padding:"5px 10px", borderBottom:`1px solid ${token.color.border}`, background:token.color.bg, flexShrink:0 }}>
-                        {/* Left: block / WAT toggle */}
+                    {/* Auxiliary controls — floating top-right cluster (view modes + tools) */}
+                    {!isMobile && (
+                    <WorkspaceFloatingControls>
+                        {/* block / WAT / AI view toggle */}
                         <div style={{ display:"flex", gap:2 }}>
                             {([
                                 { id: "blocks" as const, label: <><Icon.Layers size={11} /> {pack.workspace.ui.canvas_tab_blocks}</> },
@@ -3707,8 +3707,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 </button>
                             ))}
                         </div>
-                        {/* Right: tools dropdown */}
-                        <div style={{ marginLeft:"auto", position:"relative" }} ref={toolsMenuRef}>
+                        <div style={{ width:1, height:18, background:token.color.border, margin:"0 2px" }} />
+                        {/* tools dropdown */}
+                        <div style={{ position:"relative" }} ref={toolsMenuRef}>
                             <button onClick={() => setShowToolsMenu(o => !o)}
                                 style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"4px 9px", border:`1px solid ${showToolsMenu ? token.color.fg : token.color.border}`, borderRadius:token.radius.sm, background: showToolsMenu ? token.color.bgSubtle : "none", cursor:"pointer", color: showToolsMenu ? token.color.fg : token.color.fgMuted, fontSize:token.font.size.fs11, fontWeight:500, transition:"all 0.1s" }}
                                 onMouseEnter={e => { if (!showToolsMenu) { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; } }}
@@ -3748,7 +3749,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 </div>
                             )}
                         </div>
-                    </div>
+                    </WorkspaceFloatingControls>
+                    )}
 
                     {/* Canvas area */}
                     <div style={{ flex:1, position:"relative", overflow:"hidden", display: canvasTab === "blocks" ? undefined : "none" }}>
@@ -3756,8 +3758,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     </div>
                     {canvasTab === "wat" && (
                         <div style={{ flex:1, position:"relative", overflow:"hidden" }}>
-                            {/* Floating control bar */}
-                            <div style={{ position:"absolute", top:8, right:24, zIndex:10, display:"flex", alignItems:"center", gap:4 }}>
+                            {/* Floating control bar (left — the view toggle cluster sits top-right) */}
+                            <div style={{ position:"absolute", top:8, left:24, zIndex:10, display:"flex", alignItems:"center", gap:4 }}>
                                 <select
                                     value={watLang}
                                     onChange={e => setWatLang(e.target.value as "wat" | "cpp" | "py" | "js")}
@@ -4087,7 +4089,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 mode={blockMode}
                 blockData={blockData}
                 pack={pack}
-                sharePanel={isOwner && fileMeta ? (
+                sharePanel={!isDesktop && isOwner && fileMeta ? (
                     <ShareControl
                         file={fileMeta}
                         onChange={updated => setFileMeta(prev => prev ? { ...prev, visibility: updated.visibility } : prev)}
