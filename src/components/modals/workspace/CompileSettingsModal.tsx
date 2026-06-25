@@ -5,7 +5,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organis
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
 import { token } from "@/components/tokens";
-import { BUILD_FIELDS, COMPILE_FIELDS, DEVICES, DEVICE_LABEL, type BuildOptions, type CompileOptions, type DeviceKind } from "@/lib/compileConfig";
+import { BUILD_SYSTEM_DESCRIPTION, COMPILE_FIELDS, DEVICES, DEVICE_LABEL, OS_KEYS, SYSTEM_LABEL, type BuildOptions, type CompileOptions, type DeviceKind } from "@/lib/compileConfig";
 import { isBinaryName } from "@/lib/cppBundle";
 
 type SettingsTab = "compile" | "build" | "environment";
@@ -261,27 +261,36 @@ export function CompileSettingsModal({ open, build, compile, device, runtimeBack
                     </div>
                 )}
 
-                {/* ── 빌드 탭 (target system + exe icon) ── */}
+                {/* ── 빌드 탭 (target systems + exe icon) ── */}
                 {tab === "build" && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                        {BUILD_FIELDS.map(field => (
-                            <div key={field.key} style={{ display: "flex", flexDirection: "column", gap: 6, opacity: disabled ? 0.5 : 1 }}>
-                                <label style={fieldLabel}>{field.label}</label>
-                                <span style={fieldDesc}>{field.description}</span>
-                                <select
-                                    value={build[field.key]}
-                                    disabled={disabled}
-                                    onChange={e => updateBuild({ [field.key]: e.target.value } as Partial<BuildOptions>)}
-                                    style={{ ...selectStyle, alignSelf: "flex-start", minWidth: 180 }}
-                                >
-                                    {field.options.map(opt => (
-                                        <option key={opt} value={opt}>
-                                            {field.optionLabels?.[opt] ?? opt}
-                                        </option>
-                                    ))}
-                                </select>
+                        {/* Target systems — one native binary per checked OS, bundled into a
+                            single .sim. Every OS defaults on; config.json stores only the off ones. */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, opacity: disabled ? 0.5 : 1 }}>
+                            <label style={fieldLabel}>Target Systems</label>
+                            <span style={fieldDesc}>{BUILD_SYSTEM_DESCRIPTION}</span>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                                {OS_KEYS.map(os => (
+                                    <label
+                                        key={os}
+                                        style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: disabled ? "default" : "pointer", fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, color: token.color.fg }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={build.system[os]}
+                                            disabled={disabled}
+                                            onChange={e => updateBuild({ system: { ...build.system, [os]: e.target.checked } })}
+                                        />
+                                        {SYSTEM_LABEL[os]}
+                                        {os === "macos" && (
+                                            <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
+                                                (전용 빌드 서버 연결 시 빌드)
+                                            </span>
+                                        )}
+                                    </label>
+                                ))}
                             </div>
-                        ))}
+                        </div>
 
                         {/* Windows exe icon — relative image path (anywhere in the project). */}
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, opacity: disabled ? 0.5 : 1 }}>

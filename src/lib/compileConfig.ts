@@ -12,14 +12,23 @@ import type { TreeNode, FileNode } from "./cppBundle";
 
 export const CONFIG_FILENAME = "config.json";
 
-export type TargetSystem = "auto" | "windows" | "linux" | "macos";
 export type OptLevel = "O0" | "O1" | "O2" | "O3" | "Os";
 export type CppStd = "c++17" | "c++20" | "c++23";
 
-// ─── build (config["build"]) — Build-only: target OS + exe icon ────────────
+// Build target operating systems. A Build produces a multi-OS `.sim` bundle —
+// one native binary per enabled OS — which simulizerv unpacks for the current
+// OS at launch. macOS is wired up but only built when a macOS build server is
+// available; otherwise it's silently skipped by the backend.
+export const OS_KEYS = ["windows", "linux", "macos"] as const;
+export type OsKey = typeof OS_KEYS[number];
+
+/** Which OSes a Build targets. Every OS defaults to `true` (all platforms). */
+export type BuildSystem = Record<OsKey, boolean>;
+
+// ─── build (config["build"]) — Build-only: target OSes + exe icon ──────────
 export type BuildOptions = {
-    /** Build target OS — Build only, ignored by Run (emcc). */
-    system: TargetSystem;
+    /** Per-OS build toggles — Build only, ignored by Run (emcc). */
+    system: BuildSystem;
     /**
      * Relative path (anywhere in the project) to an image used as the Windows
      * exe icon. Empty = default icon. Non-.ico images are converted to .ico
@@ -28,8 +37,10 @@ export type BuildOptions = {
     icon: string;
 };
 
+export const DEFAULT_BUILD_SYSTEM: BuildSystem = { windows: true, linux: true, macos: true };
+
 export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
-    system: "auto",
+    system: { ...DEFAULT_BUILD_SYSTEM },
     icon: "",
 };
 
@@ -72,10 +83,7 @@ export const DEFAULT_ENVIRONMENT: EnvironmentOptions = {
     device: DEFAULT_DEVICE,
 };
 
-const SYSTEMS: TargetSystem[] = ["auto", "windows", "linux", "macos"];
-
-export const SYSTEM_LABEL: Record<TargetSystem, string> = {
-    auto: "Auto",
+export const SYSTEM_LABEL: Record<OsKey, string> = {
     windows: "Windows",
     linux: "Linux",
     macos: "macOS",
@@ -129,9 +137,15 @@ export type ParsedBuildConfig = {
 
 export function parseBuildConfig(raw: string | undefined | null): ParsedBuildConfig {
     const { section, error } = readConfigSection(raw, "build", "빌드");
-    const options: BuildOptions = { ...DEFAULT_BUILD_OPTIONS };
-    if (typeof section.system === "string" && SYSTEMS.includes(section.system as TargetSystem)) {
-        options.system = section.system as TargetSystem;
+    const options: BuildOptions = { ...DEFAULT_BUILD_OPTIONS, system: { ...DEFAULT_BUILD_SYSTEM } };
+    // `system` is an object of per-OS booleans (e.g. {"linux": false}); every OS
+    // defaults to true. Anything else (missing / wrong-shaped) leaves all true.
+    const sys = section.system;
+    if (typeof sys === "object" && sys !== null && !Array.isArray(sys)) {
+        for (const os of OS_KEYS) {
+            const v = (sys as Record<string, unknown>)[os];
+            if (typeof v === "boolean") options.system[os] = v;
+        }
     }
     if (typeof section.icon === "string") {
         options.icon = section.icon.trim();
@@ -205,10 +219,14 @@ export const CONFIG_SCHEMA = {
             description: "빌드(실행 파일 생성) 설정. Build 전용.",
             properties: {
                 system: {
-                    type: "string",
-                    enum: SYSTEMS,
-                    default: "auto",
-                    description: "빌드 대상 OS. Build 전용이며 Run(브라우저 실행)에서는 무시됩니다.",
+                    type: "object",
+                    additionalProperties: false,
+                    description: "빌드 대상 OS별 on/off. 켜진 OS마다 네이티브 바이너리를 만들어 하나의 .sim 으로 묶고, simulizerv 가 현재 OS용만 풀어 실행합니다. 각 OS 기본값은 true (전체 플랫폼). Build 전용.",
+                    properties: {
+                        windows: { type: "boolean", default: true, description: "Windows 바이너리 포함." },
+                        linux: { type: "boolean", default: true, description: "Linux 바이너리 포함." },
+                        macos: { type: "boolean", default: true, description: "macOS 바이너리 포함 (전용 빌드 서버가 있을 때만 실제로 빌드됩니다)." },
+                    },
                 },
                 icon: {
                     type: "string",
@@ -288,26 +306,23 @@ export const COMPILE_FIELDS: CompileField[] = [
     { key: "defines", kind: "list", label: "Defines", description: COMPILE_PROPS.defines.description, itemPattern: DEFINE_PATTERN, placeholder: "예: DEBUG 또는 VERSION=2" },
 ];
 
-// Build fields rendered generically in the settings window's 빌드 tab (the icon
-// control is rendered manually alongside these).
-export type BuildField = {
-    key: "system";
-    kind: "enum";
-    label: string;
-    description: string;
-    options: readonly string[];
-    optionLabels?: Record<string, string>;
-};
-
-export const BUILD_FIELDS: BuildField[] = [
-    { key: "system", kind: "enum", label: "Target System", description: BUILD_PROPS.system.description, options: SYSTEMS, optionLabels: SYSTEM_LABEL },
-];
+// The 빌드 tab's "Target Systems" control is a checkbox per OS, rendered
+// manually in the settings window (alongside the icon control). The shared
+// description text comes from CONFIG_SCHEMA so the GUI and JSON schema agree.
+export const BUILD_SYSTEM_DESCRIPTION = BUILD_PROPS.system.description;
 
 // Only the fields that differ from their defaults — we never write defaults to
 // config.json (a default-valued project keeps an empty, or absent, section).
 function nonDefaultBuild(b: BuildOptions): Record<string, unknown> {
     const out: Record<string, unknown> = {};
-    if (b.system !== DEFAULT_BUILD_OPTIONS.system) out.system = b.system;
+    // Each OS defaults to true, so only write the ones turned OFF — a project
+    // building everywhere keeps `system` absent, and disabling Linux serializes
+    // to exactly {"linux": false}.
+    const system: Record<string, boolean> = {};
+    for (const os of OS_KEYS) {
+        if (b.system[os] !== DEFAULT_BUILD_SYSTEM[os]) system[os] = b.system[os];
+    }
+    if (Object.keys(system).length > 0) out.system = system;
     if (b.icon && b.icon.trim() !== "") out.icon = b.icon.trim();
     return out;
 }

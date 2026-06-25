@@ -73,6 +73,7 @@ import {
     serializeProjectConfig,
     defaultConfigJson,
     SYSTEM_LABEL,
+    OS_KEYS,
     CONFIG_FILENAME,
     ICON_DIR,
     type BuildOptions,
@@ -1830,11 +1831,13 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         runState === "compiling" ? tx("clang.progress_compiling") :
         runState === "running"   ? tx("workspace.ui.run_button_running") :
         tx("workspace.ui.run_button");
+    const enabledOsList = OS_KEYS.filter(os => buildCfg.options.system[os]);
     const buildLabel =
         buildState === "building"    ? tx("clang.progress_building") :
         buildState === "downloading" ? tx("clang.progress_downloading") :
-        buildCfg.options.system === "auto" ? "Build" :
-        `Build (${SYSTEM_LABEL[buildCfg.options.system]})`;
+        // All OSes (or, defensively, none) → plain "Build"; a subset shows which.
+        enabledOsList.length === 0 || enabledOsList.length === OS_KEYS.length ? "Build" :
+        `Build (${enabledOsList.map(os => SYSTEM_LABEL[os]).join(", ")})`;
 
     const runStatusLabel =
         runState === "loading"   ? tx("clang.status_loading")   :
