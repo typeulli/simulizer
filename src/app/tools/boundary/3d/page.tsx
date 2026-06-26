@@ -1,15 +1,32 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { computeBoundary3D, type BoundaryData3D } from "@/lib/bctool3d/bctool3d";
+import { type BoundaryData3D } from "@/lib/bctool3d/bctool3d";
+import { computeBoundary3DFromSpec } from "@/lib/bctool3d/formula3d";
+import { runPythonFormulas } from "@/lib/pyodide/runtime";
+import dynamic from "next/dynamic";
 import { packF64Arrays, unpackF64Arrays } from "@/utils/ziparray";
 import useDownloader from "@/hooks/useDownloader";
 import { token } from "@/components/tokens";
 import { Icon } from "@/components/atoms/Icons";
 import { Button } from "@/components/atoms/Button";
-import { Input, Textarea } from "@/components/atoms/Input";
+import { Input } from "@/components/atoms/Input";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { useTranslations } from "next-intl";
+
+// Client-only: @codingame/monaco-vscode-api touches `window` at import time, so
+// the editor must not be evaluated during SSR (same as ClangWorkspace's editor).
+const FormulaCodeEditor = dynamic(
+    () => import("@/components/molecules/FormulaCodeEditor").then(m => m.FormulaCodeEditor),
+    {
+        ssr: false,
+        loading: () => (
+            <div style={{ padding: 12, color: token.color.fgMuted, fontFamily: token.font.family.mono, fontSize: token.font.size.fs12 }}>
+                editor loading…
+            </div>
+        ),
+    },
+);
 
 /* ── reshape flat array → 2D array[nu][nv] for Plotly surface ─── */
 function to2D(arr: Float64Array, nu: number, nv: number): number[][] {
@@ -68,15 +85,22 @@ function cssVar(name: string): string {
 }
 
 /* ── types ───────────────────────────────────────────────────── */
-type WasmEntry = { id: number; kind: "wasm"; xFn: string; yFn: string; zFn: string };
 type FileEntry = { id: number; kind: "file"; filename: string; surfaces: BoundaryData3D[] | null };
-type Entry = WasmEntry | FileEntry;
 
 interface Params {
     uMin: number; uMax: number; du: number;
     vMin: number; vMax: number; dv: number;
 }
 
+const DEFAULT_PY = [
+    "# Parametric surfaces — add_formula3d(x(u,v), y(u,v), z(u,v))",
+    'add_formula3d("u", "v", "u^2 + v^2")',
+    "",
+    "# Sphere example (override the u/v range per surface):",
+    '# add_formula3d("\\\\cos(u)*\\\\sin(v)", "\\\\sin(u)*\\\\sin(v)", "\\\\cos(v)",',
+    "#               u_min=0, u_max=6.2832, du=0.2, v_min=0, v_max=3.1416, dv=0.2)",
+    "",
+].join("\n");
 
 /* ── page ───────────────────────────────────────────────────── */
 let _nextId = 1;
@@ -84,9 +108,8 @@ function nextId() { return _nextId++; }
 
 export default function Boundary3DPage() {
     const t = useTranslations("boundary");
-    const [entries, setEntries] = useState<Entry[]>([
-        { id: nextId(), kind: "wasm", xFn: "local.get 0", yFn: "local.get 1", zFn: "local.get 0\nlocal.get 0\nf64.mul\nlocal.get 1\nlocal.get 1\nf64.mul\nf64.add" },
-    ]);
+    const [pyCode,  setPyCode]  = useState<string>(DEFAULT_PY);
+    const [entries, setEntries] = useState<FileEntry[]>([]);
     const [params, setParams] = useState<Params>({
         uMin: -2, uMax: 2, du: 0.2,
         vMin: -2, vMax: 2, dv: 0.2,
@@ -99,32 +122,13 @@ export default function Boundary3DPage() {
     const surfRef = useRef<HTMLDivElement>(null);
     const coneRef = useRef<HTMLDivElement>(null);
 
-    /* ── entry mutations ──────────────────────────────────────── */
-    function addEntry(kind: "wasm" | "file") {
-        const base = { id: nextId() };
-        const e: Entry = kind === "wasm"
-            ? { ...base, kind: "wasm", xFn: "", yFn: "", zFn: "" }
-            : { ...base, kind: "file", filename: "", surfaces: null };
-        setEntries(prev => [...prev, e]);
+    /* ── file entry mutations ─────────────────────────────────── */
+    function addFileEntry() {
+        setEntries(prev => [...prev, { id: nextId(), kind: "file", filename: "", surfaces: null }]);
     }
 
     function removeEntry(id: number) {
-        setEntries(prev => prev.length > 1 ? prev.filter(e => e.id !== id) : prev);
-    }
-
-    function changeKind(id: number, kind: "wasm" | "file") {
-        setEntries(prev => prev.map(e => {
-            if (e.id !== id) return e;
-            return kind === "wasm"
-                ? { id, kind: "wasm", xFn: "", yFn: "", zFn: "" }
-                : { id, kind: "file", filename: "", surfaces: null };
-        }));
-    }
-
-    function updateWasm(id: number, field: "xFn" | "yFn" | "zFn", value: string) {
-        setEntries(prev => prev.map(e =>
-            e.id === id && e.kind === "wasm" ? { ...e, [field]: value } : e
-        ));
+        setEntries(prev => prev.filter(e => e.id !== id));
     }
 
     function loadFile(id: number, file: File) {
@@ -132,9 +136,7 @@ export default function Boundary3DPage() {
             const arrs     = unpackF64Arrays(buf);
             const surfaces = arrsToSurfaces(arrs);
             setEntries(prev => prev.map(e =>
-                e.id === id && e.kind === "file"
-                    ? { ...e, filename: file.name, surfaces }
-                    : e
+                e.id === id ? { ...e, filename: file.name, surfaces } : e
             ));
         });
     }
@@ -148,14 +150,15 @@ export default function Boundary3DPage() {
         try {
             const results: BoundaryData3D[] = [];
 
-            for (const entry of entries) {
-                if (entry.kind === "wasm") {
-                    if (!entry.xFn.trim() || !entry.yFn.trim() || !entry.zFn.trim()) continue;
-                    results.push(await computeBoundary3D(entry.xFn, entry.yFn, entry.zFn, params));
-                } else {
-                    if (!entry.surfaces) continue;
-                    results.push(...entry.surfaces);
+            if (pyCode.trim()) {
+                const { formulas3d } = await runPythonFormulas(pyCode);
+                for (const spec of formulas3d) {
+                    results.push(computeBoundary3DFromSpec(spec, params));
                 }
+            }
+
+            for (const entry of entries) {
+                if (entry.surfaces) results.push(...entry.surfaces);
             }
 
             if (results.length === 0) {
@@ -165,7 +168,7 @@ export default function Boundary3DPage() {
 
             setData(results);
         } catch (e: unknown) {
-            setError(String(e));
+            setError(e instanceof Error ? e.message : String(e));
         } finally {
             setRunning(false);
         }
@@ -291,12 +294,15 @@ export default function Boundary3DPage() {
                     <Button variant="ai" size="sm" disabled={running}
                         leading={running ? <Icon.Square size={10} /> : <Icon.Play size={11} fill />}
                         onClick={handleRun}
-                    >{running ? "computing…" : "Run"}</Button>
+                    >{running ? "running…" : "Run"}</Button>
                 </div>
             </header>
 
-            {/* Body */}
-            <main style={{ flex: 1, padding: token.space.sp6, display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
+            {/* Body — editor on the left, results on the right */}
+            <main style={{ flex: 1, padding: token.space.sp6, display: "flex", gap: token.space.sp4, alignItems: "flex-start", flexWrap: "wrap" }}>
+
+                {/* Left — controls + formula editor */}
+                <div style={{ flex: "1 1 380px", minWidth: 320, maxWidth: 640, display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
 
                 {/* Params */}
                 <div style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}`, display: "flex", gap: token.space.sp5, alignItems: "center", flexWrap: "wrap" }}>
@@ -311,86 +317,79 @@ export default function Boundary3DPage() {
                             />
                         </label>
                     ))}
+                    <span style={{ marginLeft: "auto", fontSize: token.font.size.fs10, color: token.color.fgSubtle }}>
+                        defaults — override per surface via add_formula3d(…, u_min=, du=, …)
+                    </span>
                 </div>
 
-                {/* Entry list */}
+                {/* Formula (Python) editor */}
+                <div style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}` }}>
+                    <div style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        formula (Python · LaTeX, vars u &amp; v)
+                    </div>
+                    <div style={{ border: `1px solid ${token.color.border}`, borderRadius: token.radius.sm, overflow: "hidden" }}>
+                        <FormulaCodeEditor value={pyCode} onChange={setPyCode} height={360} theme="vs-dark" />
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: token.font.size.fs10, color: token.color.fgSubtle }}>
+                        LaTeX inside add_formula3d(&quot;…&quot;) renders as math; click or move the caret into it to edit the raw string.
+                    </div>
+                </div>
+
+                {/* File entries */}
                 {entries.map((entry, idx) => (
                     <div key={entry.id} style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}` }}>
-                        {/* Card header */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                            <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>surface {idx + 1}</span>
-                            {(["wasm", "file"] as const).map(k => (
-                                <Button key={k} size="xs"
-                                    variant={entry.kind === k ? "accent" : "ghost"}
-                                    onClick={() => changeKind(entry.id, k)}
-                                    style={{ fontFamily: token.font.family.mono }}
-                                >{k.toUpperCase()}</Button>
-                            ))}
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>file {idx + 1}</span>
+                            <input
+                                type="file"
+                                accept=".bin"
+                                style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs12, color: token.color.fgMuted }}
+                                onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(entry.id, f); }}
+                            />
+                            {entry.surfaces !== null && (
+                                <span style={{ fontSize: token.font.size.fs11, color: token.color.success }}>
+                                    {entry.surfaces.length} surface{entry.surfaces.length !== 1 ? "s" : ""} loaded
+                                </span>
+                            )}
                             <Button variant="danger" size="xs"
                                 style={{ marginLeft: "auto" }}
                                 onClick={() => removeEntry(entry.id)}
-                                disabled={entries.length === 1}
                             >×</Button>
                         </div>
-
-                        {/* Card body */}
-                        {entry.kind === "wasm" ? (
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                                {(["xFn", "yFn", "zFn"] as const).map(field => (
-                                    <div key={field}>
-                                        <div style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>{field} (WAT, u=local.get 0, v=local.get 1)</div>
-                                        <Textarea size="sm"
-                                            placeholder={field === "xFn" ? "local.get 0" : field === "yFn" ? "local.get 1" : "local.get 0\nlocal.get 0\nf64.mul\nlocal.get 1\nlocal.get 1\nf64.mul\nf64.add"}
-                                            value={entry[field]}
-                                            onChange={e => updateWasm(entry.id, field, e.target.value)}
-                                            style={{ height: 120, fontFamily: token.font.family.mono, background: token.color.bgCanvas, color: token.color.fg, resize: "vertical" }}
-                                        />
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                <input
-                                    type="file"
-                                    accept=".bin"
-                                    style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs12, color: token.color.fgMuted }}
-                                    onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(entry.id, f); }}
-                                />
-                                {entry.surfaces !== null && (
-                                    <span style={{ fontSize: token.font.size.fs11, color: token.color.success }}>
-                                        {entry.surfaces.length} surface{entry.surfaces.length !== 1 ? "s" : ""} loaded
-                                    </span>
-                                )}
-                            </div>
-                        )}
                     </div>
                 ))}
 
-                {/* Add buttons */}
+                {/* Add button */}
                 <div style={{ display: "flex", gap: 6 }}>
-                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={() => addEntry("wasm")}>WASM</Button>
-                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={() => addEntry("file")}>File</Button>
+                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={addFileEntry}>File</Button>
                 </div>
 
                 {/* Error */}
                 {error && (
-                    <div style={{ padding: "8px 12px", background: token.color.dangerSoft, border: `1px solid ${token.color.dangerBorder}`, borderRadius: token.radius.sm, fontSize: token.font.size.fs12, color: token.color.danger, fontFamily: token.font.family.mono }}>
+                    <div style={{ padding: "8px 12px", background: token.color.dangerSoft, border: `1px solid ${token.color.dangerBorder}`, borderRadius: token.radius.sm, fontSize: token.font.size.fs12, color: token.color.danger, fontFamily: token.font.family.mono, whiteSpace: "pre-wrap" }}>
                         {error}
                     </div>
                 )}
+                </div>
 
-                {/* Results */}
-                {data.length > 0 && (
-                    <>
-                        <p style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
-                            {data.length} surface{data.length > 1 ? "s" : ""} — {data.reduce((s, d) => s + d.count, 0)} pts total
-                        </p>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: token.space.sp6, alignItems: "flex-start" }}>
-                            <div ref={surfRef} />
-                            <div ref={coneRef} />
+                {/* Right — results */}
+                <div style={{ flex: "1 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
+                    {data.length > 0 ? (
+                        <>
+                            <p style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
+                                {data.length} surface{data.length > 1 ? "s" : ""} — {data.reduce((s, d) => s + d.count, 0)} pts total
+                            </p>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: token.space.sp6, alignItems: "flex-start" }}>
+                                <div ref={surfRef} />
+                                <div ref={coneRef} />
+                            </div>
+                        </>
+                    ) : (
+                        <div style={{ padding: token.space.sp6, color: token.color.fgSubtle, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}>
+                            Run to see results →
                         </div>
-                    </>
-                )}
+                    )}
+                </div>
             </main>
         </div>
     );

@@ -11,9 +11,10 @@ export const lexer = moo.compile({
     comma: /,/,
     underscore: /_/,
     operator: /[+\-*/=]/,
-    text: /[^\\{}+\-*/=()\s\d_,][^\\{}+\-*/=()\s_,]*/,
+    caret: /\^/,
+    text: /[^\\{}+\-*/=()\s\d_,^][^\\{}+\-*/=()\s_,^]*/,
 });
 
 export type TokenType =
     | 'whitespace' | 'lbrace' | 'rbrace' | 'lparen' | 'rparen'
-    | 'command' | 'number' | 'comma' | 'underscore' | 'operator' | 'text';
+    | 'command' | 'number' | 'comma' | 'underscore' | 'operator' | 'caret' | 'text';

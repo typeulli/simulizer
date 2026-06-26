@@ -15,6 +15,17 @@ const PASS_THROUGH_COMMANDS = new Set([
     '\\mathtt',
 ]);
 
+// Commands that behave as functions applied to a single argument, e.g. \sin(t).
+// When no brace group follows, the next "(...)", "{...}" or single term is taken
+// as the argument. Brace-only commands like \frac are intentionally excluded.
+const FUNCTION_COMMANDS = new Set([
+    '\\sin', '\\cos', '\\tan', '\\cot', '\\sec', '\\csc',
+    '\\arcsin', '\\arccos', '\\arctan',
+    '\\sinh', '\\cosh', '\\tanh',
+    '\\exp', '\\ln', '\\log',
+    '\\sqrt', '\\abs', '\\sign', '\\floor', '\\ceil',
+]);
+
 class LatexParser {
     private tokens: moo.Token[] = [];
     private pos = 0;
@@ -77,6 +88,34 @@ class LatexParser {
     }
 
     private parseTerm(): ASTNode | null {
+        return this.maybePower(this.parsePrimary());
+    }
+
+    // After a primary term, fold a trailing "^" superscript into a power node.
+    private maybePower(base: ASTNode | null): ASTNode | null {
+        if (!base) return base;
+        this.skipWhitespace();
+        if (this.current()?.type === 'caret') {
+            this.advance();
+            const exponent = this.parseExponent();
+            return { type: 'power', children: [base, exponent ?? { type: 'number', value: '1' }] };
+        }
+        return base;
+    }
+
+    // Exponent after "^": a braced group "{...}" or a single primary term.
+    private parseExponent(): ASTNode | null {
+        this.skipWhitespace();
+        if (this.current()?.type === 'lbrace') {
+            this.advance();
+            const inner = this.parseExpression();
+            if (this.current()?.type === 'rbrace') this.advance();
+            return inner;
+        }
+        return this.maybePower(this.parsePrimary());
+    }
+
+    private parsePrimary(): ASTNode | null {
         const token = this.current();
         if (!token) return null;
 
@@ -136,6 +175,25 @@ class LatexParser {
             const content = this.parseExpression();
             if (this.current()?.type === 'rbrace') this.advance();
             children.push(content);
+        }
+
+        // Function-style argument capture: \sin(t), \cos t, \sqrt(x) …
+        if (FUNCTION_COMMANDS.has(cmdName) && children.length === 0) {
+            this.skipWhitespace();
+            if (this.current()?.type === 'lparen') {
+                this.advance();
+                const arg = this.parseExpression();
+                if (this.current()?.type === 'rparen') this.advance();
+                children.push(arg);
+            } else if (this.current()?.type === 'lbrace') {
+                this.advance();
+                const arg = this.parseExpression();
+                if (this.current()?.type === 'rbrace') this.advance();
+                children.push(arg);
+            } else {
+                const arg = this.parseTerm();
+                if (arg) children.push(arg);
+            }
         }
 
         if (cmdName === '\\times') return { type: 'operator', value: '*' };

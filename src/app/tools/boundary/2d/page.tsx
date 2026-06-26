@@ -1,15 +1,32 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { computeBoundary, type BoundaryData } from "@/lib/bctool2d/bctool2d";
+import { type BoundaryData } from "@/lib/bctool2d/bctool2d";
+import { computeBoundary2DFromSpec } from "@/lib/bctool2d/formula2d";
+import { runPythonFormulas } from "@/lib/pyodide/runtime";
+import dynamic from "next/dynamic";
 import { packF64Arrays, unpackF64Arrays } from "@/utils/ziparray";
 import useDownloader from "@/hooks/useDownloader";
 import { token } from "@/components/tokens";
 import { Icon } from "@/components/atoms/Icons";
 import { Button } from "@/components/atoms/Button";
-import { Input, Textarea } from "@/components/atoms/Input";
+import { Input } from "@/components/atoms/Input";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { useTranslations } from "next-intl";
+
+// Client-only: @codingame/monaco-vscode-api touches `window` at import time, so
+// the editor must not be evaluated during SSR (same as ClangWorkspace's editor).
+const FormulaCodeEditor = dynamic(
+    () => import("@/components/molecules/FormulaCodeEditor").then(m => m.FormulaCodeEditor),
+    {
+        ssr: false,
+        loading: () => (
+            <div style={{ padding: 12, color: token.color.fgMuted, fontFamily: token.font.family.mono, fontSize: token.font.size.fs12 }}>
+                editor loading…
+            </div>
+        ),
+    },
+);
 
 /* ── Blues colormap ──────────────────────────────────────────── */
 const BLUES: [number, number, number][] = [
@@ -135,9 +152,7 @@ function arrsToBoundaryData(arrs: Float64Array[]): BoundaryData[] {
 }
 
 /* ── types ───────────────────────────────────────────────────── */
-type WasmEntry = { id: number; kind: "wasm"; xFn: string; yFn: string };
 type FileEntry = { id: number; kind: "file"; filename: string; curves: BoundaryData[] | null };
-type Entry = WasmEntry | FileEntry;
 
 interface Params {
     tMin: number;
@@ -145,6 +160,15 @@ interface Params {
     dt: number;
 }
 
+const DEFAULT_PY = [
+    "# Boundary curves — declare each with add_formula(...)",
+    "# Parametric form:  add_formula(x(t), y(t))",
+    'add_formula("\\\\cos(t)", "\\\\sin(t)")',
+    "",
+    "# Explicit form:  y as a function of x  (x is parametrised by t)",
+    'add_formula("y = x^2", t_min=-2, t_max=2, dt=0.05)',
+    "",
+].join("\n");
 
 /* ── page ───────────────────────────────────────────────────── */
 let _nextId = 1;
@@ -152,10 +176,9 @@ function nextId() { return _nextId++; }
 
 export default function BoundaryPage() {
     const t = useTranslations("boundary");
-    const [entries, setEntries] = useState<Entry[]>([
-        { id: nextId(), kind: "wasm", xFn: "local.get 0\nlocal.get 0\nf64.mul", yFn: "local.get 0\nf64.const 2\nf64.mul" },
-    ]);
-    const [params, setParams] = useState<Params>({ tMin: 0.0, tMax: 10.0, dt: 0.1 });
+    const [pyCode,  setPyCode]  = useState<string>(DEFAULT_PY);
+    const [entries, setEntries] = useState<FileEntry[]>([]);
+    const [params,  setParams]  = useState<Params>({ tMin: 0.0, tMax: 10.0, dt: 0.1 });
     const [data,    setData]    = useState<BoundaryData[]>([]);
     const { download } = useDownloader();
     const [running, setRunning] = useState(false);
@@ -165,32 +188,13 @@ export default function BoundaryPage() {
     const tanRef = useRef<HTMLDivElement>(null);
     const norRef = useRef<HTMLDivElement>(null);
 
-    /* ── entry mutations ──────────────────────────────────────── */
-    function addEntry(kind: "wasm" | "file") {
-        const base = { id: nextId() };
-        const e: Entry = kind === "wasm"
-            ? { ...base, kind: "wasm", xFn: "", yFn: "" }
-            : { ...base, kind: "file", filename: "", curves: null };
-        setEntries(prev => [...prev, e]);
+    /* ── file entry mutations ─────────────────────────────────── */
+    function addFileEntry() {
+        setEntries(prev => [...prev, { id: nextId(), kind: "file", filename: "", curves: null }]);
     }
 
     function removeEntry(id: number) {
-        setEntries(prev => prev.length > 1 ? prev.filter(e => e.id !== id) : prev);
-    }
-
-    function changeKind(id: number, kind: "wasm" | "file") {
-        setEntries(prev => prev.map(e => {
-            if (e.id !== id) return e;
-            return kind === "wasm"
-                ? { id, kind: "wasm", xFn: "", yFn: "" }
-                : { id, kind: "file", filename: "", curves: null };
-        }));
-    }
-
-    function updateWasm(id: number, field: "xFn" | "yFn", value: string) {
-        setEntries(prev => prev.map(e =>
-            e.id === id && e.kind === "wasm" ? { ...e, [field]: value } : e
-        ));
+        setEntries(prev => prev.filter(e => e.id !== id));
     }
 
     function loadFile(id: number, file: File) {
@@ -198,9 +202,7 @@ export default function BoundaryPage() {
             const arrs   = unpackF64Arrays(buf);
             const curves = arrsToBoundaryData(arrs);
             setEntries(prev => prev.map(e =>
-                e.id === id && e.kind === "file"
-                    ? { ...e, filename: file.name, curves }
-                    : e
+                e.id === id ? { ...e, filename: file.name, curves } : e
             ));
         });
     }
@@ -214,14 +216,15 @@ export default function BoundaryPage() {
         try {
             const results: BoundaryData[] = [];
 
-            for (const entry of entries) {
-                if (entry.kind === "wasm") {
-                    if (!entry.xFn.trim() || !entry.yFn.trim()) continue;
-                    results.push(await computeBoundary(entry.xFn, entry.yFn, params));
-                } else {
-                    if (!entry.curves) continue;
-                    results.push(...entry.curves);
+            if (pyCode.trim()) {
+                const { formulas2d } = await runPythonFormulas(pyCode);
+                for (const spec of formulas2d) {
+                    results.push(computeBoundary2DFromSpec(spec, params));
                 }
+            }
+
+            for (const entry of entries) {
+                if (entry.curves) results.push(...entry.curves);
             }
 
             if (results.length === 0) {
@@ -231,7 +234,7 @@ export default function BoundaryPage() {
 
             setData(results);
         } catch (e: unknown) {
-            setError(String(e));
+            setError(e instanceof Error ? e.message : String(e));
         } finally {
             setRunning(false);
         }
@@ -336,12 +339,15 @@ export default function BoundaryPage() {
                     <Button variant="ai" size="sm" disabled={running}
                         leading={running ? <Icon.Square size={10} /> : <Icon.Play size={11} fill />}
                         onClick={handleRun}
-                    >{running ? "computing…" : "Run"}</Button>
+                    >{running ? "running…" : "Run"}</Button>
                 </div>
             </header>
 
-            {/* Body */}
-            <main style={{ flex: 1, padding: token.space.sp6, display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
+            {/* Body — editor on the left, results on the right */}
+            <main style={{ flex: 1, padding: token.space.sp6, display: "flex", gap: token.space.sp4, alignItems: "flex-start", flexWrap: "wrap" }}>
+
+                {/* Left — controls + formula editor */}
+                <div style={{ flex: "1 1 380px", minWidth: 320, maxWidth: 640, display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
 
                 {/* Params */}
                 <div style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}`, display: "flex", gap: token.space.sp6, alignItems: "center", flexWrap: "wrap" }}>
@@ -356,87 +362,80 @@ export default function BoundaryPage() {
                             />
                         </label>
                     ))}
+                    <span style={{ marginLeft: "auto", fontSize: token.font.size.fs10, color: token.color.fgSubtle }}>
+                        defaults — override per curve via add_formula(…, t_min=, t_max=, dt=)
+                    </span>
                 </div>
 
-                {/* Entry list */}
+                {/* Formula (Python) editor */}
+                <div style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}` }}>
+                    <div style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        formula (Python · LaTeX)
+                    </div>
+                    <div style={{ border: `1px solid ${token.color.border}`, borderRadius: token.radius.sm, overflow: "hidden" }}>
+                        <FormulaCodeEditor value={pyCode} onChange={setPyCode} height={360} theme="vs-dark" />
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: token.font.size.fs10, color: token.color.fgSubtle }}>
+                        LaTeX inside add_formula(&quot;…&quot;) renders as math; click or move the caret into it to edit the raw string.
+                    </div>
+                </div>
+
+                {/* File entries */}
                 {entries.map((entry, idx) => (
                     <div key={entry.id} style={{ background: token.color.bgSubtle, border: `1px solid ${token.color.border}`, borderRadius: token.radius.md, padding: `${token.space.sp3} ${token.space.sp4}` }}>
-                        {/* Card header */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                            <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>curve {idx + 1}</span>
-                            {(["wasm", "file"] as const).map(k => (
-                                <Button key={k} size="xs"
-                                    variant={entry.kind === k ? "accent" : "ghost"}
-                                    onClick={() => changeKind(entry.id, k)}
-                                    style={{ fontFamily: token.font.family.mono }}
-                                >{k.toUpperCase()}</Button>
-                            ))}
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                            <span style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>file {idx + 1}</span>
+                            <input
+                                type="file"
+                                accept=".bin"
+                                style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs12, color: token.color.fgMuted }}
+                                onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(entry.id, f); }}
+                            />
+                            {entry.curves !== null && (
+                                <span style={{ fontSize: token.font.size.fs11, color: token.color.success }}>
+                                    {entry.curves.length} curve{entry.curves.length !== 1 ? "s" : ""} loaded
+                                </span>
+                            )}
                             <Button variant="danger" size="xs"
                                 style={{ marginLeft: "auto" }}
                                 onClick={() => removeEntry(entry.id)}
-                                disabled={entries.length === 1}
                             >×</Button>
                         </div>
-
-                        {/* Card body */}
-                        {entry.kind === "wasm" ? (
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                                {(["xFn", "yFn"] as const).map(field => (
-                                    <div key={field}>
-                                        <div style={{ fontSize: token.font.size.fs10, color: token.color.fgSubtle, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>{field} (WAT)</div>
-                                        <Textarea size="sm"
-                                            placeholder={field === "xFn" ? "local.get 0\nlocal.get 0\nf64.mul" : "local.get 0\nf64.const 2\nf64.mul"}
-                                            value={entry[field]}
-                                            onChange={e => updateWasm(entry.id, field, e.target.value)}
-                                            style={{ height: 120, fontFamily: token.font.family.mono, background: token.color.bgCanvas, color: token.color.fg, resize: "vertical" }}
-                                        />
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                <input
-                                    type="file"
-                                    accept=".bin"
-                                    style={{ fontFamily: token.font.family.mono, fontSize: token.font.size.fs12, color: token.color.fgMuted }}
-                                    onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(entry.id, f); }}
-                                />
-                                {entry.curves !== null && (
-                                    <span style={{ fontSize: token.font.size.fs11, color: token.color.success }}>
-                                        {entry.curves.length} curve{entry.curves.length !== 1 ? "s" : ""} loaded
-                                    </span>
-                                )}
-                            </div>
-                        )}
                     </div>
                 ))}
 
-                {/* Add buttons */}
+                {/* Add button */}
                 <div style={{ display: "flex", gap: 6 }}>
-                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={() => addEntry("wasm")}>WASM</Button>
-                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={() => addEntry("file")}>File</Button>
+                    <Button variant="ghost" size="sm" leading={<Icon.Plus size={11} />} onClick={addFileEntry}>File</Button>
                 </div>
 
                 {/* Error */}
                 {error && (
-                    <div style={{ padding: "8px 12px", background: token.color.dangerSoft, border: `1px solid ${token.color.dangerBorder}`, borderRadius: token.radius.sm, fontSize: token.font.size.fs12, color: token.color.danger, fontFamily: token.font.family.mono }}>
+                    <div style={{ padding: "8px 12px", background: token.color.dangerSoft, border: `1px solid ${token.color.dangerBorder}`, borderRadius: token.radius.sm, fontSize: token.font.size.fs12, color: token.color.danger, fontFamily: token.font.family.mono, whiteSpace: "pre-wrap" }}>
                         {error}
                     </div>
                 )}
+                </div>
 
-                {/* Results */}
-                {data.length > 0 && (
-                    <>
-                        <p style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
-                            {data.length} curve{data.length > 1 ? "s" : ""} — {data.reduce((s, d) => s + d.count, 0)} pts total
-                        </p>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: token.space.sp6, alignItems: "flex-start" }}>
-                            <div ref={dlRef}  />
-                            <div ref={tanRef} />
-                            <div ref={norRef} />
+                {/* Right — results */}
+                <div style={{ flex: "1 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: token.space.sp3 }}>
+                    {data.length > 0 ? (
+                        <>
+                            <p style={{ fontSize: token.font.size.fs11, color: token.color.fgSubtle }}>
+                                {data.length} curve{data.length > 1 ? "s" : ""} — {data.reduce((s, d) => s + d.count, 0)} pts total
+                            </p>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: token.space.sp6, alignItems: "flex-start" }}>
+                                <div ref={dlRef}  />
+                                <div ref={tanRef} />
+                                <div ref={norRef} />
+                            </div>
+                        </>
+                    ) : (
+                        <div style={{ padding: token.space.sp6, color: token.color.fgSubtle, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono }}>
+                            Run to see results →
                         </div>
-                    </>
-                )}
+                    )}
+                </div>
             </main>
         </div>
     );
