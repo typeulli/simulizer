@@ -7,15 +7,15 @@ import { token } from "@/components/tokens";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
-import { RELEASE, FILENAME } from "../release";
+import { PLATFORMS, RELEASES_PAGE, VERSION, detectOS, osFromParam, type OS, type PlatformRelease } from "../release";
 
 // Programmatically start the download by clicking a synthetic anchor. GitHub
 // serves release assets with `Content-Disposition: attachment`, so this kicks
 // off the file download without navigating away from this page.
-function triggerDownload() {
+function triggerDownload(p: PlatformRelease) {
     const a = document.createElement("a");
-    a.href = RELEASE.url;
-    a.download = FILENAME;
+    a.href = p.url;
+    a.download = p.filename;
     a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
@@ -24,19 +24,28 @@ function triggerDownload() {
 
 export default function DownloadStartPage() {
     const isMobile = useIsMobile();
+    const [os, setOs] = useState<OS | null>(null);
     const [started, setStarted] = useState(false);
     const fired = useRef(false);
 
+    // Resolve the target OS from ?os=… (falling back to detection) on mount.
     useEffect(() => {
-        if (fired.current) return; // guard against double-invocation
+        const param = new URLSearchParams(window.location.search).get("os");
+        setOs(osFromParam(param) ?? detectOS());
+    }, []);
+
+    // Auto-start once the OS is known.
+    useEffect(() => {
+        if (!os || fired.current) return;
         fired.current = true;
-        // Small delay so the page paints before the browser's download prompt.
         const t = setTimeout(() => {
-            triggerDownload();
+            triggerDownload(PLATFORMS[os]);
             setStarted(true);
         }, 700);
         return () => clearTimeout(t);
-    }, []);
+    }, [os]);
+
+    const rel = PLATFORMS[os ?? "windows"];
 
     return (
         <div
@@ -115,24 +124,24 @@ export default function DownloadStartPage() {
                         {started ? "다운로드를 시작했습니다" : "다운로드를 준비 중입니다…"}
                     </h1>
                     <p style={{ margin: 0, fontSize: token.font.size.fs15, color: token.color.fgMuted, lineHeight: 1.7, wordBreak: "keep-all" }}>
-                        잠시 후 <strong>{FILENAME}</strong> 다운로드가 자동으로 시작됩니다.
+                        잠시 후 <strong>{rel.filename}</strong> ({rel.label}) 다운로드가 자동으로 시작됩니다.
                         <br />
                         시작되지 않으면 아래 버튼으로 직접 받으세요.
                     </p>
                 </div>
 
                 {/* manual download */}
-                <a href={RELEASE.url} download={FILENAME} onClick={() => setStarted(true)} style={{ textDecoration: "none" }}>
+                <a href={rel.url} download={rel.filename} onClick={() => setStarted(true)} style={{ textDecoration: "none" }}>
                     <Button variant="primary" size="lg" leading={<Icon.Download size={15} />}>
                         수동으로 다운로드
                     </Button>
                 </a>
 
                 <span style={{ fontSize: token.font.size.fs12, color: token.color.fgSubtle, fontFamily: token.font.family.mono }}>
-                    {RELEASE.platform} · v{RELEASE.version}
+                    {rel.summary} · v{VERSION}
                 </span>
 
-                {/* SmartScreen reminder */}
+                {/* install reminder (signing / Gatekeeper / AppImage) */}
                 <div
                     style={{
                         display: "flex",
@@ -149,13 +158,13 @@ export default function DownloadStartPage() {
                         <Icon.Zap size={14} />
                     </span>
                     <span style={{ fontSize: token.font.size.fs12, color: token.color.fgMuted, lineHeight: 1.65, wordBreak: "keep-all" }}>
-                        설치 시 SmartScreen 경고가 뜨면 <strong>추가 정보 → 실행</strong>을 눌러 계속하세요.
+                        {rel.note.body}
                     </span>
                 </div>
 
                 {/* secondary links */}
                 <div style={{ display: "flex", gap: token.space.sp4, flexWrap: "wrap", justifyContent: "center", marginTop: token.space.sp1 }}>
-                    <a href={RELEASE.releasesPage} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+                    <a href={RELEASES_PAGE} target="_blank" rel="noopener noreferrer" style={linkStyle}>
                         모든 버전 · 릴리스 노트 →
                     </a>
                     <Link href="/download" style={linkStyle}>

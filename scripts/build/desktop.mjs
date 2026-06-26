@@ -1,7 +1,7 @@
 // Desktop static-export build for simulizer.exe.
 //
 // Produces a static export of ONLY the /workspace route (no Next.js server at
-// runtime) and stages it into ../client/resources, which simulizer.exe serves
+// runtime) and stages it into ../desktop/resources, which simulizer.exe serves
 // from an embedded localhost HTTP server.
 //
 // `output: "export"` cannot ship server code, so the build runs against a
@@ -27,7 +27,7 @@ const REPO = resolve(FRONTEND, "..");
 const STAGE = join(FRONTEND, ".desktop-build");             // under frontend → shares node_modules via turbopack root
 const STAGE_APP = join(STAGE, "src", "app");
 const STAGE_OUT = join(STAGE, "out-desktop");
-const CLIENT_RES = join(REPO, "client", "resources");
+const CLIENT_RES = join(REPO, "desktop", "resources");
 
 // Project files/dirs the build needs. node_modules is intentionally NOT copied:
 // Turbopack's root is set to frontend (next.config), so the staging project

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useMediaQuery";
@@ -7,13 +8,17 @@ import { token } from "@/components/tokens";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icons";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
-import { RELEASE, FILENAME } from "./release";
+import { PLATFORMS, PLATFORM_LIST, RELEASES_PAGE, VERSION, detectOS, type OS } from "./release";
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function DownloadPage() {
     const { theme, toggleTheme } = useTheme();
     const isMobile = useIsMobile();
+    // Default to Windows for SSR/first paint, then switch to the visitor's OS.
+    const [os, setOs] = useState<OS>("windows");
+    useEffect(() => setOs(detectOS()), []);
+    const rel = PLATFORMS[os];
 
     return (
         <div
@@ -96,8 +101,8 @@ export default function DownloadPage() {
                             letterSpacing: "0.02em",
                         }}
                     >
-                        <WindowsGlyph size={12} />
-                        Windows · Desktop · v{RELEASE.version}
+                        <OSGlyph os={os} size={12} />
+                        {rel.label} · Desktop · v{VERSION}
                     </span>
 
                     <h1
@@ -139,26 +144,67 @@ export default function DownloadPage() {
                         파일로 저장하고, <code>.sim</code> 시뮬레이션을 더블클릭으로 바로 엽니다.
                     </p>
 
+                    {/* OS selector */}
+                    <div
+                        style={{
+                            marginTop: token.space.sp7,
+                            display: "inline-flex",
+                            gap: token.space.sp1,
+                            padding: 4,
+                            borderRadius: token.radius.full,
+                            border: `1px solid ${token.color.border}`,
+                            background: token.color.bgSubtle,
+                        }}
+                    >
+                        {PLATFORM_LIST.map((p) => {
+                            const active = p.os === os;
+                            return (
+                                <button
+                                    key={p.os}
+                                    onClick={() => setOs(p.os)}
+                                    style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: token.space.sp15,
+                                        padding: `6px 14px`,
+                                        borderRadius: token.radius.full,
+                                        border: "none",
+                                        cursor: "pointer",
+                                        background: active ? token.color.surface : "transparent",
+                                        boxShadow: active ? token.shadow.sm : "none",
+                                        color: active ? token.color.fgStrong : token.color.fgMuted,
+                                        fontFamily: token.font.family.sans,
+                                        fontSize: token.font.size.fs13,
+                                        fontWeight: token.font.weight.semibold,
+                                    }}
+                                >
+                                    <OSGlyph os={p.os} size={13} />
+                                    {p.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+
                     {/* download CTA */}
                     <div
                         style={{
-                            marginTop: token.space.sp8,
+                            marginTop: token.space.sp5,
                             display: "flex",
                             flexDirection: "column",
                             alignItems: "center",
                             gap: token.space.sp3,
                         }}
                     >
-                        <Link href="/download/start" style={{ textDecoration: "none" }}>
+                        <Link href={`/download/start?os=${os}`} style={{ textDecoration: "none" }}>
                             <Button variant="primary" size="xl" leading={<Icon.Download size={16} />}>
-                                Windows용 다운로드
+                                {rel.label}용 다운로드
                             </Button>
                         </Link>
                         <span style={{ fontSize: token.font.size.fs12, color: token.color.fgSubtle, fontFamily: token.font.family.mono }}>
-                            {FILENAME} · {RELEASE.platform}
+                            {rel.filename} · {rel.summary}
                         </span>
                         <div style={{ display: "flex", gap: token.space.sp4, marginTop: token.space.sp1, flexWrap: "wrap", justifyContent: "center" }}>
-                            <a href={RELEASE.releasesPage} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+                            <a href={RELEASES_PAGE} target="_blank" rel="noopener noreferrer" style={linkStyle}>
                                 모든 버전 · 릴리스 노트 →
                             </a>
                             <Link href="/workspace" style={linkStyle}>
@@ -174,28 +220,19 @@ export default function DownloadPage() {
                     <div
                         style={{
                             display: "grid",
-                            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",
+                            gridTemplateColumns: isMobile ? "1fr" : `repeat(${rel.included.length}, 1fr)`,
                             gap: token.space.sp3,
                         }}
                     >
-                        <FeatureCard
-                            icon={<Icon.Layers size={18} />}
-                            title="Simulizer Editor"
-                            mono="simulizer.exe"
-                            desc="Block과 C++ 워크스페이스를 그대로. 프로젝트는 .simblock / .simclang 파일로 로컬에 저장됩니다."
-                        />
-                        <FeatureCard
-                            icon={<Icon.Play size={18} />}
-                            title="Simulizer Viewer"
-                            mono="simulizerv.exe"
-                            desc=".sim 시뮬레이션을 실행하고 결과를 시각화하는 가벼운 뷰어입니다."
-                        />
-                        <FeatureCard
-                            icon={<Icon.File size={18} />}
-                            title=".sim 파일 연결"
-                            mono="double-click → open"
-                            desc=".sim 더블클릭으로 바로 실행. 시작 메뉴 · 바탕화면 바로가기도 함께 등록됩니다."
-                        />
+                        {rel.included.map((it, i) => (
+                            <FeatureCard
+                                key={i}
+                                icon={it.kind === "viewer" ? <Icon.Play size={18} /> : it.kind === "editor" ? <Icon.Layers size={18} /> : <Icon.File size={18} />}
+                                title={it.title}
+                                mono={it.mono}
+                                desc={it.desc}
+                            />
+                        ))}
                     </div>
                 </section>
 
@@ -210,14 +247,13 @@ export default function DownloadPage() {
                             overflow: "hidden",
                         }}
                     >
-                        <ReqRow label="운영체제" value="Windows 10 / 11 (64-bit)" />
-                        <ReqRow label="런타임" value="Microsoft Edge WebView2 (대부분의 Windows에 기본 포함)" />
-                        <ReqRow label="디스크" value="약 200 MB" />
-                        <ReqRow label="라이선스" value="AGPL-3.0 · 무료" last />
+                        {rel.requirements.map((r, i) => (
+                            <ReqRow key={i} label={r.label} value={r.value} last={i === rel.requirements.length - 1} />
+                        ))}
                     </div>
                 </section>
 
-                {/* ── Install note (SmartScreen) ── */}
+                {/* ── Install note (signing / Gatekeeper / AppImage) ── */}
                 <section
                     style={{
                         display: "flex",
@@ -234,11 +270,11 @@ export default function DownloadPage() {
                     </span>
                     <div style={{ display: "flex", flexDirection: "column", gap: token.space.sp1 }}>
                         <span style={{ fontSize: token.font.size.fs14, fontWeight: token.font.weight.semibold, color: token.color.fgStrong }}>
-                            설치 시 “Windows의 PC 보호” 화면이 뜰 수 있습니다
+                            {rel.note.title}
                         </span>
                         <span style={{ fontSize: token.font.size.fs13, color: token.color.fgMuted, lineHeight: 1.7, wordBreak: "keep-all" }}>
-                            설치 파일에 아직 코드 서명이 적용되지 않아 SmartScreen 경고가 표시될 수 있습니다.
-                            <strong> 추가 정보 → 실행</strong>을 눌러 설치를 계속하세요. 소스는{" "}
+                            {rel.note.body}{" "}
+                            소스는{" "}
                             <a href="https://github.com/typeulli/simulizer" target="_blank" rel="noopener noreferrer" style={linkStyle}>
                                 GitHub
                             </a>
@@ -358,10 +394,34 @@ function ReqRow({ label, value, last }: { label: string; value: string; last?: b
     );
 }
 
+// ─── OS glyphs ─────────────────────────────────────────────────────────────────
+
+function OSGlyph({ os, size = 12 }: { os: OS; size?: number }) {
+    if (os === "macos") return <AppleGlyph size={size} />;
+    if (os === "linux") return <LinuxGlyph size={size} />;
+    return <WindowsGlyph size={size} />;
+}
+
 function WindowsGlyph({ size = 12 }: { size?: number }) {
     return (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
             <path d="M3 5.5 11 4.3v7.2H3V5.5Zm0 13L11 19.7v-7.1H3v5.9Zm9-14.4L21 2.8v8.7h-9V4.1Zm0 16.3 9 1.3v-8.6h-9v7.3Z" />
+        </svg>
+    );
+}
+
+function AppleGlyph({ size = 12 }: { size?: number }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M18.7 17.3c-.3.8-.5 1.2-.9 1.9-.6.9-1.4 2-2.4 2-.9 0-1.1-.6-2.3-.6s-1.5.6-2.3.6c-1 0-1.8-1-2.4-1.9-1.7-2.5-1.9-5.4-.8-7 .8-1.1 2-1.7 3.1-1.7s1.8.6 2.5.6c.7 0 1.1-.6 2.4-.6 1 0 2 .5 2.7 1.4-2.4 1.3-2 4.7.1 5.3ZM14.6 6.4c.5-.6.9-1.5.8-2.4-.8 0-1.7.5-2.3 1.2-.5.6-.9 1.5-.8 2.3.9.1 1.7-.5 2.3-1.1Z" />
+        </svg>
+    );
+}
+
+function LinuxGlyph({ size = 12 }: { size?: number }) {
+    return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M12 2c-2 0-3.2 1.6-3.2 3.8 0 1.3.1 2-.5 3-.7 1.1-2.1 2.4-2.7 4-.3.8-.2 1.5.1 1.9-.4.6-.6 1.3-.2 1.9.3.5.9.6 1.5.7.5.1 1 .3 1.6.8.7.6 1.6 1.2 2.9 1.2s2.2-.6 2.9-1.2c.6-.5 1.1-.7 1.6-.8.6-.1 1.2-.2 1.5-.7.4-.6.2-1.3-.2-1.9.3-.4.4-1.1.1-1.9-.6-1.6-2-2.9-2.7-4-.6-1-.5-1.7-.5-3C15.2 3.6 14 2 12 2Zm-1.3 4.1c.4 0 .7.4.7.9s-.3.9-.7.9-.7-.4-.7-.9.3-.9.7-.9Zm2.6 0c.4 0 .7.4.7.9s-.3.9-.7.9-.7-.4-.7-.9.3-.9.7-.9Z" />
         </svg>
     );
 }
