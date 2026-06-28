@@ -93,6 +93,13 @@ export const DOCS_NAV: DocNavGroup[] = [
         ],
     },
     {
+        title: eng("C++ Workspace"),
+        items: [
+            { slug: "cpp/config", title: eng("Project config (config.json)") },
+            { slug: "cpp/agent", title: eng("AI agent") },
+        ],
+    },
+    {
         title: eng("Examples"),
         items: [{ slug: "examples", title: eng("Gallery") }],
     },

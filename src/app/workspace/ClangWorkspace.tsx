@@ -2219,7 +2219,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 );
                             })}
                         </div>
-                        {/* LSP · AI · settings */}
+                        {/* LSP · LaTeX · settings */}
                         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3 }}>
                             <button
                                 type="button"
@@ -2238,16 +2238,6 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
                                 >
                                     <Icon.Upload size={11} /> LaTeX
-                                </button>
-                            )}
-                            {!isDesktop && (
-                                <button
-                                    type="button"
-                                    onClick={() => setRightTab("agent")}
-                                    title="AI"
-                                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "none", borderRadius: token.radius.sm, background: rightTab === "agent" ? token.color.bgSubtle : "transparent", cursor: "pointer", color: rightTab === "agent" ? token.color.fg : token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
-                                >
-                                    <Icon.Sparkle size={11} /> AI
                                 </button>
                             )}
                             <button
@@ -2396,7 +2386,13 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: debug.status === "stopped" ? token.color.warning : token.color.success, display: "inline-block" }} />
                             )}
                         </button>
-                        {/* AI moved to the floating control cluster (top-right of the editor). */}
+                        {!isDesktop && (
+                            <button onClick={() => setRightTab("agent")}
+                                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", fontSize: token.font.size.fs12, border: "none", background: "none", cursor: "pointer", color: rightTab === "agent" ? token.color.fg : token.color.fgMuted, fontWeight: 500, borderRadius: `${token.radius.sm} ${token.radius.sm} 0 0`, marginBottom: -1, borderBottom: rightTab === "agent" ? `2px solid ${token.color.accent}` : "2px solid transparent" }}
+                            >
+                                <Icon.Sparkle size={11} /> AI
+                            </button>
+                        )}
                     </div>
 
                     <div style={{ display: rightTab === "console" ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}>
