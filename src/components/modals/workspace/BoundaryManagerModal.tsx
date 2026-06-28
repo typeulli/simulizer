@@ -12,6 +12,7 @@ interface BoundaryEntry {
     name: string;
     count: number;
     offset: number;
+    include?: boolean;
 }
 
 interface BoundaryManagerModalProps {
@@ -31,6 +32,8 @@ interface BoundaryManagerModalProps {
     onFile3d: (e: React.ChangeEvent<HTMLInputElement>) => void;
     onRemove2d: (id: string) => void;
     onRemove3d: (id: string) => void;
+    onToggleInclude2d: (id: string) => void;
+    onToggleInclude3d: (id: string) => void;
 }
 
 export function BoundaryManagerModal({
@@ -50,6 +53,8 @@ export function BoundaryManagerModal({
     onFile3d,
     onRemove2d,
     onRemove3d,
+    onToggleInclude2d,
+    onToggleInclude3d,
 }: BoundaryManagerModalProps) {
     if (!open) return null;
 
@@ -98,6 +103,10 @@ export function BoundaryManagerModal({
                                 <span style={{ color: token.color.fgMuted }}> — {entry.count}개 원소</span>
                                 <span style={{ color: token.color.fgMuted, fontSize: token.font.size.fs11 }}> (0x{entry.offset.toString(16)})</span>
                             </div>
+                            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: token.font.size.fs11, color: token.color.fgMuted, cursor: "pointer" }}>
+                                <input type="checkbox" checked={!!entry.include} onChange={() => (is2d ? onToggleInclude2d(entry.id) : onToggleInclude3d(entry.id))} />
+                                프로젝트에 포함
+                            </label>
                             <Button variant="danger" size="sm" onClick={() => (is2d ? onRemove2d(entry.id) : onRemove3d(entry.id))}>삭제</Button>
                         </div>
                     ))}

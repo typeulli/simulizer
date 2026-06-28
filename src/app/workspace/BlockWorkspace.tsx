@@ -37,6 +37,7 @@ import { WorkspaceFloatingControls } from "@/components/organisms/WorkspaceFloat
 import { token } from "@/components/tokens";
 import { BlockManagerModal } from "@/components/modals/workspace/BlockManagerModal";
 import { BoundaryManagerModal } from "@/components/modals/workspace/BoundaryManagerModal";
+import { DataImportModal } from "@/components/modals/workspace/DataImportModal";
 import { ConstManagerModal } from "@/components/modals/workspace/ConstManagerModal";
 import { ErrorModal } from "@/components/modals/workspace/ErrorModal";
 import { LatexOcrModal } from "@/components/modals/workspace/LatexOcrModal";
@@ -414,11 +415,12 @@ const BD2_BASE_OFFSET = 0x80000; // 512 KB
 const BD2_ELEM_BYTES  = 7 * 8;   // 56
 
 interface Bd2ArrayEntry {
-    id:     string;
-    name:   string;
-    data:   Float64Array;
-    count:  number;
-    offset: number;
+    id:      string;
+    name:    string;
+    data:    Float64Array;
+    count:   number;
+    offset:  number;
+    include: boolean; // persist inside the project file on save
 }
 
 let _bd2Arrays: Bd2ArrayEntry[] = [];
@@ -429,14 +431,57 @@ const BD3_BASE_OFFSET = 0xC0000; // 768 KB
 const BD3_ELEM_BYTES  = 9 * 8;   // 72
 
 interface Bd3ArrayEntry {
-    id:     string;
-    name:   string;
-    data:   Float64Array;
-    count:  number;
-    offset: number;
+    id:      string;
+    name:    string;
+    data:    Float64Array;
+    count:   number;
+    offset:  number;
+    include: boolean;
 }
 
 let _bd3Arrays: Bd3ArrayEntry[] = [];
+
+// ── Imported struct arrays (Excel / tracking data) ───────────────────────────
+// Each element is a user-chosen struct; rows are serialized per the struct
+// layout (field offsets). Placed above the bd2/bd3 regions and the struct
+// shadow stack so the fixed regions never overlap.
+const SA_BASE_OFFSET = 0x200000; // 2 MB
+
+interface StructArrayEntry {
+    id:         string;
+    name:       string;
+    structName: string;
+    fields:     StructFieldSpec[];
+    elemSize:   number;
+    count:      number;
+    data:       Uint8Array;
+    offset:     number;
+    include:    boolean;
+}
+
+let _structArrays: StructArrayEntry[] = [];
+
+// ── Project persistence of imported data ─────────────────────────────────────
+// Boundary (bd2/bd3) and Excel (struct) arrays are normally ephemeral. When an
+// entry's `include` flag is set, its bytes are embedded (base64) in the saved
+// project under a `{ __sim, blockly, data }` wrapper. On the web the whole
+// project file is capped (localStorage-class limit); desktop is unlimited.
+const MAX_WEB_PROJECT_BYTES = 8 * 1024 * 1024; // 8 MB
+
+function bytesToBase64(u8: Uint8Array): string {
+    let s = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < u8.length; i += chunk) {
+        s += String.fromCharCode(...u8.subarray(i, i + chunk));
+    }
+    return btoa(s);
+}
+function base64ToBytes(b64: string): Uint8Array {
+    const s = atob(b64);
+    const u8 = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return u8;
+}
 
 const displayType = (t: string) => t === "i32" ? "int" : t === "f64" ? "float" : t;
 
@@ -649,6 +694,76 @@ function registerEmptyValueBlock() {
             this.setOutput(true, _loadingWorkspace ? null : emptyValueOutputCheck(this.getFieldValue("TYPE") ?? "i32"));
             this.setColour(STRUCT_COLOUR);
             this.setTooltip(cf?.empty_value_tooltip ?? "default/empty value of the selected type");
+        },
+    };
+}
+
+// ── Imported struct-array blocks (flow_for_structarr / structarr_get) ────────
+// Static block types whose ARRAY/FIELD dropdowns read `_structArrays` live, so
+// one registration covers every imported array (like struct field dropdowns
+// read `_structSpecs`).
+function structArrayNameOptions(): [string, string][] {
+    return _structArrays.length
+        ? _structArrays.map(e => [e.name, e.name] as [string, string])
+        : [["—", ""]];
+}
+function structArrayFieldType(arrName: string | undefined, field: string | undefined): "i32" | "f64" | null {
+    const entry = _structArrays.find(e => e.name === arrName);
+    const fld = entry?.fields.find(f => f.name === field);
+    return fld ? fld.type : null;
+}
+
+let _structArrayBlocksRegistered = false;
+function registerStructArrayBlocks() {
+    if (_structArrayBlocksRegistered) return;
+    _structArrayBlocksRegistered = true;
+
+    // structarr_get (expr): `data . field` — output check tracks the field type.
+    Blockly.Blocks["structarr_get"] = {
+        init(this: Blockly.Block) {
+            const block = this;
+            const fieldOptions = function (this: Blockly.FieldDropdown): [string, string][] {
+                const arrName = this.getSourceBlock()?.getFieldValue("ARRAY") as string | undefined;
+                const entry = _structArrays.find(e => e.name === arrName);
+                const fs = entry?.fields ?? [];
+                return fs.length ? fs.map(f => [f.name, f.name] as [string, string]) : [["—", ""]];
+            };
+            const arrDd = new Blockly.FieldDropdown(structArrayNameOptions);
+            const fldDd = new Blockly.FieldDropdown(fieldOptions);
+            arrDd.setValidator(function () {
+                setTimeout(() => {
+                    const ty = structArrayFieldType(block.getFieldValue("ARRAY"), block.getFieldValue("FIELD"));
+                    block.setOutput(true, _loadingWorkspace ? null : (ty ?? "f64"));
+                }, 0);
+                return undefined;
+            });
+            fldDd.setValidator(function (newValue: string) {
+                const ty = structArrayFieldType(block.getFieldValue("ARRAY"), newValue);
+                block.setOutput(true, _loadingWorkspace ? null : (ty ?? "f64"));
+                return newValue;
+            });
+            this.appendDummyInput()
+                .appendField(arrDd, "ARRAY")
+                .appendField(".")
+                .appendField(fldDd, "FIELD");
+            this.setOutput(true, _loadingWorkspace ? null : (structArrayFieldType(this.getFieldValue("ARRAY"), this.getFieldValue("FIELD")) ?? "f64"));
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip("imported struct-array field");
+        },
+    };
+
+    // flow_for_structarr (stmt): iterate an imported struct array, binding each
+    // field of the current element to `__sa_<array>_<field>` per iteration.
+    Blockly.Blocks["flow_for_structarr"] = {
+        init(this: Blockly.Block) {
+            this.appendDummyInput()
+                .appendField("for each in")
+                .appendField(new Blockly.FieldDropdown(structArrayNameOptions), "ARRAY");
+            this.appendStatementInput("BODY").appendField("do");
+            this.setPreviousStatement(true);
+            this.setNextStatement(true);
+            this.setColour(STRUCT_COLOUR);
+            this.setTooltip("iterate an imported struct array");
         },
     };
 }
@@ -878,6 +993,7 @@ registerFuncDefBlock();
 registerStructDefBlock();
 registerFieldBlock();
 registerEmptyValueBlock();
+registerStructArrayBlocks();
 
 /** Build custom function definition block → FuncDef */
 function buildCustomFunc(
@@ -1169,7 +1285,19 @@ function blockToExpr(block: Blockly.Block | null, ctx: CompileCtx): SimulizerExp
             if (!cond || !onT || !onF) return null;
             return new simulizer.Select(coerce(cond, simulizer.i32), onT, onF);
         }
-        
+
+        // Imported struct-array field read
+        case "structarr_get": {
+            const arrName = block.getFieldValue("ARRAY") as string;
+            const field   = block.getFieldValue("FIELD") as string;
+            const info = ctx.structArrays?.get(arrName);
+            if (!info) return null;
+            const fld = info.fields.find(f => f.name === field);
+            if (!fld) return null;
+            const ty = fld.type === "i32" ? simulizer.i32 : simulizer.f64;
+            return ctx.getOrCreateLocal(ctx, `__sa_${arrName}_${field}`, ty);
+        }
+
 
         default: {
             // Struct field read (get) / whole-struct value (ref)
@@ -1226,6 +1354,61 @@ function stmtBlockToExpr(block: Blockly.Block, ctx: CompileCtx): SimulizerExpr |
             const val = blockToExpr(block.getInputTargetBlock("VALUE"), ctx);
             if (!val) return null;
             return makeReturn(ctx, coerce(val, simulizer.i32), simulizer.i32);
+        }
+
+        // Imported struct-array iteration (mirror of flow_for_bd2)
+        case "flow_for_structarr": {
+            const arrName = block.getFieldValue("ARRAY") as string;
+            const info = ctx.structArrays?.get(arrName);
+            if (!info) {
+                console.warn(`[flow_for_structarr] struct array '${arrName}' not found.`);
+                return null;
+            }
+            const { offset: baseOffset, count, fields, elemSize } = info;
+
+            const uid           = Math.random().toString(36).slice(2, 7);
+            const breakLabel    = `brk_${uid}`;
+            const continueLabel = `cnt_${uid}`;
+
+            const counterLocal = ctx.getOrCreateLocal(ctx, `__sa_i_${uid}`,   simulizer.i32);
+            const ptrLocal     = ctx.getOrCreateLocal(ctx, `__sa_ptr_${uid}`, simulizer.i32);
+
+            const initCounter = new simulizer.LocalSet(counterLocal, simulizer.i32c(0));
+            const condCheck = new simulizer.BrIf(
+                breakLabel,
+                simulizer.i32ops.ge_s(counterLocal, simulizer.i32c(count)),
+            );
+            const computePtr = new simulizer.LocalSet(
+                ptrLocal,
+                simulizer.i32ops.add(
+                    simulizer.i32c(baseOffset),
+                    simulizer.i32ops.mul(counterLocal, simulizer.i32c(elemSize)),
+                ),
+            );
+            const loadExprs = fields.map(f => {
+                const ty = f.type === "i32" ? simulizer.i32 : simulizer.f64;
+                const fieldLocal = ctx.getOrCreateLocal(ctx, `__sa_${arrName}_${f.name}`, ty);
+                const load = new simulizer.Load(ty, ptrLocal, { memArg: { offset: f.offset } });
+                return new simulizer.LocalSet(fieldLocal, load);
+            });
+            const incrCounter = new simulizer.LocalSet(
+                counterLocal,
+                simulizer.i32ops.add(counterLocal, simulizer.i32c(1)),
+            );
+
+            ctx.breakStack.push(breakLabel);
+            const bodyExprs = stmtChainToExprs(block.getInputTargetBlock("BODY"), ctx);
+            ctx.breakStack.pop();
+
+            const loop = new simulizer.Loop(continueLabel, [
+                condCheck,
+                computePtr,
+                ...loadExprs,
+                ...bodyExprs,
+                incrCounter,
+                new simulizer.Br(continueLabel),
+            ]);
+            return new simulizer.Block(breakLabel, [initCounter, loop]);
         }
 
 
@@ -1334,7 +1517,10 @@ function buildFuncDef(
     // Reserve the struct shadow-stack region (grows down from STACK_TOP) whenever
     // any struct is defined, so frames never run past the allocated memory.
     const stackEnd = _structSpecs.length > 0 ? STRUCT_STACK_TOP : 0;
-    const maxEnd = Math.max(maxBd2End, maxBd3End, stackEnd);
+    const maxSaEnd = _structArrays.reduce(
+        (max, sa) => Math.max(max, sa.offset + sa.count * sa.elemSize), 0,
+    );
+    const maxEnd = Math.max(maxBd2End, maxBd3End, maxSaEnd, stackEnd);
     const pagesNeeded = maxEnd > 0 ? Math.ceil(maxEnd / 65536) + 1 : 1;
     module.set_memory(pagesNeeded);
 
@@ -1343,6 +1529,11 @@ function buildFuncDef(
     );
     const bd3Map: Map<string, { offset: number; count: number }> = new Map(
         _bd3Arrays.map(bd3 => [bd3.name, { offset: bd3.offset, count: bd3.count }]),
+    );
+    const structArrayMap = new Map(
+        _structArrays.map(sa => [sa.name, {
+            offset: sa.offset, count: sa.count, elemSize: sa.elemSize, fields: sa.fields,
+        }]),
     );
 
     const ctx: CompileCtx = {
@@ -1353,6 +1544,7 @@ function buildFuncDef(
         nextArrayOffset: 0x1000,
         bd2Arrays:       bd2Map,
         bd3Arrays:       bd3Map,
+        structArrays:    structArrayMap,
         breakStack:      [],
         blockToExpr,
         stmtBlockToExpr,
@@ -1419,6 +1611,10 @@ function buildBaseToolboxXml(p: langpack): string {
         <block type="struct_field"></block>
         <block type="empty_value"></block>
         <!--STRUCT_BLOCKS-->
+        <label text="Data Import"></label>
+        <button text="Import Excel" callbackKey="OPEN_DATA_IMPORT"></button>
+        <block type="flow_for_structarr"></block>
+        <block type="structarr_get"></block>
     </category>
     <category name="${tb.func}" colour="${290}">
     <sep gap="16"></sep>
@@ -1566,6 +1762,95 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const bd3ArraysRef                = useRef<Bd3ArrayEntry[]>([]);
     const [newBd3Name, setNewBd3Name] = useState("boundary");
     const bd3FileInputRef             = useRef<HTMLInputElement>(null);
+
+    const [structArrays, setStructArrays] = useState<StructArrayEntry[]>([]);
+    const structArraysRef                 = useRef<StructArrayEntry[]>([]);
+    const [showDataImport, setShowDataImport] = useState(false);
+
+    // ── Project persistence of imported boundary/struct arrays ───────────────
+    type ProjectData = {
+        bd2?: { name: string; count: number; b64: string }[];
+        bd3?: { name: string; count: number; b64: string }[];
+        sa?:  { name: string; structName: string; fields: StructFieldSpec[]; elemSize: number; count: number; b64: string }[];
+    };
+
+    const resetImportedData = useCallback(() => {
+        bd2ArraysRef.current = [];     setBd2Arrays([]);
+        bd3ArraysRef.current = [];     setBd3Arrays([]);
+        structArraysRef.current = [];  setStructArrays([]);
+    }, []);
+
+    const restoreProjectData = useCallback((data: ProjectData) => {
+        let off2 = BD2_BASE_OFFSET;
+        const bd2 = (data.bd2 ?? []).map((d, i): Bd2ArrayEntry => {
+            const bytes = base64ToBytes(d.b64);
+            const arr = new Float64Array(bytes.buffer, 0, Math.floor(bytes.byteLength / 8));
+            const e = { id: `bd2_r${Date.now()}_${i}`, name: d.name, data: arr, count: d.count, offset: off2, include: true };
+            off2 += d.count * BD2_ELEM_BYTES;
+            return e;
+        });
+        let off3 = BD3_BASE_OFFSET;
+        const bd3 = (data.bd3 ?? []).map((d, i): Bd3ArrayEntry => {
+            const bytes = base64ToBytes(d.b64);
+            const arr = new Float64Array(bytes.buffer, 0, Math.floor(bytes.byteLength / 8));
+            const e = { id: `bd3_r${Date.now()}_${i}`, name: d.name, data: arr, count: d.count, offset: off3, include: true };
+            off3 += d.count * BD3_ELEM_BYTES;
+            return e;
+        });
+        let offS = SA_BASE_OFFSET;
+        const sa = (data.sa ?? []).map((d, i): StructArrayEntry => {
+            const e = { id: `sa_r${Date.now()}_${i}`, name: d.name, structName: d.structName, fields: d.fields, elemSize: d.elemSize, count: d.count, data: base64ToBytes(d.b64), offset: offS, include: true };
+            offS += d.count * d.elemSize;
+            return e;
+        });
+        bd2ArraysRef.current = bd2;    setBd2Arrays(bd2);
+        bd3ArraysRef.current = bd3;    setBd3Arrays(bd3);
+        structArraysRef.current = sa;  setStructArrays(sa);
+    }, []);
+
+    /** Serialize the canvas + any `include`-flagged imported arrays. Returns the
+     *  raw Blockly JSON when no data is opted in (backward compatible). */
+    const serializeProjectContent = useCallback((ws: Blockly.Workspace): string => {
+        const state = Blockly.serialization.workspaces.save(ws);
+        const bytesOf = (a: Float64Array | Uint8Array) =>
+            bytesToBase64(new Uint8Array(a.buffer, a.byteOffset, a.byteLength));
+        const bd2 = bd2ArraysRef.current.filter(e => e.include).map(e => ({ name: e.name, count: e.count, b64: bytesOf(e.data) }));
+        const bd3 = bd3ArraysRef.current.filter(e => e.include).map(e => ({ name: e.name, count: e.count, b64: bytesOf(e.data) }));
+        const sa  = structArraysRef.current.filter(e => e.include).map(e => ({ name: e.name, structName: e.structName, fields: e.fields, elemSize: e.elemSize, count: e.count, b64: bytesOf(e.data) }));
+        if (bd2.length || bd3.length || sa.length) {
+            return JSON.stringify({ __sim: 1, blockly: state, data: { bd2, bd3, sa } });
+        }
+        return JSON.stringify(state);
+    }, []);
+
+    /** Load project content (raw or `{__sim,blockly,data}`). Restores included
+     *  arrays from the wrapper; leaves the data refs untouched for raw content
+     *  (so viewport re-inject snapshots preserve in-memory imports). Throws on
+     *  invalid JSON so callers fall back to the initial workspace. */
+    const applyProjectContent = useCallback((ws: Blockly.Workspace, content: string) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const parsed: any = JSON.parse(content);
+        if (parsed && typeof parsed === "object" && parsed.__sim) {
+            restoreProjectData(parsed.data as ProjectData);
+            loadWorkspaceState(ws, parsed.blockly);
+        } else {
+            loadWorkspaceState(ws, parsed);
+        }
+    }, [restoreProjectData]);
+
+    const markUnsavedIfOwner = useCallback(() => { if (isOwnerRef.current) setSaveStatus("unsaved"); }, []);
+    const handleToggleBd2Include = useCallback((id: string) => {
+        setBd2Arrays(prev => { const next = prev.map(e => e.id === id ? { ...e, include: !e.include } : e); bd2ArraysRef.current = next; return next; });
+        markUnsavedIfOwner();
+    }, [markUnsavedIfOwner]);
+    const handleToggleBd3Include = useCallback((id: string) => {
+        setBd3Arrays(prev => { const next = prev.map(e => e.id === id ? { ...e, include: !e.include } : e); bd3ArraysRef.current = next; return next; });
+        markUnsavedIfOwner();
+    }, [markUnsavedIfOwner]);
+    const handleToggleSaInclude = useCallback((id: string) => {
+        setStructArrays(prev => { const next = prev.map(e => e.id === id ? { ...e, include: !e.include } : e); structArraysRef.current = next; return next; });
+        markUnsavedIfOwner();
+    }, [markUnsavedIfOwner]);
 
     const [showBdMgr, setShowBdMgr]   = useState(false);
     const [bdMgrTab,  setBdMgrTab]    = useState<"2d" | "3d">("2d");
@@ -1885,6 +2170,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved" | "error">("saved");
     const wsReadyRef                = useRef(false);
     const pendingContentRef         = useRef<string | null>(null);
+    const pendingResetDataRef       = useRef(false); // reset imported data when the pending content is a file load (not a re-inject)
     const fileLoadCompletedRef      = useRef(false);
     const fileIdRef                 = useRef<string | null>(null);
     const autoSaveTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2189,6 +2475,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             ws.registerButtonCallback("OPEN_BD_MGR",     () => { setBdMgrTab("2d"); setShowBdMgr(true); });
             ws.registerButtonCallback("OPEN_CONST_MGR",  () => setShowConstMgr(true));
             ws.registerButtonCallback("OPEN_LATEX_OCR",  () => { setOcrLatex(""); setOcrImageUrl(null); setShowLatexOcr(true); });
+            ws.registerButtonCallback("OPEN_DATA_IMPORT", () => setShowDataImport(true));
         }
         
         const refreshInfo = () => {
@@ -2263,7 +2550,12 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             autoSaveTimerRef.current = setTimeout(async () => {
                 const id = fileIdRef.current;
                 if (!id) return;
-                const content = JSON.stringify(Blockly.serialization.workspaces.save(ws));
+                const content = serializeProjectContent(ws);
+                if (!isDesktop && new TextEncoder().encode(content).length > MAX_WEB_PROJECT_BYTES) {
+                    setSaveStatus("error");
+                    addLog("error", `프로젝트가 ${MAX_WEB_PROJECT_BYTES / 1024 / 1024}MB를 초과해 자동 저장하지 못했습니다. 포함된 boundary/Excel 데이터의 '프로젝트에 포함'을 해제하세요.`);
+                    return;
+                }
                 setBlockData(content);
                 setSaveStatus("saving");
                 try {
@@ -2469,8 +2761,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         if (fileLoadCompletedRef.current) {
             if (pendingContentRef.current) {
                 try {
-                    const state = JSON.parse(pendingContentRef.current);
-                    loadWorkspaceState(ws, state);
+                    if (pendingResetDataRef.current) resetImportedData();
+                    applyProjectContent(ws, pendingContentRef.current);
                 } catch {
                     Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
                 }
@@ -2511,6 +2803,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             if (fileLoadCompletedRef.current && ws.getAllBlocks(false).length > 0) {
                 try {
                     const snapshot = Blockly.serialization.workspaces.save(ws);
+                    pendingResetDataRef.current = false;
                     pendingContentRef.current = JSON.stringify(snapshot);
                 } catch {
                     // ignore; fall back to INITIAL_WORKSPACE_XML on next inject
@@ -2711,6 +3004,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         _customFuncSpecs = funcSpecs;
         _bd2Arrays = bd2ArraysRef.current;
         _bd3Arrays = bd3ArraysRef.current;
+        _structArrays = structArraysRef.current;
 
         const mainBlock = ws.getAllBlocks(false).find((b) => b.type === "wasm_func_main");
         if (!mainBlock) {
@@ -2797,6 +3091,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         }
         for (const bd3 of bd3ArraysRef.current) {
             mod.add_data(bd3.offset, new Uint8Array(bd3.data.buffer, bd3.data.byteOffset, bd3.data.byteLength));
+        }
+        for (const sa of structArraysRef.current) {
+            mod.add_data(sa.offset, new Uint8Array(sa.data.buffer, sa.data.byteOffset, sa.data.byteLength));
         }
 
         const watFull = mod.compile();
@@ -3114,7 +3411,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 BD2_BASE_OFFSET,
             );
             const offset = prevEnd;
-            const entry: Bd2ArrayEntry = { id: `bd2_${Date.now()}`, name, data, count, offset };
+            const entry: Bd2ArrayEntry = { id: `bd2_${Date.now()}`, name, data, count, offset, include: false };
             setBd2Arrays(prev => { const next = [...prev, entry]; bd2ArraysRef.current = next; return next; });
             setNewBd2Name("boundary");
         };
@@ -3124,6 +3421,50 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     const handleRemoveBd2 = useCallback((id: string) => {
         setBd2Arrays(prev => { const next = prev.filter(b => b.id !== id); bd2ArraysRef.current = next; return next; });
+    }, []);
+
+    const handleImportStructArray = useCallback((result: {
+        name: string;
+        fields: { name: string; type: "i32" | "f64" }[];
+        columnMap: string[];
+        rows: Record<string, unknown>[];
+    }) => {
+        const name = result.name.trim();
+        if (!name) { alert(pack.workspace.alerts.name_required); return; }
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) { alert(pack.workspace.alerts.name_charset); return; }
+        if (structArraysRef.current.some(s => s.name === name)) { alert(pack.workspace.alerts.name_in_use.replace("{0}", name)); return; }
+
+        const { fields, size } = computeStructLayout(result.fields);
+        const count = result.rows.length;
+        const buf = new ArrayBuffer(count * size);
+        const dv  = new DataView(buf);
+        for (let r = 0; r < count; r++) {
+            const row = result.rows[r];
+            fields.forEach((f, i) => {
+                const col = result.columnMap[i];
+                const raw = col != null ? row[col] : undefined;
+                const num = typeof raw === "number" ? raw : parseFloat(String(raw));
+                const v   = Number.isFinite(num) ? num : 0;
+                const base = r * size + f.offset;
+                if (f.type === "i32") dv.setInt32(base, Math.trunc(v), true);
+                else dv.setFloat64(base, v, true);
+            });
+        }
+
+        const offset = structArraysRef.current.reduce(
+            (max, sa) => Math.max(max, sa.offset + sa.count * sa.elemSize),
+            SA_BASE_OFFSET,
+        );
+        const entry: StructArrayEntry = {
+            id: `sa_${Date.now()}`, name, structName: name,
+            fields, elemSize: size, count, data: new Uint8Array(buf), offset, include: false,
+        };
+        setStructArrays(prev => { const next = [...prev, entry]; structArraysRef.current = next; return next; });
+        setShowDataImport(false);
+    }, [pack]);
+
+    const handleRemoveStructArray = useCallback((id: string) => {
+        setStructArrays(prev => { const next = prev.filter(s => s.id !== id); structArraysRef.current = next; return next; });
     }, []);
 
     const handleBd3FileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3179,7 +3520,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 (max, bd3) => Math.max(max, bd3.offset + bd3.count * BD3_ELEM_BYTES),
                 BD3_BASE_OFFSET,
             );
-            const entry: Bd3ArrayEntry = { id: `bd3_${Date.now()}`, name, data, count, offset: prevEnd };
+            const entry: Bd3ArrayEntry = { id: `bd3_${Date.now()}`, name, data, count, offset: prevEnd, include: false };
             setBd3Arrays(prev => { const next = [...prev, entry]; bd3ArraysRef.current = next; return next; });
             setNewBd3Name("boundary");
         };
@@ -3202,12 +3543,19 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
 
     const handleSaveToServer = useCallback(async () => {
         if (!fileId) return;
+        const ws = workspaceRef.current;
+        const content = ws ? serializeProjectContent(ws) : blockData;
+        if (!isDesktop && new TextEncoder().encode(content).length > MAX_WEB_PROJECT_BYTES) {
+            alert(`프로젝트가 ${MAX_WEB_PROJECT_BYTES / 1024 / 1024}MB를 초과해 저장할 수 없습니다.\n포함된 boundary/Excel 데이터의 '프로젝트에 포함'을 해제하거나 데이터를 줄이세요.`);
+            setSaveStatus("error");
+            return;
+        }
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
         setSaveStatus("saving");
         try {
-            await saveFile(fileId, blockData);
+            await saveFile(fileId, content);
+            setBlockData(content);
             setSaveStatus("saved");
-            const ws = workspaceRef.current;
             if (ws) {
                 generateThumbnailBlob(ws).then(blob => { if (blob) uploadThumbnail(fileId, blob).catch(() => {}); });
             }
@@ -3215,7 +3563,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             addLog("error", pack.workspace.logs.file_save_failed);
             setSaveStatus("error");
         }
-    }, [fileId, blockData, addLog]);
+    }, [fileId, blockData, addLog, serializeProjectContent]);
 
     const handleRenameFile = useCallback(async () => {
         if (!fileId) return;
@@ -3272,7 +3620,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     ws.clear();
                     if (content) {
                         try {
-                            loadWorkspaceState(ws, JSON.parse(content));
+                            resetImportedData(); applyProjectContent(ws, content);
                         } catch {
                             Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
                         }
@@ -3281,7 +3629,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     }
                 }
             } else {
-                pendingContentRef.current = content;
+                pendingResetDataRef.current = true; pendingContentRef.current = content;
             }
             return;
         }
@@ -3313,7 +3661,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                         if (ws) {
                             ws.clear();
                             try {
-                                loadWorkspaceState(ws, JSON.parse(content));
+                                resetImportedData(); applyProjectContent(ws, content);
                             } catch {
                                 Blockly.Xml.domToWorkspace(
                                     Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML),
@@ -3322,7 +3670,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                             }
                         }
                     } else {
-                        pendingContentRef.current = content;
+                        pendingResetDataRef.current = true; pendingContentRef.current = content;
                     }
                 })();
                 return;
@@ -3359,7 +3707,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     ws.clear();
                     if (content) {
                         try {
-                            loadWorkspaceState(ws, JSON.parse(content));
+                            resetImportedData(); applyProjectContent(ws, content);
                         } catch {
                             Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(INITIAL_WORKSPACE_XML), ws);
                         }
@@ -3368,7 +3716,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                     }
                 }
             } else {
-                pendingContentRef.current = content;
+                pendingResetDataRef.current = true; pendingContentRef.current = content;
             }
         })();
     }, [initialFile, initialOwner, searchParams, router]);
@@ -4170,6 +4518,18 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onFile3d={handleBd3FileInput}
                 onRemove2d={handleRemoveBd2}
                 onRemove3d={handleRemoveBd3}
+                onToggleInclude2d={handleToggleBd2Include}
+                onToggleInclude3d={handleToggleBd3Include}
+            />}
+
+            {!isMobile && <DataImportModal
+                open={showDataImport}
+                structs={customStructs.map(s => ({ name: s.name, fields: s.fields.map(f => ({ name: f.name, type: f.type })) }))}
+                existing={structArrays.map(s => ({ id: s.id, name: s.name, count: s.count, include: s.include }))}
+                onRemove={handleRemoveStructArray}
+                onToggleInclude={handleToggleSaInclude}
+                onClose={() => setShowDataImport(false)}
+                onApply={handleImportStructArray}
             />}
 
             <ErrorModal

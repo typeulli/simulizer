@@ -140,6 +140,12 @@ export interface CompileCtx {
     }>;
     bd2Arrays?:       Map<string, { offset: number; count: number }>;
     bd3Arrays?:       Map<string, { offset: number; count: number }>;
+    structArrays?:    Map<string, {
+        offset:   number;
+        count:    number;
+        elemSize: number;
+        fields:   { name: string; type: "i32" | "f64"; offset: number }[];
+    }>;
     // Shadow stack for structs: when a function allocates/copies structs it gets
     // a per-invocation frame (so recursion works and structs pass by value).
     structStack?: {
