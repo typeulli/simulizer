@@ -33,7 +33,6 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { BuildSnackbar } from "@/components/molecules/BuildSnackbar";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { WorkspaceTitleBar } from "@/components/organisms/WorkspaceTitleBar";
-import { WorkspaceFloatingControls } from "@/components/organisms/WorkspaceFloatingControls";
 import { token } from "@/components/tokens";
 import { BlockManagerModal } from "@/components/modals/workspace/BlockManagerModal";
 import { BoundaryManagerModal } from "@/components/modals/workspace/BoundaryManagerModal";
@@ -4036,12 +4035,11 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 340px", flex:1, minHeight:0 }}>
 
                 {/* Canvas: Blockly (toolbox 포함) */}
-                <main style={{ display: isMobile && mobileTab !== "blocks" ? "none" : "flex", flexDirection:"column", minWidth:0, background:token.color.bgCanvas, overflow:"hidden", position:"relative" }}>
+                <main style={{ display: isMobile && mobileTab !== "blocks" ? "none" : "flex", flexDirection:"column", minWidth:0, background:token.color.bgCanvas, overflow:"hidden" }}>
 
-                    {/* Auxiliary controls — floating top-right cluster (view modes + tools) */}
-                    {!isMobile && (
-                    <WorkspaceFloatingControls>
-                        {/* block / WAT / AI view toggle */}
+                    {/* Canvas toolbar */}
+                    <div style={{ display: isMobile ? "none" : "flex", alignItems:"center", padding:"5px 10px", borderBottom:`1px solid ${token.color.border}`, background:token.color.bg, flexShrink:0 }}>
+                        {/* Left: block / WAT toggle */}
                         <div style={{ display:"flex", gap:2 }}>
                             {([
                                 { id: "blocks" as const, label: <><Icon.Layers size={11} /> {pack.workspace.ui.canvas_tab_blocks}</> },
@@ -4055,9 +4053,8 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 </button>
                             ))}
                         </div>
-                        <div style={{ width:1, height:18, background:token.color.border, margin:"0 2px" }} />
-                        {/* tools dropdown */}
-                        <div style={{ position:"relative" }} ref={toolsMenuRef}>
+                        {/* Right: tools dropdown */}
+                        <div style={{ marginLeft:"auto", position:"relative" }} ref={toolsMenuRef}>
                             <button onClick={() => setShowToolsMenu(o => !o)}
                                 style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"4px 9px", border:`1px solid ${showToolsMenu ? token.color.fg : token.color.border}`, borderRadius:token.radius.sm, background: showToolsMenu ? token.color.bgSubtle : "none", cursor:"pointer", color: showToolsMenu ? token.color.fg : token.color.fgMuted, fontSize:token.font.size.fs11, fontWeight:500, transition:"all 0.1s" }}
                                 onMouseEnter={e => { if (!showToolsMenu) { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; } }}
@@ -4097,8 +4094,7 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 </div>
                             )}
                         </div>
-                    </WorkspaceFloatingControls>
-                    )}
+                    </div>
 
                     {/* Canvas area */}
                     <div style={{ flex:1, position:"relative", overflow:"hidden", display: canvasTab === "blocks" ? undefined : "none" }}>
