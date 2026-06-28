@@ -53,6 +53,13 @@ const nextConfig: NextConfig = {
       fs: { browser: "./src/lib/empty.ts" },
       path: { browser: "./src/lib/empty.ts" },
       crypto: { browser: "./src/lib/empty.ts" },
+      // y-monaco statically imports the standalone `monaco-editor` build, which
+      // would bundle a second copy of monaco (and its quick-input CSS, which
+      // mis-positions the workbench command palette). Redirect it to the same
+      // @codingame/monaco-vscode-editor-api the workspace already uses so monaco
+      // is deduped to a single instance.
+      "monaco-editor": "@codingame/monaco-vscode-editor-api",
+      "monaco-editor/esm/vs/editor/editor.api.js": "@codingame/monaco-vscode-editor-api",
     },
   },
   webpack: (config, { isServer }) => {
@@ -64,6 +71,12 @@ const nextConfig: NextConfig = {
         crypto: false,
       };
     }
+    // Same monaco dedupe as the Turbopack alias above (covers `next build`).
+    config.resolve.alias = {
+      ...(config.resolve.alias ?? {}),
+      "monaco-editor$": "@codingame/monaco-vscode-editor-api",
+      "monaco-editor/esm/vs/editor/editor.api.js": "@codingame/monaco-vscode-editor-api",
+    };
     return config;
   },
 };
