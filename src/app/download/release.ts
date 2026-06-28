@@ -16,7 +16,7 @@ export type OS = "windows" | "linux" | "macos";
 
 const REPO = "https://github.com/typeulli/simulizer-desktop";
 
-export const VERSION = "1.0.0"; // display only
+export const VERSION = "1.0.2"; // display only
 export const RELEASES_PAGE = `${REPO}/releases`;
 
 export interface Req {
