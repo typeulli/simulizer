@@ -59,7 +59,6 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { BuildSnackbar } from "@/components/molecules/BuildSnackbar";
 import { TopbarBrand } from "@/components/organisms/TopbarBrand";
 import { WorkspaceTitleBar } from "@/components/organisms/WorkspaceTitleBar";
-import { WorkspaceFloatingControls } from "@/components/organisms/WorkspaceFloatingControls";
 import { token } from "@/components/tokens";
 import { duplicateFile, renameFile, saveFile, setFileVisibility, isDesktop, type FileDetail, type FileOut } from "@/lib/file";
 import { CppManagerModal } from "@/components/modals/workspace/CppManagerModal";
@@ -2034,42 +2033,9 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 340px", flex: 1, minHeight: 0 }}>
 
                 {/* Editor area */}
-                <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden", position: "relative" }}>
-                    {/* Auxiliary controls — floating top-right cluster (LSP · AI · settings) */}
-                    {!isMobile && (
-                    <WorkspaceFloatingControls>
-                        <button
-                            type="button"
-                            onClick={handleLspCommand}
-                            title={lspConnected ? tx("clang.lsp_status_connected") : tx("clang.lsp_status_disconnected")}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}
-                        >
-                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
-                            <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : tx("clang.lsp_disconnected_short")}
-                        </button>
-                        {!isDesktop && (
-                            <button
-                                type="button"
-                                onClick={() => setRightTab("agent")}
-                                title="AI"
-                                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "none", borderRadius: token.radius.sm, background: rightTab === "agent" ? token.color.bgSubtle : "transparent", cursor: "pointer", color: rightTab === "agent" ? token.color.fg : token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
-                            >
-                                <Icon.Sparkle size={11} /> AI
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            onClick={() => setSettingsOpen(true)}
-                            title={tx("clang.build_settings_title")}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
-                        >
-                            <Icon.Settings size={12} />
-                        </button>
-                    </WorkspaceFloatingControls>
-                    )}
-                    {/* Editor toolbar (tab strip + tree toggle). Right padding reserves
-                        room for the floating control cluster so tabs don't slide under it. */}
-                    <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 190px 5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0, gap: 6 }}>
+                <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
+                    {/* Editor toolbar (tree toggle + tab strip, with LSP · AI · settings on the right) */}
+                    <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0, gap: 6 }}>
                         <button
                             type="button"
                             onClick={handleToggleTree}
@@ -2147,6 +2113,36 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                     </div>
                                 );
                             })}
+                        </div>
+                        {/* LSP · AI · settings */}
+                        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 3 }}>
+                            <button
+                                type="button"
+                                onClick={handleLspCommand}
+                                title={lspConnected ? tx("clang.lsp_status_connected") : tx("clang.lsp_status_disconnected")}
+                                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgSubtle, fontSize: token.font.size.fs10, fontFamily: token.font.family.mono }}
+                            >
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
+                                <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : tx("clang.lsp_disconnected_short")}
+                            </button>
+                            {!isDesktop && (
+                                <button
+                                    type="button"
+                                    onClick={() => setRightTab("agent")}
+                                    title="AI"
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "none", borderRadius: token.radius.sm, background: rightTab === "agent" ? token.color.bgSubtle : "transparent", cursor: "pointer", color: rightTab === "agent" ? token.color.fg : token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
+                                >
+                                    <Icon.Sparkle size={11} /> AI
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => setSettingsOpen(true)}
+                                title={tx("clang.build_settings_title")}
+                                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
+                            >
+                                <Icon.Settings size={12} />
+                            </button>
                         </div>
                     </div>
 

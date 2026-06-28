@@ -20,8 +20,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+
+      - name: Upgrade npm
+        run: npm install -g npm@latest
 
       - name: Setup Emscripten
         uses: emscripten-core/setup-emsdk@v14
