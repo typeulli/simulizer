@@ -59,6 +59,36 @@ function coerce(block: BlockJSON, from: BType, to: BType): BlockJSON {
     return block;
 }
 
+// ─── Tensor field operators (∇) ───────────────────────────────────────────────
+// \grad{f} / \curl{F} / \lapl{f} → tensor field-op blocks whose TENSOR input is a
+// tensor reference (tensor_get by name, or a nested field op).
+const FIELD_OP_BLOCKS: Record<string, string> = {
+    '\\grad': 'tensor_grad',
+    '\\curl': 'tensor_curl',
+    '\\lapl': 'tensor_lapl',
+    '\\laplacian': 'tensor_lapl',
+};
+
+/** Build the TENSOR-input block for a field op: a bare field name → tensor_get,
+ *  a nested field op → its block. */
+function buildTensorIdBlock(node: ASTNode): BlockJSON | null {
+    if (node.type === 'expression' && node.children?.length === 1) {
+        return buildTensorIdBlock(node.children[0]);
+    }
+    if (node.type === 'text') {
+        return { type: 'tensor_get', fields: { NAME: String(node.value) } };
+    }
+    if (node.type === 'command') {
+        const t = FIELD_OP_BLOCKS[String(node.value)];
+        const arg = node.children?.[0];
+        if (t && arg) {
+            const inner = buildTensorIdBlock(arg);
+            return inner ? { type: t, inputs: { TENSOR: { block: inner } } } : null;
+        }
+    }
+    return null;
+}
+
 // ─── Value block builder ──────────────────────────────────────────────────────
 
 function buildValueBlock(node: ASTNode, targetType: BType): BlockJSON | null {
@@ -146,6 +176,15 @@ function buildValueBlock(node: ASTNode, targetType: BType): BlockJSON | null {
 
         case 'command': {
             const cmd = String(node.value);
+            const fieldType = FIELD_OP_BLOCKS[cmd];
+            if (fieldType) {
+                const arg = node.children?.[0];
+                if (!arg) return null;
+                const inner = buildTensorIdBlock(arg);
+                if (!inner) return null;
+                // Field ops yield a tensor id (i32).
+                return coerce({ type: fieldType, inputs: { TENSOR: { block: inner } } }, 'i32', targetType);
+            }
             if (cmd === '\\frac') {
                 if (!node.children || node.children.length < 2) return null;
                 const num = buildValueBlock(node.children[0], 'f64');
@@ -188,6 +227,17 @@ function buildStmtBlock(node: ASTNode): BlockJSON | null {
 
     const lhsNode = node.children[0];
     const rhsNode = node.children[1];
+
+    // Tensor-valued RHS (field op) → tensor_save under the LHS name.
+    if (lhsNode.type === 'text' && rhsNode.type === 'command' && FIELD_OP_BLOCKS[String(rhsNode.value)]) {
+        const exprBlock = buildValueBlock(rhsNode, 'i32');
+        if (!exprBlock) return null;
+        return {
+            type: 'tensor_save',
+            fields: { NAME: String(lhsNode.value) },
+            inputs: { EXPR: { block: exprBlock } },
+        };
+    }
 
     // subscript LHS
     if (lhsNode.type === 'subscript') {

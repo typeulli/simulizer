@@ -434,6 +434,7 @@
     "saving": "저장 중...",
     "save": "저장",
     "build_settings_title": "빌드 설정은 config.json 에서 변경할 수 있어요",
+    "latex_ocr_title": "이미지 → LaTeX → C++",
     "debug_title": "사용자 C++ 코드를 디버깅합니다 (중단점·단계 실행·변수 검사)",
     "debug_button": "디버그",
     "filetree_toggle": "파일 트리 열기/닫기",
@@ -921,6 +922,8 @@
     "struct_get_tooltip": "struct 필드 읽기",
     "struct_set_tooltip": "struct 필드 쓰기",
     "empty_value_label": "빈 값",
-    "empty_value_tooltip": "선택한 타입의 기본/빈 값"
+    "empty_value_tooltip": "선택한 타입의 기본/빈 값",
+    "convert_to_latex": "LaTeX로 변경",
+    "convert_to_blocks": "블록으로 변경"
   }
 }

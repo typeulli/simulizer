@@ -5,6 +5,16 @@ import "katex/dist/katex.min.css";
 const FIELD_HEIGHT = 26;
 const MIN_WIDTH = 60;
 
+// Tensor field operators aren't in KaTeX core (they're physics-package macros),
+// so define them here to render as ∇ notation instead of red error text. These
+// mirror the LaTeX→block engine's FIELD_OPS (\grad→tensor_grad, …).
+const KATEX_MACROS: Record<string, string> = {
+    "\\grad": "\\nabla",
+    "\\curl": "\\nabla\\times",
+    "\\lapl": "\\nabla^2",
+    "\\laplacian": "\\nabla^2",
+};
+
 export class FieldLatex extends Blockly.Field<string> {
     private fo: SVGForeignObjectElement | null = null;
     private container: HTMLDivElement | null = null;
@@ -52,6 +62,7 @@ export class FieldLatex extends Blockly.Field<string> {
                 displayMode: false,
                 throwOnError: false,
                 output: "html",
+                macros: KATEX_MACROS,
             });
         } catch {
             div.textContent = src;

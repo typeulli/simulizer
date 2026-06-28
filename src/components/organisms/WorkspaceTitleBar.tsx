@@ -4,12 +4,13 @@
 //
 //  • web      → the normal app header: a `1fr auto 1fr` grid with brand/filename
 //               on the left and actions on the right (unchanged from before).
-//  • desktop  → a single frameless, VS Code–style title bar that merges what used
-//               to be three stacked layers (native caption + native File menu +
-//               app header): a File menu on the left, the same brand/filename +
-//               actions in the middle, and the window controls (min/max/close)
-//               on the right. The native host runs frameless (no OS caption/menu)
-//               and is driven through the `window.__native` binds.
+//  • desktop  → two stacked, frameless layers (no OS caption/menu; driven via
+//               the `window.__native` binds):
+//                 row 1 — the window-chrome layer: brand (logo + wordmark) +
+//                         File menu on the left, window controls (min/max/close)
+//                         on the right. This row is the drag surface.
+//                 row 2 — the workspace toolbar: the `left` (filename + badges)
+//                         and `right` (Save / AI / Build / Run …) content.
 //
 // Drag is expressed with CSS `-webkit-app-region` (interactive children opt out
 // with `no-drag`); the native host enables non-client region support so the
@@ -18,9 +19,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { token } from "@/components/tokens";
 import { Icon } from "@/components/atoms/Icons";
+import { Logo } from "@/components/atoms/Logo";
+import { useTheme } from "@/hooks/useTheme";
 import { isDesktop } from "@/lib/file";
 
 export const TITLEBAR_HEIGHT = 40;
+// Height of the desktop window-chrome layer (row 1): brand + File menu + window
+// controls. It stacks above the workspace toolbar (row 2, TITLEBAR_HEIGHT tall).
+export const CHROME_HEIGHT = 36;
 
 // `-webkit-app-region` isn't in the CSSProperties type; cast through unknown.
 const dragRegion = { WebkitAppRegion: "drag" } as unknown as React.CSSProperties;
@@ -55,13 +61,11 @@ const CloseGlyph = () => (
 const FileMenu: React.FC = () => {
     const [open, setOpen] = useState(false);
     const [recents, setRecents] = useState<string[]>([]);
-    const [menuTheme, setMenuTheme] = useState<string>("dark");
     const ref = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         if (!open) return;
         window.__native?.recentProjects().then(setRecents).catch(() => setRecents([]));
-        setMenuTheme(document.documentElement.getAttribute("data-theme") ?? "dark");
         const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
         const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
         document.addEventListener("mousedown", onDown);
@@ -127,35 +131,37 @@ const FileMenu: React.FC = () => {
                             ))}
                         </>
                     )}
-                    <div style={{ height: 1, background: token.color.border, margin: "4px 0" }} />
-                    <div style={{ padding: "2px 10px", fontSize: token.font.size.fs10, textTransform: "uppercase", letterSpacing: "0.05em", color: token.color.fgSubtle, fontWeight: 600 }}>
-                        테마
-                    </div>
-                    <div style={{ display: "flex", gap: 4, padding: "2px 6px 4px" }}>
-                        {(["light", "dark"] as const).map(t => (
-                            <button
-                                key={t}
-                                onClick={() => { window.__native?.setTheme(t); setMenuTheme(t); }}
-                                style={{
-                                    flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
-                                    height: 28, border: "none", borderRadius: token.radius.sm, cursor: "pointer",
-                                    fontSize: token.font.size.fs11, fontWeight: 600,
-                                    background: menuTheme === t ? token.color.bgSubtle : "transparent",
-                                    color: menuTheme === t ? token.color.fg : token.color.fgMuted,
-                                }}
-                            >
-                                {t === "light" ? <Icon.Sun size={12} /> : <Icon.Moon size={12} />}
-                                {t === "light" ? "라이트" : "다크"}
-                            </button>
-                        ))}
-                    </div>
-                    <div style={{ height: 1, background: token.color.border, margin: "4px 0" }} />
-                    <button style={item} onClick={() => run(() => window.__native!.menuExit())} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-                        <Icon.X size={13} /> Exit
-                    </button>
                 </div>
             )}
         </div>
+    );
+};
+
+// ── theme toggle (standalone item in the window-chrome layer) ─────────────────
+const ThemeToggle: React.FC = () => {
+    const { theme } = useTheme();
+    const toggle = useCallback(() => {
+        const next = (document.documentElement.getAttribute("data-theme") ?? "light") === "dark" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        document.cookie = `theme=${next}; path=/; max-age=${60 * 60 * 24 * 365}`;
+        window.__native?.setTheme(next);
+    }, []);
+    return (
+        <button
+            data-no-drag="true"
+            aria-label="Toggle theme"
+            title={theme === "dark" ? "다크 모드 (클릭 시 라이트)" : "라이트 모드 (클릭 시 다크)"}
+            onClick={toggle}
+            style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 34, height: 26, border: "none", borderRadius: token.radius.sm,
+                background: "none", cursor: "pointer", color: token.color.fgMuted, ...noDragRegion,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = token.color.bgSubtle; e.currentTarget.style.color = token.color.fg; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = token.color.fgMuted; }}
+        >
+            {theme === "dark" ? <Icon.Moon size={14} /> : <Icon.Sun size={14} />}
+        </button>
     );
 };
 
@@ -174,7 +180,7 @@ const WindowControls: React.FC = () => {
     }, [refresh]);
 
     const btn: React.CSSProperties = {
-        width: 46, height: TITLEBAR_HEIGHT, display: "inline-flex", alignItems: "center", justifyContent: "center",
+        width: 46, height: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center",
         border: "none", background: "none", cursor: "pointer", color: token.color.fgMuted, padding: 0,
     };
 
@@ -225,33 +231,46 @@ export const WorkspaceTitleBar: React.FC<WorkspaceTitleBarProps> = ({ isMobile =
         );
     }
 
-    // Desktop: a single frameless title bar. The header itself is the drag
-    // surface; interactive clusters opt out via `data-no-drag` (also tagged
-    // `-webkit-app-region: no-drag` for hosts that support non-client regions).
-    // `-webkit-app-region` is inert on the current WebView2 build, so the
-    // mousedown → `startDrag()` path is what actually moves the window.
-    const onTitleMouseDown = (e: React.MouseEvent) => {
+    // Desktop: two stacked layers. Row 1 (the window-chrome layer) is the drag
+    // surface; interactive clusters inside it opt out via `data-no-drag` (also
+    // tagged `-webkit-app-region: no-drag` for hosts that support non-client
+    // regions). `-webkit-app-region` is inert on the current WebView2 build, so
+    // the mousedown → `startDrag()` path is what actually moves the window.
+    const onChromeMouseDown = (e: React.MouseEvent) => {
         if (e.button !== 0) return;
         if ((e.target as HTMLElement).closest("[data-no-drag]")) return;
         window.__native?.startDrag();
     };
 
     return (
-        <header
-            onMouseDown={onTitleMouseDown}
-            onDoubleClick={e => { if (!(e.target as HTMLElement).closest("[data-no-drag]")) window.__native?.maximizeToggle(); }}
-            style={{
-                display: "flex", alignItems: "center", gap: 8, height: TITLEBAR_HEIGHT, paddingLeft: 8,
-                borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0,
-                ...dragRegion,
-            }}
-        >
-            <FileMenu />
-            <div data-no-drag="true" style={{ display: "flex", alignItems: "center", minWidth: 0, ...noDragRegion }}>{left}</div>
-            {/* draggable spacer */}
-            <div style={{ flex: 1, alignSelf: "stretch" }} />
-            <div data-no-drag="true" style={{ display: "flex", alignItems: "center", gap: 8, ...noDragRegion }}>{right}</div>
-            <WindowControls />
-        </header>
+        <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, background: token.color.bg }}>
+            {/* Row 1 — window-chrome layer (brand + File menu + window controls); the drag surface. */}
+            <div
+                onMouseDown={onChromeMouseDown}
+                onDoubleClick={e => { if (!(e.target as HTMLElement).closest("[data-no-drag]")) window.__native?.maximizeToggle(); }}
+                style={{
+                    display: "flex", alignItems: "stretch", height: CHROME_HEIGHT,
+                    borderBottom: `1px solid ${token.color.border}`, ...dragRegion,
+                }}
+            >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 10 }}>
+                    <Logo size={18} />
+                    <span style={{ fontWeight: 600, fontSize: token.font.size.fs13, letterSpacing: "-0.01em", color: token.color.fg }}>Simulizer</span>
+                    <FileMenu />
+                </div>
+                {/* draggable spacer */}
+                <div style={{ flex: 1 }} />
+                <div style={{ display: "flex", alignItems: "center", paddingRight: 2 }}>
+                    <ThemeToggle />
+                </div>
+                <WindowControls />
+            </div>
+            {/* Row 2 — workspace toolbar (filename + actions). */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, height: TITLEBAR_HEIGHT, padding: "0 12px", borderBottom: `1px solid ${token.color.border}` }}>
+                <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>{left}</div>
+                <div style={{ flex: 1 }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{right}</div>
+            </div>
+        </div>
     );
 };

@@ -335,6 +335,12 @@ export type CodeEditorRef = {
     closeModel: (uri: string) => void;
     revealAt: (uri: string, line: number, column?: number) => void;
     focus: () => void;
+    /**
+     * Insert text at the current cursor position (replacing any selection) in
+     * the active editor, then focus it. Routes through executeEdits so the edit
+     * lands on the undo stack and flows out via onTextChanged (bundle + collab).
+     */
+    insertText: (text: string) => void;
     /** Render breakpoint glyphs for `path`'s model at the given 1-based lines. */
     renderBreakpoints: (path: string, lines: number[]) => void;
     /** Highlight the current debug execution line (null clears all). */
@@ -886,6 +892,16 @@ const CodeEditor = forwardRef<CodeEditorRef, Props>(function CodeEditor({
             editor.focus();
         },
         focus: () => { editorRef.current?.focus(); },
+        insertText: (text: string) => {
+            const editor = editorRef.current;
+            if (!editor) return;
+            const selection = editor.getSelection();
+            if (!selection) return;
+            editor.executeEdits("latex-ocr", [{ range: selection, text, forceMoveMarkers: true }]);
+            const end = editor.getSelection()?.getEndPosition();
+            if (end) editor.setPosition(end);
+            editor.focus();
+        },
         renderBreakpoints: (path: string, lines: number[]) => {
             const model = monaco.editor.getModel(monaco.Uri.parse(pathToUri(path)));
             if (!model) return;

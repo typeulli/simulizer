@@ -75,6 +75,36 @@ function buildIndexArgs(
     return args;
 }
 
+// ─── Tensor field operators (∇) ───────────────────────────────────────────────
+// \grad{f} / \curl{F} / \lapl{f} map onto the tensor field-op imports, which
+// take a tensor id (i32) and return a new tensor id (i32).
+const FIELD_OPS: Record<string, string> = {
+    '\\grad': 'tensor_grad',
+    '\\curl': 'tensor_curl',
+    '\\lapl': 'tensor_lapl',
+    '\\laplacian': 'tensor_lapl',
+};
+
+/** Resolve a node to a tensor-id (i32) expression: a bare field name maps to its
+ *  registered tensor id (GetVarID), a nested field op recurses. */
+function buildTensorId(node: ASTNode, ctx: CompileCtx): simulizer.Expr | null {
+    if (node.type === 'expression' && node.children?.length === 1) {
+        return buildTensorId(node.children[0], ctx);
+    }
+    if (node.type === 'text') {
+        return simulizer.i32c(GetVarID(String(node.value)));
+    }
+    if (node.type === 'command') {
+        const fn = FIELD_OPS[String(node.value)];
+        const arg = node.children?.[0];
+        if (fn && arg) {
+            const inner = buildTensorId(arg, ctx);
+            return inner ? new simulizer.Call(fn, [inner], simulizer.i32) : null;
+        }
+    }
+    return null;
+}
+
 // ─── Expression builder ───────────────────────────────────────────────────────
 
 function buildExpr(
@@ -141,6 +171,14 @@ function buildExpr(
 
         case 'command': {
             const cmd = String(node.value);
+            const fieldFn = FIELD_OPS[cmd];
+            if (fieldFn) {
+                const arg = node.children?.[0];
+                if (!arg) return null;
+                const tid = buildTensorId(arg, ctx);
+                if (!tid) return null;
+                return ctx.coerce(new simulizer.Call(fieldFn, [tid], simulizer.i32), targetType);
+            }
             if (cmd === '\\frac') {
                 if (!node.children || node.children.length < 2) return null;
                 const num = buildExpr(node.children[0], ctx, simulizer.f64);
@@ -203,6 +241,18 @@ function buildAssignment(
     rhsNode: ASTNode,
     ctx: CompileCtx,
 ): simulizer.Expr | null {
+    // Tensor-valued RHS (a field op) → register the result under the LHS name via
+    // tensor_save, so it can be referenced later as a named field.
+    if (lhsNode.type === 'text' && rhsNode.type === 'command' && FIELD_OPS[String(rhsNode.value)]) {
+        const tid = buildExpr(rhsNode, ctx, simulizer.i32);
+        if (!tid) return null;
+        return new simulizer.Drop(new simulizer.Call(
+            'tensor_save',
+            [simulizer.i32c(GetVarID(String(lhsNode.value))), ctx.coerce(tid, simulizer.i32)],
+            simulizer.i32,
+        ));
+    }
+
     // subscript assignment: arr_{0} = rhs  or  T_{1,4,x} = rhs
     if (lhsNode.type === 'subscript') {
         const name = String(lhsNode.value);

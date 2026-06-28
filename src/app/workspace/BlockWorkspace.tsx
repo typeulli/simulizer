@@ -51,7 +51,8 @@ import { xmlVectorBlocks } from "@/utils/blockly/vector";
 import { xmlBoundaryBlocks } from "@/utils/blockly/boundary";
 import { generateDiffTree, loadTreeDiff } from "@/lib/treediff/treediff";
 import { NormalizeContext, unnormalize, normalize } from "@/lib/treediff/blockdiff";
-import { replaceLatexBlocksInWorkspace } from "@/utils/tex/blockgen";
+import { replaceLatexBlocksInWorkspace, latexToValueBlock, latexToStmtBlock } from "@/utils/tex/blockgen";
+import { blockToLatex, isLatexConvertibleSource } from "@/utils/tex/blockToLatex";
 import { Prism } from "react-syntax-highlighter";
 import oneLight from "react-syntax-highlighter/dist/esm/styles/prism/one-light";
 import oneDark from "react-syntax-highlighter/dist/esm/styles/prism/one-dark";
@@ -993,6 +994,123 @@ registerStructDefBlock();
 registerFieldBlock();
 registerEmptyValueBlock();
 registerStructArrayBlocks();
+
+// ── LaTeX ⇄ block conversion (block context menu) ────────────────────────────
+// Right-clicking an assignment/expr block offers "convert to LaTeX" (replaces
+// the block subtree with a latex_expr/latex_value block carrying the generated
+// formula); right-clicking a latex block offers the inverse, reusing the
+// existing LaTeX↔block engine (blockToLatex / latexToStmtBlock / latexToValueBlock).
+
+/** Replace an assignment/expr block subtree with a latex_expr/latex_value block. */
+function convertBlockToLatex(block: Blockly.BlockSvg) {
+    const latex = blockToLatex(block);
+    if (latex == null) return;
+    const ws = block.workspace as Blockly.WorkspaceSvg;
+    const isStmt = !block.outputConnection;
+    Blockly.Events.setGroup(true);
+    try {
+        const nb = ws.newBlock(isStmt ? "latex_expr" : "latex_value") as Blockly.BlockSvg;
+        nb.setFieldValue(latex, "LATEX");
+        // latex_value defaults to an f64 output; adopt the original block's
+        // output type so it plugs back into the very same input slot.
+        if (!isStmt) {
+            const check = block.outputConnection?.getCheck();
+            if (check) nb.setOutput(true, check);
+        }
+        nb.initSvg();
+        const xy = block.getRelativeToSurfaceXY();
+        if (isStmt) {
+            const prev = block.previousConnection?.targetConnection ?? null;
+            const next = block.nextConnection?.targetConnection ?? null;
+            block.dispose(false);
+            if (prev && nb.previousConnection) prev.connect(nb.previousConnection);
+            else nb.moveBy(xy.x, xy.y);
+            if (next && nb.nextConnection) nb.nextConnection.connect(next);
+        } else {
+            const out = block.outputConnection?.targetConnection ?? null;
+            block.dispose(false);
+            if (out && nb.outputConnection && ws.connectionChecker.canConnect(out, nb.outputConnection, false)) out.connect(nb.outputConnection);
+            else nb.moveBy(xy.x, xy.y);
+        }
+        nb.render();
+    } finally {
+        Blockly.Events.setGroup(false);
+    }
+}
+
+/** Replace a latex_expr/latex_value block with the generated native block subtree. */
+function convertLatexToBlocks(block: Blockly.BlockSvg) {
+    const ws = block.workspace as Blockly.WorkspaceSvg;
+    const latex = (block.getFieldValue("LATEX") as string) ?? "";
+    const isStmt = block.type === "latex_expr";
+    const json = isStmt ? latexToStmtBlock(latex) : latexToValueBlock(latex);
+    if (!json) return;
+    Blockly.Events.setGroup(true);
+    try {
+        const xy = block.getRelativeToSurfaceXY();
+        const nb = Blockly.serialization.blocks.append(json as Blockly.serialization.blocks.State, ws) as Blockly.BlockSvg;
+        if (isStmt) {
+            const prev = block.previousConnection?.targetConnection ?? null;
+            const next = block.nextConnection?.targetConnection ?? null;
+            block.dispose(false);
+            if (prev && nb.previousConnection) prev.connect(nb.previousConnection);
+            else nb.moveBy(xy.x, xy.y);
+            if (next && nb.nextConnection) nb.nextConnection.connect(next);
+        } else {
+            const out = block.outputConnection?.targetConnection ?? null;
+            block.dispose(false);
+            if (out && nb.outputConnection && ws.connectionChecker.canConnect(out, nb.outputConnection, false)) out.connect(nb.outputConnection);
+            else nb.moveBy(xy.x, xy.y);
+        }
+    } finally {
+        Blockly.Events.setGroup(false);
+    }
+}
+
+/** Register the two LaTeX conversion items in Blockly's block context menu. */
+function registerLatexContextMenuItems() {
+    const reg = Blockly.ContextMenuRegistry.registry;
+    const BLOCK = Blockly.ContextMenuRegistry.ScopeType.BLOCK;
+
+    if (!reg.getItem("simulizer_convert_to_latex")) {
+        reg.register({
+            id: "simulizer_convert_to_latex",
+            scopeType: BLOCK,
+            weight: 100,
+            displayText: () => _langPack?.block_dynamic?.convert_to_latex ?? "Convert to LaTeX",
+            preconditionFn: (scope) => {
+                const b = scope.block;
+                if (!b || b.isInFlyout) return "hidden";
+                if (!isLatexConvertibleSource(b)) return "hidden";
+                return blockToLatex(b) != null ? "enabled" : "disabled";
+            },
+            callback: (scope) => {
+                if (scope.block) convertBlockToLatex(scope.block);
+            },
+        });
+    }
+
+    if (!reg.getItem("simulizer_convert_to_blocks")) {
+        reg.register({
+            id: "simulizer_convert_to_blocks",
+            scopeType: BLOCK,
+            weight: 100,
+            displayText: () => _langPack?.block_dynamic?.convert_to_blocks ?? "Convert to blocks",
+            preconditionFn: (scope) => {
+                const b = scope.block;
+                if (!b || b.isInFlyout) return "hidden";
+                if (b.type !== "latex_value" && b.type !== "latex_expr") return "hidden";
+                const latex = (b.getFieldValue("LATEX") as string) ?? "";
+                const json = b.type === "latex_expr" ? latexToStmtBlock(latex) : latexToValueBlock(latex);
+                return json ? "enabled" : "disabled";
+            },
+            callback: (scope) => {
+                if (scope.block) convertLatexToBlocks(scope.block);
+            },
+        });
+    }
+}
+registerLatexContextMenuItems();
 
 /** Build custom function definition block → FuncDef */
 function buildCustomFunc(
@@ -3817,9 +3935,9 @@ const BlockWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 isMobile={isMobile}
                 left={
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap", flex: isMobile ? 1 : undefined }}>
-                    <TopbarBrand compact={isMobile} />
+                    {!isDesktop && <TopbarBrand compact={isMobile} />}
 
-                    {!isMobile && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
+                    {!isMobile && !isDesktop && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
                     <button onClick={isOwner && !isMobile ? handleOpenBlocks : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: isMobile ? "4px 4px" : "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner && !isMobile ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, minWidth: 0, flex: isMobile ? "1 1 0" : undefined, overflow: "hidden" }}>
                         {!isMobile && <Icon.File size={12} />}
                         {isMobile ? (

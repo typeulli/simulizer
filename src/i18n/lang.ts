@@ -441,6 +441,7 @@ export type langpack = {
         saving: string,
         save: string,
         build_settings_title: string,
+        latex_ocr_title: string,
         debug_title: string,
         debug_button: string,
         filetree_toggle: string,
@@ -682,6 +683,8 @@ export type langpack = {
         struct_set_tooltip: string,
         empty_value_label: string,
         empty_value_tooltip: string,
+        convert_to_latex: string,
+        convert_to_blocks: string,
     },
 };
 export default langpack;

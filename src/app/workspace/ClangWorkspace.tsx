@@ -62,6 +62,8 @@ import { WorkspaceTitleBar } from "@/components/organisms/WorkspaceTitleBar";
 import { token } from "@/components/tokens";
 import { duplicateFile, renameFile, saveFile, setFileVisibility, isDesktop, type FileDetail, type FileOut } from "@/lib/file";
 import { CppManagerModal } from "@/components/modals/workspace/CppManagerModal";
+import { LatexOcrModal } from "@/components/modals/workspace/LatexOcrModal";
+import { latexToCpp } from "@/utils/tex/cppgen";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/organisms/Modal";
 import { AlertModal, type AlertVariant } from "@/components/organisms/AlertModal";
 import { CompileSettingsModal } from "@/components/modals/workspace/CompileSettingsModal";
@@ -256,6 +258,14 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const [inputRequest, setInputRequest] = useState<{ kind: "i32" | "f64" } | null>(null);
     const [inputValue, setInputValue] = useState("");
     const codeEditorRef = useRef<CodeEditorRef | null>(null);
+
+    // ─── LaTeX OCR (image → LaTeX → C++) ──────────────────────────────────
+    const [showLatexOcr, setShowLatexOcr] = useState(false);
+    const [ocrLatex, setOcrLatex] = useState("");
+    const [ocrStreaming, setOcrStreaming] = useState(false);
+    const [ocrImageUrl, setOcrImageUrl] = useState<string | null>(null);
+    const ocrFileInputRef = useRef<HTMLInputElement>(null);
+    const ocrAbortRef = useRef<AbortController | null>(null);
 
     // ─── LSP connection prompt ────────────────────────────────────────────
     // On first load we surface a VS Code-style modal while clangd connects.
@@ -1860,6 +1870,100 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
     const buildSnackStatus: "progress" | "done" = buildState === "done" ? "done" : "progress";
 
     // Workspace commands, surfaced in the editor's command palette (F1).
+    // Stream an uploaded image through the OCR endpoint, accumulating LaTeX.
+    const handleLatexOcr = useCallback(async (file: File) => {
+        ocrAbortRef.current?.abort();
+        const ctrl = new AbortController();
+        ocrAbortRef.current = ctrl;
+
+        const url = URL.createObjectURL(file);
+        setOcrImageUrl(url);
+        setOcrLatex("");
+        setOcrStreaming(true);
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const res = await fetch(`${API_BASE}/texocr`, { method: "POST", body: formData, signal: ctrl.signal });
+            const reader = res.body!.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? "";
+                for (const line of lines) {
+                    if (line.startsWith("data:")) {
+                        try {
+                            const { content } = JSON.parse(line.slice(5).trim());
+                            if (content) setOcrLatex(prev => prev + content);
+                        } catch { /* ignore malformed chunk */ }
+                    } else if (line.startsWith("event: done")) {
+                        break;
+                    }
+                }
+            }
+        } catch (e: unknown) {
+            if ((e as { name?: string })?.name !== "AbortError") {
+                setOcrLatex(prev => prev || tx("messages.error"));
+            }
+        } finally {
+            setOcrStreaming(false);
+        }
+    }, [tx]);
+
+    // Paste an image directly into the open OCR modal (Ctrl+V).
+    useEffect(() => {
+        if (!showLatexOcr) return;
+        const handler = (e: ClipboardEvent) => {
+            const item = Array.from(e.clipboardData?.items ?? []).find(i => i.type.startsWith("image/"));
+            if (!item) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const file = item.getAsFile();
+            if (file) handleLatexOcr(file);
+        };
+        window.addEventListener("paste", handler, true);
+        return () => window.removeEventListener("paste", handler, true);
+    }, [showLatexOcr, handleLatexOcr]);
+
+    // Convert the OCR'd LaTeX to C++ and insert it at the editor cursor. The OCR
+    // text may carry several "$...$"-delimited formulas; each becomes a line.
+    const handleLatexOcrApply = useCallback((latex: string) => {
+        if (!latex.trim()) return;
+
+        const formulas: string[] = [];
+        const parts = latex.split("$");
+        for (let i = 1; i < parts.length; i += 2) {
+            const f = parts[i].trim();
+            if (f) formulas.push(f);
+        }
+        if (formulas.length === 0) {
+            const clean = latex.trim();
+            if (clean) formulas.push(clean);
+        }
+
+        const code = formulas.map(formula => {
+            try {
+                return latexToCpp(formula);
+            } catch {
+                return `// LaTeX 변환 실패: ${formula}`;
+            }
+        }).join("\n");
+
+        codeEditorRef.current?.insertText(code);
+        setShowLatexOcr(false);
+    }, []);
+
+    const handleOpenLatexOcr = useCallback(() => {
+        setOcrLatex("");
+        setOcrImageUrl(null);
+        setShowLatexOcr(true);
+    }, []);
+
     const editorCommands = useMemo<EditorCommand[]>(() => [
         { id: "run", label: "Run", disabled: runDisabled, run: handleRun },
         { id: "debug", label: "Run (Debug)", disabled: debug.status === "compiling" || debug.status === "running", run: debug.handleDebug },
@@ -1867,7 +1971,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
         { id: "lsp", label: "Restart Language Server (LSP)", run: handleLspCommand },
         { id: "config", label: "Open Settings", run: () => setSettingsOpen(true) },
         { id: "config-json", label: "Open Settings (JSON)", run: handleOpenConfigJson },
-    ], [runDisabled, buildDisabled, handleRun, handleBuild, handleLspCommand, handleOpenConfigJson, debug.status, debug.handleDebug]);
+        { id: "latex-ocr", label: "Insert from LaTeX (OCR image)", disabled: !canEdit, run: handleOpenLatexOcr },
+    ], [runDisabled, buildDisabled, handleRun, handleBuild, handleLspCommand, handleOpenConfigJson, debug.status, debug.handleDebug, canEdit, handleOpenLatexOcr]);
 
     const entryFile = useMemo(() => listBundleFiles(bundle.tree).find(f => f.path === bundle.entry), [bundle.tree, bundle.entry]);
     const entryCode = entryFile?.file.content ?? "";
@@ -1880,8 +1985,8 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 isMobile={isMobile}
                 left={
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, whiteSpace: "nowrap", flex: isMobile ? 1 : undefined }}>
-                    <TopbarBrand compact={isMobile} />
-                    {!isMobile && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
+                    {!isDesktop && <TopbarBrand compact={isMobile} />}
+                    {!isMobile && !isDesktop && <span style={{ color: token.color.fgSubtle, fontWeight: 300, marginLeft: 4 }}>/</span>}
                     <button
                         onClick={isOwner && !isMobile ? handleOpenManager : undefined}
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: isMobile ? "4px 4px" : "4px 8px", borderRadius: token.radius.sm, background: "none", border: "none", cursor: isOwner && !isMobile ? "pointer" : "default", color: token.color.fgMuted, fontSize: token.font.size.fs12, fontFamily: token.font.family.mono, minWidth: 0, flex: isMobile ? "1 1 0" : undefined, overflow: "hidden" }}
@@ -2033,7 +2138,7 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 340px", flex: 1, minHeight: 0 }}>
 
                 {/* Editor area */}
-                <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden" }}>
+                <main style={{ display: isMobile && mobileTab !== "code" ? "none" : "flex", flexDirection: "column", minWidth: 0, background: token.color.bgCanvas, overflow: "hidden", position: "relative" }}>
                     {/* Editor toolbar (tree toggle + tab strip, with LSP · AI · settings on the right) */}
                     <div style={{ display: isMobile ? "none" : "flex", alignItems: "center", padding: "5px 10px", borderBottom: `1px solid ${token.color.border}`, background: token.color.bg, flexShrink: 0, gap: 6 }}>
                         <button
@@ -2125,6 +2230,16 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: lspConnected ? token.color.success : token.color.fgSubtle, display: "inline-block" }} />
                                 <Icon.Globe size={11} /> LSP: {lspConnected ? "cpp" : tx("clang.lsp_disconnected_short")}
                             </button>
+                            {canEdit && (
+                                <button
+                                    type="button"
+                                    onClick={handleOpenLatexOcr}
+                                    title={tx("clang.latex_ocr_title")}
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", border: "none", borderRadius: token.radius.sm, background: "transparent", cursor: "pointer", color: token.color.fgMuted, fontSize: token.font.size.fs11, fontWeight: 500 }}
+                                >
+                                    <Icon.Upload size={11} /> LaTeX
+                                </button>
+                            )}
                             {!isDesktop && (
                                 <button
                                     type="button"
@@ -2617,6 +2732,17 @@ const ClangWorkspace: React.FC<Props> = ({ initialFile, initialOwner }) => {
                 onOpenRaw={() => { setSettingsOpen(false); handleOpenConfigJson(); }}
                 onClose={() => setSettingsOpen(false)}
             />
+
+            {!isMobile && <LatexOcrModal
+                open={showLatexOcr}
+                imageUrl={ocrImageUrl}
+                latex={ocrLatex}
+                streaming={ocrStreaming}
+                fileInputRef={ocrFileInputRef}
+                onClose={() => { ocrAbortRef.current?.abort(); setShowLatexOcr(false); }}
+                onUpload={handleLatexOcr}
+                onApply={() => handleLatexOcrApply(ocrLatex)}
+            />}
 
             {imagePreview && (() => {
                 const f = findBundleFile(bundle.tree, imagePreview);

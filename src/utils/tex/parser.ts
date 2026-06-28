@@ -24,6 +24,8 @@ const FUNCTION_COMMANDS = new Set([
     '\\sinh', '\\cosh', '\\tanh',
     '\\exp', '\\ln', '\\log',
     '\\sqrt', '\\abs', '\\sign', '\\floor', '\\ceil',
+    // Tensor field operators (∇): grad/curl/laplacian.
+    '\\grad', '\\curl', '\\lapl', '\\laplacian',
 ]);
 
 class LatexParser {

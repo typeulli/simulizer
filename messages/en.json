@@ -434,6 +434,7 @@
     "saving": "Saving...",
     "save": "Save",
     "build_settings_title": "Build settings can be changed in config.json",
+    "latex_ocr_title": "Image → LaTeX → C++",
     "debug_title": "Debug your C++ code (breakpoints, stepping, variable inspection)",
     "debug_button": "Debug",
     "filetree_toggle": "Toggle file tree",
@@ -1042,6 +1043,8 @@
     "struct_get_tooltip": "read a struct field",
     "struct_set_tooltip": "write a struct field",
     "empty_value_label": "empty",
-    "empty_value_tooltip": "default/empty value of the selected type"
+    "empty_value_tooltip": "default/empty value of the selected type",
+    "convert_to_latex": "Convert to LaTeX",
+    "convert_to_blocks": "Convert to blocks"
   }
 }
